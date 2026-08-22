@@ -148,7 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
 			if (e.affectsConfiguration(CONFIG_SECTION)) {
-				output.appendLine('Engraphy settings changed — reconnecting.');
+				output.appendLine('Engraphy settings changed, reconnecting.');
 				didChangeEmitter.fire();
 				void client.reconnect().then(() => runSafely(output, refreshAll));
 			}
@@ -191,7 +191,7 @@ async function maybeOfferFirstRunWalkthrough(
 	await context.globalState.update(WELCOMED_KEY, true);
 	const reachable = await probeReachable(client);
 	if (!reachable) {
-		log.appendLine('First run: no server reachable — opening the setup walkthrough.');
+		log.appendLine('First run: no server reachable, opening the setup walkthrough.');
 		openWalkthrough();
 	}
 }
@@ -302,7 +302,7 @@ async function promoteItem(
 ): Promise<void> {
 	const payloadDoc = await vscode.workspace.openTextDocument({
 		language: 'json',
-		content: `// Captured payload for inbox item ${item.id} (reference — title/body below are pre-filled from it, and editable)\n${JSON.stringify(item.payload, null, 2)}`,
+		content: `// Captured payload for inbox item ${item.id} (reference only; title/body below are pre-filled from it, and editable)\n${JSON.stringify(item.payload, null, 2)}`,
 	});
 	await vscode.window.showTextDocument(payloadDoc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
 
@@ -354,7 +354,7 @@ async function promoteItem(
 		// optimistically. The parked write now shows up in pending_list, so a
 		// pending refresh surfaces it in the Pending duplicates band.
 		void vscode.window.showWarningMessage(
-			'Engraphy: promotion parked as a pending duplicate — resolve it in the "Pending duplicates" band.'
+			'Engraphy: promotion parked as a pending duplicate. Resolve it in the "Pending duplicates" band.'
 		);
 	} else {
 		void vscode.window.showInformationMessage(`Engraphy: promoted (${res.outcome ?? 'ok'}).`);
@@ -375,7 +375,7 @@ async function pickNodeType(title: string): Promise<string | undefined> {
 	];
 	const pick = await vscode.window.showQuickPick(picks, {
 		title,
-		placeHolder: 'Pick a node type (starter pack) — or Other… for a custom one',
+		placeHolder: 'Pick a node type (starter pack), or Other… for a custom one',
 		ignoreFocusOut: true,
 	});
 	if (!pick) {
@@ -426,7 +426,7 @@ async function pickPromoteScope(
 	];
 	const pick = await vscode.window.showQuickPick(picks, {
 		title,
-		placeHolder: 'Pick a scope (readable scopes) — or Other…',
+		placeHolder: 'Pick a scope (readable scopes), or Other…',
 		ignoreFocusOut: true,
 	});
 	if (!pick) {
@@ -480,7 +480,7 @@ async function resolveByIdCommand(
 	} catch (e) {
 		if (e instanceof EngraphyToolError && e.code === 'ENGRAPHY_PENDING_EXPIRED') {
 			void vscode.window.showWarningMessage(
-				'Engraphy: that pending write has expired — re-issue the write for a fresh confirmation window.'
+				'Engraphy: that pending write has expired. Re-issue the write for a fresh confirmation window.'
 			);
 		} else {
 			throw e;
@@ -536,7 +536,7 @@ async function configureServer(
 		ignoreFocusOut: true,
 	});
 	if (token === undefined) {
-		return; // Esc — don't save
+		return; // Esc, don't save
 	}
 
 	await cfg.update('serverUrl', url.trim(), vscode.ConfigurationTarget.Global);
@@ -561,7 +561,7 @@ async function configureServer(
 		const h = healthRes.status === 'fulfilled' ? healthRes.value : undefined;
 		void vscode.window.showInformationMessage(
 			`Engraphy: connected to ${host}` +
-				(h ? ` — ${h.status}, v${h.version ?? '?'}, ${h.spaces ?? '?'} space(s).` : '.')
+				(h ? `: ${h.status}, v${h.version ?? '?'}, ${h.spaces ?? '?'} space(s).` : '.')
 		);
 	} else {
 		const d = describeError(authRes.reason, host);
@@ -617,7 +617,7 @@ function registerMcpProvider(
 		provideMcpServerDefinitions(_token: vscode.CancellationToken): vscode.McpServerDefinition[] {
 			const conn = connection();
 			if (!conn.serverUrl) {
-				output.appendLine('engraphy.serverUrl is empty — no Engraphy MCP server provided.');
+				output.appendLine('engraphy.serverUrl is empty, so no Engraphy MCP server was provided.');
 				return [];
 			}
 			let uri: vscode.Uri;

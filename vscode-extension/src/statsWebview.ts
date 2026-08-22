@@ -194,7 +194,7 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 	<link href="${confirmCss}" rel="stylesheet" />
 	<link href="${statesCss}" rel="stylesheet" />
 	<link href="${statsCss}" rel="stylesheet" />
-	<title>Engraphy — Stats</title>
+	<title>Engraphy: Stats</title>
 </head>
 <body>
 	<header class="header">

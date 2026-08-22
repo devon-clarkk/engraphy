@@ -1,4 +1,4 @@
-// Engraphy confirm-write queue — webview client script.
+// Engraphy confirm-write queue: webview client script.
 //
 // Runs in the sandboxed webview (no Node, no DOM-injection of server strings:
 // every server value goes through textContent, never innerHTML). Talks to the
@@ -55,7 +55,7 @@
 
 	els.refresh.addEventListener('click', () => action({ type: 'refresh' }));
 
-	// ---- small DOM helpers (textContent only — no HTML from server data) ----
+	// ---- small DOM helpers (textContent only, never HTML from server data) ----
 
 	function el(tag, cls, text) {
 		const n = document.createElement(tag);
@@ -96,7 +96,7 @@
 		card.appendChild(badges);
 
 		if (p.candidates.length > 0) {
-			card.appendChild(el('div', 'cand-label', 'Deny — merge into one of these:'));
+			card.appendChild(el('div', 'cand-label', 'Deny, merge into one of these:'));
 			for (const c of p.candidates) {
 				const row = el('div', 'cand');
 				const main = el('div', 'cand-main');
@@ -115,7 +115,7 @@
 						'btn btn-secondary btn-merge',
 						'Merge into ↩',
 						() => action({ type: 'merge', pendingId: p.id, mergeInto: c.id }),
-						p.expired ? 'This row is expired — the server will refuse the merge.' : 'Merge into ' + c.title
+						p.expired ? 'This row is expired, so the server will refuse the merge.' : 'Merge into ' + c.title
 					)
 				);
 				card.appendChild(row);
@@ -130,7 +130,7 @@
 				'btn btn-approve',
 				'✓ Approve (keep distinct)',
 				() => action({ type: 'approve', pendingId: p.id }),
-				p.expired ? 'This row is expired — the server will refuse the approve.' : 'Keep as a new, distinct node'
+				p.expired ? 'This row is expired, so the server will refuse the approve.' : 'Keep as a new, distinct node'
 			)
 		);
 		card.appendChild(actions);
@@ -202,7 +202,7 @@
 			sec.appendChild(buildCard(it));
 		}
 		if (truncated) {
-			sec.appendChild(note('More items — increase the limit to see the rest.'));
+			sec.appendChild(note('More items exist; increase the limit to see the rest.'));
 		}
 		return sec;
 	}

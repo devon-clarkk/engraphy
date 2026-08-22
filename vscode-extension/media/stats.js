@@ -1,10 +1,10 @@
-// Engraphy Stats panel — webview client script.
+// Engraphy Stats panel: webview client script.
 //
 // Runs in the sandboxed webview (no Node; server values go through textContent,
 // never innerHTML). Talks to the host by postMessage using the typed protocol in
 // src/statsModel.ts. The host owns the `stats` MCP call; this renders the
 // view-model it is handed (tiles + normalized sparkline series) and reports the
-// toggle/range/refresh clicks. Sparklines are built with createElementNS — no
+// toggle/range/refresh clicks. Sparklines are built with createElementNS, so no
 // external chart library, nonce/CSP respected.
 (function () {
 	'use strict';
@@ -88,7 +88,7 @@
 			preserveAspectRatio: 'none',
 			'aria-hidden': 'true',
 		});
-		// baseline — makes an all-zero series read as a flat line, not emptiness.
+		// baseline, which makes an all-zero series read as a flat line, not emptiness.
 		svg.appendChild(svgEl('rect', { class: 'spark-base', x: 0, y: H - 0.75, width: W, height: 0.75 }));
 		norm.forEach((f, i) => {
 			const clamped = f < 0 ? 0 : f > 1 ? 1 : f;
@@ -239,7 +239,7 @@
 		v.tiles.filter((t) => !t.hero).forEach((t) => grid.appendChild(tileEl(t)));
 		root.appendChild(grid);
 
-		// Honest footnotes — this is a sell tool; don't overclaim.
+		// Honest footnotes: this is a sell tool, so don't overclaim.
 		const foot = el('div', 'footnotes');
 		foot.appendChild(
 			el('p', null, 'Memory reused is a proxy: facts returned in searches, not distinct-node reuse.')

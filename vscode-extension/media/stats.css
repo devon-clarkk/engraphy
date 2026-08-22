@@ -1,4 +1,4 @@
-/* Engraphy Stats panel — layered on top of confirm.css (which provides the
+/* Engraphy Stats panel, layered on top of confirm.css (which provides the
  * brand/theme variables, body theming, buttons, loop mark, spinner, notes, and
  * the no-server onboarding block). Everything here is stats-specific: the
  * scope/range controls, KPI tiles, and sparklines. Structural colors come from
@@ -118,7 +118,7 @@
 	margin-top: 2px;
 }
 
-/* Hero tiles — the value story. Verdant edge + verdant value, bigger. */
+/* Hero tiles: the value story. Verdant edge + verdant value, bigger. */
 .hero-grid .tile {
 	padding: 12px 14px;
 }

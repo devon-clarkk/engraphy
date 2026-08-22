@@ -1,7 +1,7 @@
 {
   "name": "engraphy",
   "displayName": "Engraphy",
-  "description": "Engraphy — the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
+  "description": "Engraphy, the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
   "version": "0.5.0",
   "publisher": "engraphy",
   "license": "BUSL-1.1",
@@ -43,13 +43,13 @@
         "engraphy.serverUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000/mcp/",
-          "markdownDescription": "URL of the Engraphy MCP endpoint (Streamable HTTP). For a local bring-up this is `http://127.0.0.1:8000/mcp/`; for a hosted deployment point it at `/mcp/` behind your TLS proxy. **Keep the trailing slash** — the server 307-redirects `/mcp` → `/mcp/`, and the redirect round-trip adds ~10s of latency per call (the extension normalizes a missing slash for you, but the default is correct as shipped).",
+          "markdownDescription": "URL of the Engraphy MCP endpoint (Streamable HTTP). For a local bring-up this is `http://127.0.0.1:8000/mcp/`; for a hosted deployment point it at `/mcp/` behind your TLS proxy. **Keep the trailing slash**: the server 307-redirects `/mcp` → `/mcp/`, and the redirect round-trip adds ~10s of latency per call (the extension normalizes a missing slash for you, but the default is correct as shipped).",
           "order": 1
         },
         "engraphy.token": {
           "type": "string",
           "default": "",
-          "markdownDescription": "**Deprecated — do not use.** The token now lives in the OS keychain (VS Code SecretStorage). Set it with the **Engraphy: Connect to a server** command. A value left here is migrated into the keychain and cleared on next activation.",
+          "markdownDescription": "**Deprecated, do not use.** The token now lives in the OS keychain (VS Code SecretStorage). Set it with the **Engraphy: Connect to a server** command. A value left here is migrated into the keychain and cleared on next activation.",
           "markdownDeprecationMessage": "Storing the token here puts a live credential in plain text in `settings.json` and syncs it through Settings Sync. Run **Engraphy: Connect to a server** instead; it stores the token in the OS keychain.",
           "deprecationMessage": "Deprecated: use the 'Engraphy: Connect to a server' command. The token is stored in the OS keychain, not in settings.",
           "order": 2
@@ -57,7 +57,7 @@
         "engraphy.space": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional label for the space this connection targets. **Informational only** — the actual space is determined by your `engraphy.token`. Used to label the server and the status bar.",
+          "markdownDescription": "Optional label for the space this connection targets. **Informational only**: the actual space is determined by your `engraphy.token`. Used to label the server and the status bar.",
           "order": 3
         },
         "engraphy.composeWorkingDirectory": {
@@ -179,24 +179,24 @@
       {
         "id": "engraphySetup",
         "title": "Set up Engraphy",
-        "description": "Get from a cold install to a connected memory server — hosted (soon), local Docker, or your own.",
+        "description": "Get from a cold install to a connected memory server: hosted (soon), local Docker, or your own.",
         "steps": [
           {
             "id": "welcome",
             "title": "Welcome to Engraphy",
-            "description": "Engraphy is a memory engine for AI agents. To use it you need a server to connect to.\nThere are three ways to get one — pick whichever fits.\n[Connect to a server…](command:engraphy.configureServer)",
+            "description": "Engraphy is a memory engine for AI agents. To use it you need a server to connect to.\nThere are three ways to get one; pick whichever fits.\n[Connect to a server…](command:engraphy.configureServer)",
             "media": { "markdown": "media/walkthrough/welcome.md" }
           },
           {
             "id": "cloud",
             "title": "Connect to Engraphy Cloud",
-            "description": "Hosted Engraphy is **not available yet** — this path is coming soon.\n[What's the status?](command:engraphy.cloudComingSoon)",
+            "description": "Hosted Engraphy is **not available yet**; this path is coming soon.\n[What's the status?](command:engraphy.cloudComingSoon)",
             "media": { "markdown": "media/walkthrough/cloud.md" }
           },
           {
             "id": "docker",
             "title": "Run locally with Docker",
-            "description": "Bring up the compose stack and mint a token — the real, working setup today.\n[Start local server](command:engraphy.startLocalServer)",
+            "description": "Bring up the compose stack and mint a token: the real, working setup today.\n[Start local server](command:engraphy.startLocalServer)",
             "media": { "markdown": "media/walkthrough/docker.md" }
           },
           {

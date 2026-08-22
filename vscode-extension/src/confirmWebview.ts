@@ -239,7 +239,7 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 		} catch (e) {
 			if (e instanceof EngraphyToolError && e.code === 'ENGRAPHY_PENDING_EXPIRED') {
 				void vscode.window.showWarningMessage(
-					'Engraphy: that pending write has expired — it can no longer be resolved. ' +
+					'Engraphy: that pending write has expired and can no longer be resolved. ' +
 						'Re-issue the write to get a fresh confirmation window.'
 				);
 			} else {
@@ -323,7 +323,7 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<link href="${styleUri}" rel="stylesheet" />
 	<link href="${statesCss}" rel="stylesheet" />
-	<title>Engraphy — Confirm-write queue</title>
+	<title>Engraphy: Confirm-write queue</title>
 </head>
 <body>
 	<header class="header">

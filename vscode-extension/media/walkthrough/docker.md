@@ -5,7 +5,7 @@ checkout of the Engraphy repo (`compose.yaml` lives at its root).
 
 > **Future one-liner (not published yet).** A single-command image
 > `docker run ghcr.io/devon-clarkk/engraphy:<tag>` is planned but **not published
-> today** — don't rely on it yet. Until then, use the compose steps below.
+> today**, so don't rely on it yet. Until then, use the compose steps below.
 
 ### 1. Create a `.env` next to `compose.yaml`
 
@@ -34,7 +34,7 @@ docker compose up -d engraphy
 > First boot **downloads the embedding model (~523 MB)** into a volume before it
 > serves anything (~45s on a fast link, longer on a slow one). Watch readiness:
 > `docker compose ps` (engraphy goes `health: starting` → `healthy`). If it shows
-> `Restarting`, read `docker compose logs engraphy` — that's a real error, not the
+> `Restarting`, read `docker compose logs engraphy`. That's a real error, not the
 > model download. You can also use **Engraphy: Start local server** from the
 > Command Palette to run `docker compose up` for you.
 
@@ -50,7 +50,7 @@ docker compose --profile admin run --rm admin \
   --client-name vscode --role readwrite
 ```
 
-The token prints **once** — copy it now.
+The token prints **once**, so copy it now.
 
 ### 5. Point the extension at it
 

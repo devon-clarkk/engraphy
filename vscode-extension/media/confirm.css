@@ -1,4 +1,4 @@
-/* Engraphy confirm-write queue — webview styling.
+/* Engraphy confirm-write queue: webview styling.
  *
  * THEME ADAPTIVITY: every structural surface (page/card backgrounds, text,
  * borders, buttons, focus, hover) is driven by the VS Code theme's injected
@@ -7,7 +7,7 @@
  * background.
  *
  * BRAND: the Engraphy Verdant (#4C7A59) is layered on top purely as an accent
- * — the primary Approve button, the card's left edge, the loop mark, meters,
+ * the primary Approve button, the card's left edge, the loop mark, meters,
  * and headings. On dark themes the *text/icon* accent lifts to a lighter
  * verdant for contrast, while the Approve fill stays #4C7A59 (white text reads
  * at ~4.5:1 on it in both light and dark). Fill and on-fill are defined as a
@@ -19,7 +19,7 @@
 	--brand-green: #4c7a59;
 	--brand-on-green: #ffffff;
 	--brand-green-hover: #3f6549;
-	/* Brand text/icon/mark accent — green-on-surface. Lifted on dark below. */
+	/* Brand text/icon/mark accent: green-on-surface. Lifted on dark below. */
 	--brand-accent-text: #4c7a59;
 	--brand-mark: #4c7a59;
 
@@ -58,7 +58,7 @@ body {
 }
 
 /* Brand type: Space Mono if present, graceful system-mono fallback otherwise
-   (respects the webview CSP — no external font fetch). */
+   (respects the webview CSP, so no external font fetch). */
 .brand-mono {
 	font-family: 'Space Mono', ui-monospace, 'SFMono-Regular', 'Cascadia Code', Menlo, Consolas,
 		monospace;
