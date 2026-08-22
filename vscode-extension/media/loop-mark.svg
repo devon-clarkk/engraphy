@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28" role="img" aria-label="Engraphy loop mark">
+  <!-- The Engraphy loop, on a transparent background so it sits on any theme.
+       Verdant #4C7A59 reads on both light and dark; the webview may recolor it
+       via a lighter accent on dark themes (see confirm.css --brand-mark). -->
+  <path d="M35 66 C6 46 19 16 50 20 C82 24 93 55 62 68 C44 75 34 59 50 50"
+        fill="none" stroke="#4C7A59" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

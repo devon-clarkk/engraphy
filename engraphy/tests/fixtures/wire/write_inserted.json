@@ -1,0 +1,58 @@
+{
+  "tool": "write",
+  "outcome": "inserted",
+  "request": {
+    "name": "write",
+    "arguments": {
+      "scope": "project-alpha",
+      "type": "error",
+      "title": "Vite build fails on case-sensitive import",
+      "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+      "attrs": {
+        "severity": "high",
+        "happened_at": "2026-07-06"
+      }
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "inserted",
+    "node": {
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "type": "error",
+      "scope": "project-alpha",
+      "title": "Vite build fails on case-sensitive import",
+      "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+      "attrs": {
+        "severity": "high",
+        "happened_at": "2026-07-06"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "resonance": [
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "type": "pattern",
+        "scope": "project-alpha",
+        "title": "CI is case-sensitive; local macOS is not",
+        "similarity": 0.82,
+        "links": [
+          {
+            "type": "derived_from",
+            "direction": "in",
+            "peer_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+            "peer_title": "Enforce lowercase import paths in lint config"
+          }
+        ]
+      }
+    ]
+  },
+  "volatile": [
+    "response.node.id",
+    "response.node.created_at",
+    "response.resonance[].id",
+    "response.resonance[].links[].peer_id"
+  ]
+}

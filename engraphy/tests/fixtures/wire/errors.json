@@ -1,0 +1,48 @@
+{
+  "tool": "*",
+  "outcome": "error",
+  "note": "MCP tool errors: text is 'ENGRAPHY_<CODE>: <sentence naming field+rule>'. NEEDS_CONFIRMATION is NOT here — it is a normal pending result (see write_needs_confirmation.json).",
+  "cases": [
+    {
+      "code": "VALIDATION",
+      "tool": "write",
+      "text": "ENGRAPHY_VALIDATION: attrs.severity must be one of low|medium|high"
+    },
+    {
+      "code": "NOT_FOUND",
+      "tool": "get",
+      "text": "ENGRAPHY_NOT_FOUND: no readable node with id 00000000-0000-4000-8000-000000000000"
+    },
+    {
+      "code": "SCOPE_UNKNOWN",
+      "tool": "write",
+      "text": "ENGRAPHY_SCOPE_UNKNOWN: scope 'nope' does not exist or is not writable"
+    },
+    {
+      "code": "EDGE_RULE",
+      "tool": "link",
+      "text": "ENGRAPHY_EDGE_RULE: no rule permits (relates_to, error -> decision)"
+    },
+    {
+      "code": "RATE_LIMITED",
+      "tool": "search",
+      "retry_after_ms": 4200,
+      "text": "ENGRAPHY_RATE_LIMITED: read window exceeded, retry after 4200ms"
+    },
+    {
+      "code": "ROLE",
+      "tool": "write",
+      "text": "ENGRAPHY_ROLE: this token is readonly and cannot call write"
+    },
+    {
+      "code": "PENDING_EXPIRED",
+      "tool": "resolve_duplicate",
+      "text": "ENGRAPHY_PENDING_EXPIRED: pending write expired; issue a fresh write"
+    },
+    {
+      "code": "INTERNAL",
+      "tool": "*",
+      "text": "ENGRAPHY_INTERNAL: an unexpected error occurred"
+    }
+  ]
+}

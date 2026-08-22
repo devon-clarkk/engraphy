@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.env
+dist/
+*.egg-info/
+.coverage
+review_queue*.csv
+
+# Internal working notes -- never commit these. They are session/hand-off
+# scratch for humans and agents working on the repo, not part of the product.
+STATUSREPORT-*.md
+sonnet-*.md
+.git-backup/
+
+# Pre-migrate dumps written by the admin sidecar (deploy/checklist.md)
+backups/
+
+# setuptools build dir (left by `pip install .`)
+build/
+
+# Benchmark run artifacts (design/09) -- machine output, kept out of git.
+runs/
+
+# Benchmark datasets (design/09). CC BY-NC 4.0 for LoCoMo -- not ours to
+# redistribute, and 2.8 MB besides. Acquire with bench/datasets/README.md.
+# Root-anchored: an unanchored `datasets/` would also swallow the committed
+# bench/datasets/ acquisition instructions.
+/datasets/
+
+# Raw retrieval envelopes sidecar (diagnostics) — large, kept out of git
+**/envelopes.jsonl

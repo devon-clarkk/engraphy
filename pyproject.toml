@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "engraphy"
+# Single source of truth: engraphy/__init__.py's __version__. The number used to
+# be written in three places (here, that module, and a literal ENGINE_VERSION in
+# server/app.py that /healthz reported), with nothing keeping them equal -- a
+# release that bumped one would ship a server reporting a different version than
+# it was. setuptools reads the attribute statically (no import, so this does not
+# drag dependencies into the build), and app.py now reads the same attribute at
+# runtime, so all three can only ever agree.
+dynamic = ["version"]
+description = "A self-hosted memory engine for AI agents"
+requires-python = ">=3.12"
+dependencies = [
+  "mcp>=1.9,<2",                 # official MCP SDK (FastMCP server API). Upper bound: mcp 2.0.0
+                                 # dropped the low-level Server.list_tools/call_tool decorators the
+                                 # server uses (app.py::_build_mcp_server), crash-looping boot on any
+                                 # fresh build. <2 keeps the known-good 1.x line (resolves to 1.28.1).
+  "psycopg[binary,pool]>=3.2",
+  "pydantic>=2.7",
+  "sentence-transformers>=3.0",  # loads nomic-embed-text-v1.5 (trust_remote_code pinned in embedding.py)
+  "einops>=0.7",                 # required by nomic-embed-text-v1.5's remote modeling code
+  "pyyaml>=6.0",
+  "jsonschema>=4.22",
+  "typer>=0.12",                 # engraphy-admin CLI
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "hypothesis>=6.100", "ruff>=0.4", "pytest-cov>=5",
+       "pytest-timeout>=2.3"]  # a deadlocking test must fail the run, not hang it (the dedup race test contends a real advisory lock)
+# The benchmark harness (design/09). Deliberately its own extra, not a runtime
+# dependency: the engine must not grow an LLM client, and `pip install engraphy`
+# must not drag one in. `bench/core/llm.py` imports anthropic lazily so that the
+# bench test suite still collects and runs without this extra installed.
+bench = ["anthropic>=0.40"]
+
+[project.scripts]
+engraphy-admin = "engraphy.admin.cli:app"
+
+[tool.setuptools.dynamic]
+version = {attr = "engraphy.__version__"}
+
+[tool.setuptools.packages.find]
+# `packs*` ships the pack JSON Schema + starter pack (see packs/__init__.py).
+include = ["engraphy*", "packs*", "bench*"]
+
+# Runtime data files that code locates RELATIVE TO ITS OWN MODULE. Without
+# these, `pip install .` produced a package whose admin verbs could not find
+# their own assets -- `engraphy-admin migrate` failed with dbmate's "could not
+# find migrations directory" and `pack validate|apply` with
+# FileNotFoundError on site-packages/packs/schema.json. The install paths below
+# are chosen to match the existing resolution exactly, so no code changes:
+#   engraphy/admin/migrate.py -> parents[1]/db/migrations  -> engraphy/db/migrations
+#   engraphy/server/app.py    -> parents[1]/db/migrations  -> engraphy/db/migrations
+#   engraphy/admin/packs.py   -> parents[2]/packs/schema.json -> packs/schema.json
+[tool.setuptools.package-data]
+"engraphy.db" = ["migrations/*.sql"]
+"packs" = ["schema.json", "starter/*.yaml"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules import shared pytest fixtures from sibling test modules (e.g.
+# `from engraphy.tests.test_dedup import write_space`) and reuse them as test-
+# function parameters -- the standard pytest idiom, which ruff reads as F811
+# redefinition. Ignore F811 in the test tree; it is not a real redefinition bug.
+"engraphy/tests/**" = ["F811"]
+"bench/tests/**" = ["F811"]  # same cross-module fixture idiom as the engine tests
+
+[tool.pytest.ini_options]
+# The harness's tests run in the same invocation as the engine's. They are
+# hermetic by construction (no LLM calls -- `bench/core/llm.py` is behind a seam
+# that tests stub), so adding them here does not make the default run require
+# network or the `bench` extra.
+testpaths = ["engraphy/tests", "bench/tests"]
+asyncio_mode = "auto"

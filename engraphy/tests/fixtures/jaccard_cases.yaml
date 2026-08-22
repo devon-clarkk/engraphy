@@ -1,0 +1,84 @@
+# Golden fixtures — jaccard tokenizer + novelty. Normative: design/07 §Exact formulas.
+# expect_j to 4dp; expect_addendum == (J < 0.8). DO NOT EDIT expected values to pass.
+- name: paraphrase_below_threshold
+  body_a: "Deploy failed because migration not run"
+  body_b: "The deploy failed because the migration was not run"
+  expect_j: 0.7500          # A={deploy,failed,because,migration,not,run} B=A∪{the,was}; 6/8
+  expect_addendum: true
+- name: identical
+  body_a: "same text here"
+  body_b: "same text here"
+  expect_j: 1.0000
+  expect_addendum: false
+- name: both_empty
+  body_a: ""
+  body_b: ""
+  expect_j: 1.0000          # defined: J=1.0 when both sets empty
+  expect_addendum: false
+- name: one_empty
+  body_a: ""
+  body_b: "x"
+  expect_j: 0.0000
+  expect_addendum: true
+- name: unicode_and_punctuation
+  body_a: "ABC-123 déjà vu!"
+  body_b: "abc 123 vu"
+  expect_j: 0.7500          # A={abc,123,déjà,vu} B={abc,123,vu}; 3/4
+  expect_addendum: true
+- name: disjoint
+  body_a: "alpha beta"
+  body_b: "gamma delta"
+  expect_j: 0.0000
+  expect_addendum: true
+- name: exact_boundary_not_novel
+  body_a: "a b c d"
+  body_b: "a b c d e"
+  expect_j: 0.8000          # 4/5 — NOT < 0.8, so no addendum (strict inequality)
+  expect_addendum: false
+- name: repeated_tokens_collapse_to_set
+  body_a: "run run run fast fast"
+  body_b: "run fast slow"
+  expect_j: 0.6667          # A={run,fast} (repeats collapse) B={run,fast,slow}; 2/3
+  expect_addendum: true
+- name: numerals_are_tokens
+  body_a: "version 2 released in 2024"
+  body_b: "version 2 released in 2025"
+  expect_j: 0.6667          # A={version,2,released,in,2024} B={..,2025}; 4/6
+  expect_addendum: true
+- name: cjk_script_comma_separated
+  body_a: "部署失败,原因未知"
+  body_b: "部署失败,原因已知"
+  expect_j: 0.3333          # comma -> space; A={部署失败,原因未知} B={部署失败,原因已知}; 1/3
+  expect_addendum: true
+- name: emoji_only_bodies_both_tokenize_empty
+  body_a: "🎉🎊"
+  body_b: "🎉🎊✨"
+  expect_j: 1.0000          # emoji are non-alphanumeric -> both tokenize to the empty set -> defined J=1.0
+  expect_addendum: false
+- name: whitespace_only_vs_empty
+  body_a: "   "
+  body_b: ""
+  expect_j: 1.0000          # both tokenize to the empty set
+  expect_addendum: false
+- name: turkish_dotless_i_casefold_trap
+  body_a: "İstanbul"
+  body_b: "istanbul"
+  expect_j: 0.0000          # Python str.lower() on U+0130 -> "i" + combining dot above (U+0307);
+                             # the combining mark is non-alphanumeric -> splits into {i, stanbul},
+                             # neither of which equals {istanbul} -> 0/3
+  expect_addendum: true
+- name: numerals_partial_overlap
+  body_a: "12345"
+  body_b: "12345 usd"
+  expect_j: 0.5000          # A={12345} B={12345,usd}; 1/2
+  expect_addendum: true
+- name: hyphenation_normalizes_to_spacing
+  body_a: "state-of-the-art system"
+  body_b: "state of the art system"
+  expect_j: 1.0000          # hyphens are non-alphanumeric -> both tokenize to {state,of,the,art,system}
+  expect_addendum: false
+- name: ascii_case_fold_basic
+  body_a: "HELLO World"
+  body_b: "hello WORLD"
+  expect_j: 1.0000          # simple ASCII case-fold sanity, distinct from the Turkish trap above
+  expect_addendum: false

@@ -1,0 +1,139 @@
+# Pack template — a small, complete, VALID pack that exercises every construct
+# the pack format supports. Copy it, delete what you don't need, rename, and
+# run `engraphy-admin pack validate <file>` as you go. Read alongside
+# packs/authoring-guide.md.
+#
+# Everything below validates cleanly against packs/schema.json and the
+# attr-spec interpreter. The type names ("note", "task", ...) are illustrative —
+# replace them with your own domain's vocabulary.
+
+# --- Identity ------------------------------------------------------------
+# `pack`: lowercase, hyphen-ok, 2-41 chars. `version`: your pack's content
+# revision (bump when you change this file). Both required.
+pack: example
+version: 1
+
+# --- Node types ----------------------------------------------------------
+# At least one is required. Each name is lowercase/underscore, 2-41 chars, and
+# needs a `description` (the text an agent reads to know what the type means —
+# write it for the agent, not for you). `attrs` is optional; when present it is
+# the type's structured-field contract, enforced at write time in the database.
+node_types:
+
+  # Minimal type: just a description. `closed: true` (the default) means a write
+  # may not carry any attribute keys — all knowledge goes in title/body.
+  note:
+    description: "A free-form note worth keeping. One idea per note."
+    attrs: {closed: true}
+
+  # A type showing every attr construct. Keep structured attrs FEW: they are for
+  # fields you filter or sort on, not for prose (that belongs in the body).
+  task:
+    description: "Something to be done, with a due date and a status."
+    attrs:
+      required:                              # keys that MUST be present on a write
+        status: {enum: [open, done]}         # {enum: [...]} — a string from a fixed list
+        due:    {type: date}                 # {type: date} — an ISO-8601 date (YYYY-MM-DD)
+      optional:                              # keys that MAY be present
+        priority: {type: int}                # {type: int}    — a whole number
+        effort:   {type: number}             # {type: number} — any number
+        urgent:   {type: bool}               # {type: bool}   — true/false
+        detail:   {type: string}            # {type: string} — text, up to 2000 chars
+      # One conditional form is supported: require a key only when another key
+      # holds a given value. Here `detail` is required once a task is `done`.
+      requires:
+        - {key: detail, when: {key: status, equals: done}}
+      closed: true                           # reject any attr key not named above (recommended)
+
+  resource:
+    description: "A pointer to something external: a link, a doc, a place."
+    attrs:
+      optional:
+        url: {type: string}
+      closed: true
+
+# --- Edge types ----------------------------------------------------------
+# The relationship vocabulary. `bidirectional: true` means the edge is walked
+# both ways in traversal (use it for symmetric relations like "relates to").
+edge_types:
+  about:
+    description: "This memory is about that note."
+    bidirectional: false
+  relates_to:
+    description: "A generic association, either direction. Also the edge the duplicate-check handshake attaches on a 'distinct' resolution — worth keeping in most packs."
+    bidirectional: true
+  depends_on:
+    description: "This task cannot start until that one is done."
+    bidirectional: false
+  supersedes:
+    description: "This node replaces an older one. Attached by the core `supersede` tool — every pack should permit it so corrections work."
+    bidirectional: false
+  # Keep this in most packs — the merge path attaches it automatically; without
+  # it, merged-but-distinct facts are still saved and searchable but lose their
+  # cluster edge (and `pack validate` warns).
+  same_topic:
+    description: "Same topic, distinct content: two near-duplicates the engine kept both of. Attached automatically by the merge path; walk it to see every stored statement on a topic."
+    bidirectional: true
+
+# --- Edge rules ----------------------------------------------------------
+# Which (type, source-type, destination-type) combinations are legal. An edge
+# whose (type, src, dst) has no rule here is REJECTED at write time. `"*"` means
+# "any node type in this pack" and is expanded to concrete rows when the pack is
+# applied. Every `type`, `src`, and `dst` must name something defined above.
+edge_rules:
+  - {type: about,      src: "*",  dst: note}
+  - {type: relates_to, src: "*",  dst: "*"}
+  - {type: depends_on, src: task, dst: task}
+  - {type: supersedes, src: "*",  dst: "*"}
+  # Wildcard like supersedes — the merge path attaches same_topic between two
+  # same-type near-duplicates it keeps both of.
+  - {type: same_topic, src: "*",  dst: "*"}
+
+# --- Ambient scopes ------------------------------------------------------
+# Scope ids to mark "ambient": an ambient scope rides along on every query by a
+# principal who can read it (a personal always-on context). Optional. This names
+# the scope; the scope itself is created separately (space create / scope_create).
+ambient_scopes: [profile]
+
+# --- Briefing ------------------------------------------------------------
+# The session-start sections `briefing` returns, in this order (max 8). Each
+# section needs a `name`; the rest is a small, closed filter grammar. Any
+# `type`/`types` must be a defined node type; any `edge` a defined edge type.
+briefing:
+  sections:
+    # Filter by type + one attribute equality; sort by an attribute.
+    - {name: open_tasks, type: task,
+       where_attr: {key: status, equals: open}, order_by_attr: due}
+    # Date predicate: `before`/`after` take an ISO date or a relative +Nd form.
+    - {name: due_soon, type: task,
+       where_attr: {key: due, before: "+7d"}, order_by_attr: due}
+    # Semantic section: surfaces nodes relevant to the call's `hint`. It needs a
+    # hint to return anything, and it applies a relevance floor. `top_k` <= 10.
+    - {name: relevant, semantic: true, types: [note, resource], top_k: 5}
+    # Recency: nodes from the last N days (`^[0-9]+d$`).
+    - {name: recent_notes, type: note, recent: 14d}
+    # Pull in linked neighbours of the matched nodes along one edge.
+    - {name: annotated_notes, type: note,
+       include_linked: {edge: about, direction: in}}
+    # Presence/absence of an edge: tasks that depend on nothing (are unblocked).
+    - {name: unblocked_tasks, type: task,
+       without_edge: {edge: depends_on, direction: out}}
+  footer: {inbox_pending_count: true}    # show the count of aged pending captures
+
+# --- Tool aliases (optional) ---------------------------------------------
+# Extra tool names that bind to a core tool with a preset argument — pure
+# ergonomic sugar, no new behaviour. An alias may only bind a core tool and may
+# only preset that tool's own arguments. A preset always wins over a caller
+# value, so `log_task` always writes type `task`.
+tool_aliases:
+  log_task:
+    binds: write
+    preset: {type: task}
+    description: "Record a task. Same as write with type=task."
+
+# --- Tool descriptions (optional) ----------------------------------------
+# Override the engine's default one-line description for a tool, per space. This
+# is where a pack teaches a hook-less client the protocol (see deploy/clients.md).
+tool_descriptions:
+  briefing: "Call this first: it returns your open and soon-due tasks, relevant notes, and recent activity."
+  write: "Save a task, note, or resource. The server deduplicates, so re-telling is safe; if a write returns 'merged' but you were correcting the memory, call supersede."

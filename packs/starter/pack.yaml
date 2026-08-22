@@ -1,0 +1,70 @@
+# Starter pack — the shipped default for a new space (design/01).
+# Deliberately small: a general assistant's memory without a specialized engineering chain.
+pack: starter
+version: 1
+
+node_types:
+  note:
+    description: "A stable, useful fact or piece of knowledge worth keeping. Prefer a more specific type when one fits."
+    attrs: {closed: true}
+  person:
+    description: "Someone whose context matters across conversations: relationship, constraints, relevant facts."
+    attrs:
+      required: {relation: {type: string}}
+      optional: {contact_notes: {type: string}}
+      closed: true
+  preference:
+    description: "A durable like/dislike/default. strength=hard means never override; soft means default."
+    attrs:
+      required: {strength: {enum: [hard, soft]}}
+      optional: {domain: {type: string}}
+      closed: true
+  commitment:
+    description: "A dated or recurring obligation. cadence is 'once' or human-readable recurrence."
+    attrs:
+      required: {cadence: {type: string}, next_due: {type: date}}
+      optional: {channel: {type: string}}
+      closed: true
+  project_ref:
+    description: "A pointer to an ongoing effort or external resource: what it is and where it lives."
+    attrs:
+      required: {location: {type: string}}
+      optional: {kind: {type: string}}
+      closed: true
+
+edge_types:
+  involves:   {description: "This memory concerns this person.", bidirectional: false}
+  references: {description: "This memory points at this project/resource.", bidirectional: false}
+  relates_to: {description: "Weak generic association.", bidirectional: true}
+  supersedes: {description: "Replacement; the old node's status becomes superseded.", bidirectional: false}
+  same_topic: {description: "Same topic, distinct content: the write path banded these nodes as near-duplicates but kept both because each carries its own information. Attached automatically on merge; walk it to see every stored statement on a topic.", bidirectional: true}
+
+edge_rules:
+  - {type: involves,   src: "*",  dst: person}
+  - {type: references, src: "*",  dst: project_ref}
+  - {type: relates_to, src: "*",  dst: "*"}
+  # The merge path attaches same_topic automatically when a near-duplicate
+  # carries distinct content (design/analysis/fact-searchability-model.md §2.2);
+  # wildcard like supersedes: member and canonical are same-type by construction.
+  - {type: same_topic, src: "*", dst: "*"}
+  # supersede() is a core tool under every pack (03 §Tool table), so the starter
+  # pack must permit the edge it inserts. Wildcard like relates_to: the engine
+  # already rejects cross-type supersession itself (dedup-write-path-plan.md
+  # §Supersede atomicity: "same type as replacement -- cross-type supersession
+  # is a modeling error, rejected"), so enumerating same-type rules per node
+  # type would restate that check without adding enforcement.
+  - {type: supersedes, src: "*",  dst: "*"}
+
+ambient_scopes: [personal]
+
+briefing:
+  sections:
+    - {name: due_commitments, type: commitment,
+       where_attr: {key: next_due, before: "+3d"}, order_by_attr: next_due}
+    - {name: relevant, semantic: true, types: [preference, note, person], top_k: 5}
+    - {name: recent_notes, type: note, recent: 7d}
+  footer: {inbox_pending_count: true}
+
+tool_descriptions:
+  briefing: "Call this first in a conversation that could benefit from memory: it returns due commitments, relevant preferences and notes."
+  write: "Save something durably worth remembering: a preference, a person's context, a commitment, a useful fact. The server deduplicates — re-telling is safe."

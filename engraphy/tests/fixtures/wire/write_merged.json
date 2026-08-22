@@ -1,0 +1,46 @@
+{
+  "tool": "write",
+  "outcome": "merged",
+  "request": {
+    "name": "write",
+    "arguments": {
+      "scope": "project-alpha",
+      "type": "error",
+      "title": "Case-sensitive import breaks CI",
+      "body": "Same lesson, reworded: ./Foo vs foo.tsx bites only in Linux CI.",
+      "attrs": {
+        "severity": "high",
+        "happened_at": "2026-07-09"
+      }
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "merged",
+    "canonical": {
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "type": "error",
+      "scope": "project-alpha",
+      "title": "Vite build fails on case-sensitive import",
+      "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+      "attrs": {
+        "severity": "high",
+        "happened_at": "2026-07-06"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "similarity": 0.97,
+    "addendum_added": true,
+    "links_attached": 2,
+    "links_skipped": 0,
+    "resonance": [],
+    "instruction": "Compare your write with the canonical node's body: if it contradicts or updates it rather than restating it, call supersede with old_id set to the canonical id to make your version the current fact."
+  },
+  "note": "`instruction` is a static string present on EVERY merged envelope, mirroring the pending envelope's (design/07, July 2026 revision). It is the engine's half of the caller contract ruled 2026-07-21: auto-merge cannot distinguish a restatement from a negation, and `addendum_added: true` otherwise reads as \"your information is stored\" when the addendum is get-only and never re-embedded -- so search and briefing keep serving the stale body as the current fact. resolve_duplicate's and inbox_review(promote)'s merged outcomes carry it identically; import mode strips the report.",
+  "volatile": [
+    "response.canonical.id",
+    "response.canonical.created_at"
+  ]
+}

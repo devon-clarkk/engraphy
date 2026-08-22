@@ -1,0 +1,37 @@
+{
+  "tool": "write",
+  "outcome": "needs_confirmation",
+  "request": {
+    "name": "write",
+    "arguments": {
+      "scope": "project-alpha",
+      "type": "error",
+      "title": "Import path casing issue",
+      "body": "Something about import casing and CI, but phrased differently.",
+      "attrs": {
+        "severity": "medium",
+        "happened_at": "2026-07-10"
+      }
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "needs_confirmation",
+    "pending_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "expires_at": "2026-07-11T12:00:00Z",
+    "candidates": [
+      {
+        "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "title": "Vite build fails on case-sensitive import",
+        "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+        "similarity": 0.87
+      }
+    ],
+    "instruction": "Call resolve_duplicate with resolution 'distinct' or 'merge'."
+  },
+  "volatile": [
+    "response.pending_id",
+    "response.expires_at",
+    "response.candidates[].id"
+  ]
+}

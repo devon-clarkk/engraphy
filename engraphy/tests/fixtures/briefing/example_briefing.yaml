@@ -1,0 +1,70 @@
+# Golden fixture — the example pack's briefing byte-compares to this
+# expected output (design/07 §Testing "the example pack's briefing
+# byte-compares to its committed expected fixture"; the fixture encodes a general
+# design/02 memory_briefing contract so the check runs STANDALONE).
+#
+# Run HINT-LESS (advisor): Example's `relevant` section is semantic, so with a
+# hint its contents depend on the real model's ranking -- non-deterministic for a
+# byte-compare. No hint -> that section is nodes: [] (Q2), and the whole briefing
+# is deterministic, still exercising the other four sections + footer.
+#
+# The harness applies the real example-pack.yaml (its node/edge types, rules,
+# and the `life` ambient scope) and uses its committed `briefing:` config; this
+# file supplies the seed + expected. Seed attrs are valid against Example's
+# real attr specs. Brief scope = 'work' (a private scope the harness creates).
+
+pack: example
+scope: work
+# hint: absent -> semantic `relevant` section is empty
+
+seed:
+  scopes:
+    - {id: work, ambient: false}      # p1-owned working scope (harness creates)
+  nodes:
+    # decisions (active) + one archived; each active decision has a check.
+    - {label: D1, type: decision, scope: work, title: "Pin production dependencies", body: "Pin exact versions of every production dependency; no floating ranges.", attrs: {}}
+    - {label: D2, type: decision, scope: work, title: "Two-person review on main", body: "Every change merged to main carries a second reviewer's approval.", attrs: {}}
+    - {label: D3, type: decision, scope: work, status: archived, title: "Retired deploy policy", body: "A superseded decision that must not appear in the briefing.", attrs: {}}
+    - {label: C1, type: check, scope: work, title: "Lockfile freshness", body: "CI fails when the lockfile is missing or out of date.", attrs: {method: command, command: "make verify-lock"}}
+    - {label: C2, type: check, scope: work, title: "Branch protection", body: "Main requires at least one approving review.", attrs: {method: manual}}
+    # commitments: two within +3d (order by next_due asc), one beyond.
+    - {label: M1, type: commitment, scope: work, title: "Daily standup", body: "Attend the daily engineering standup.", attrs: {cadence: "daily", next_due: "REL:+1d"}}
+    - {label: M2, type: commitment, scope: work, title: "Weekly report", body: "Send the weekly status report.", attrs: {cadence: "weekly", next_due: "REL:+2d"}}
+    - {label: M3, type: commitment, scope: work, title: "Quarterly review", body: "Prepare the quarterly review deck.", attrs: {cadence: "quarterly", next_due: "REL:+40d"}}
+    # goals: one active, one paused.
+    - {label: G1, type: goal, scope: work, title: "Ship Engraphy v0.1", body: "Reach the v0.1 release milestone.", attrs: {status: "active"}}
+    - {label: G2, type: goal, scope: work, title: "Rewrite the exporter", body: "A deferred, paused goal.", attrs: {status: "paused"}}
+    # errors: one recent+open, one recent+explained, one old. A pattern explains E2.
+    - {label: E1, type: error, scope: work, created_days_ago: 2, title: "Deploy skipped a migration", body: "A production deploy shipped without running a pending migration.", attrs: {severity: "high", happened_at: "REL:-2d"}}
+    - {label: E2, type: error, scope: work, created_days_ago: 3, title: "Cache stampede under load", body: "A cold cache caused a thundering-herd stampede on the API.", attrs: {severity: "medium", happened_at: "REL:-3d"}}
+    - {label: E3, type: error, scope: work, created_days_ago: 40, title: "Ancient outage", body: "An incident well outside the 14-day recency window.", attrs: {severity: "low", happened_at: "REL:-40d"}}
+    - {label: P1, type: pattern, scope: work, created_days_ago: 3, title: "Gate deploys on pending migrations", body: "Block a deploy when a migration is pending.", attrs: {occurrences: 2}}
+    # a preference that must NOT appear (semantic section is empty, hint-less).
+    - {label: PR1, type: preference, scope: work, title: "Prefers async updates", body: "Prefers written async status over meetings.", attrs: {strength: "soft"}}
+  edges:
+    - {type: verified_by,  src: D1, dst: C1}
+    - {type: verified_by,  src: D2, dst: C2}
+    - {type: derived_from, src: P1, dst: E2}   # E2 is explained -> excluded from open_errors
+  inbox:
+    - {scope: work, status: pending, created_days_ago: 15}   # counts (aged > 14d: the nag)
+    - {scope: null, status: pending, created_days_ago: 15}   # unscoped, aged -> counts everywhere
+
+expect:
+  sections:
+    - name: standing_decisions
+      nodes: [D2, D1]          # active only; updated_at desc (D2 seeded after D1)
+      order: updated_at_desc
+      linked:
+        D2: [C2]
+        D1: [C1]
+    - name: due_commitments
+      nodes: [M1, M2]          # within +3d, ordered by next_due asc; M3 excluded
+    - name: active_goals
+      nodes: [G1]              # G2 paused, excluded
+    - name: relevant
+      nodes: []                # semantic, hint-less -> empty (Q2)
+    - name: open_errors
+      nodes: [E1]              # E2 explained (incoming derived_from), E3 too old
+  footer: {inbox_pending: 2}
+  node_detail: full
+  linked_detail: full

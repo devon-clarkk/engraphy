@@ -1,0 +1,46 @@
+{
+  "tool": "search",
+  "outcome": "ok",
+  "request": {
+    "name": "search",
+    "arguments": {
+      "scope": "all",
+      "query": "why does CI fail on imports that work locally",
+      "detail": "full"
+    }
+  },
+  "response": {
+    "v": 1,
+    "detail": "full",
+    "results": [
+      {
+        "node": {
+          "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+          "type": "error",
+          "scope": "project-alpha",
+          "title": "Vite build fails on case-sensitive import",
+          "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+          "attrs": {
+            "severity": "high",
+            "happened_at": "2026-07-06"
+          },
+          "status": "active",
+          "author": "devon",
+          "created_at": "2026-07-06T12:00:00Z"
+        },
+        "score": 0.0323,
+        "similarity": 0.81,
+        "edge_count": 3
+      }
+    ],
+    "scopes_searched": [
+      "project-alpha",
+      "life"
+    ],
+    "truncated": false
+  },
+  "volatile": [
+    "response.results[].node.id",
+    "response.results[].node.created_at"
+  ]
+}

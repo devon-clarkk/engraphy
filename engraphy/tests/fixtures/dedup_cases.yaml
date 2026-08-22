@@ -1,0 +1,113 @@
+# Golden fixtures — dedup band selection. Bands are design intent (fixed NOW);
+# `similarity` values are baselined by scripts/baseline_dedup_fixtures.py against the
+# pinned model (nomic-embed-text-v1.5 @384) in E1, then asserted within ±0.02 forever.
+# Re-baselining is allowed ONLY on a deliberate model change (design/04 playbook).
+- name: near_identical_auto_merge
+  a: {title: "Deploy failed: migration not run", body: "The Azure deploy failed because the backfill migration was never executed before switching the mapper."}
+  b: {title: "Deploy failure - migration wasn't run", body: "Azure deploy failed since the backfill migration was not executed prior to switching the mapper."}
+  expect_band: merge
+  similarity: 0.9897
+- name: same_topic_different_incident_pending
+  a: {title: "Deploy failed: migration not run", body: "The Azure deploy failed because the backfill migration was never executed."}
+  b: {title: "Deploy failed: wrong env var", body: "The Azure deploy failed because SPRING_PROFILES_ACTIVE was unset on the container app."}
+  expect_band: pending
+  similarity: 0.8242
+- name: unrelated_insert
+  a: {title: "Deploy failed: migration not run", body: "The Azure deploy failed because the backfill migration was never executed."}
+  b: {title: "Alex prefers morning appointments", body: "Book medical appointments before 11am; he is sharpest early."}
+  expect_band: insert
+  similarity: 0.4196
+- name: boundary_hunt_near_t_high_merge_side
+  a: {title: "Coffee maker needs descaling monthly", body: "The office coffee machine should be descaled every month or the taste degrades and the heating element fails faster."}
+  b: {title: "Coffee machine needs monthly descaling", body: "The office coffee machine should be descaled every month or the taste degrades and the heating element fails sooner."}
+  expect_band: merge   # near-verbatim, single word swap — intended to sit well above t_high
+  similarity: 0.9905
+- name: boundary_hunt_near_t_high_pending_side
+  a: {title: "Coffee maker needs descaling monthly", body: "The office coffee machine should be descaled every month or the taste degrades and the heating element fails faster."}
+  b: {title: "Espresso machine requires monthly descaling", body: "The espresso machine in the kitchen needs monthly descaling to prevent scale buildup affecting flavor and pump longevity."}
+  expect_band: pending   # same topic, different appliance/wording — intended to sit just below t_high
+  similarity: 0.8833
+- name: boundary_hunt_near_t_low_pending_side
+  a: {title: "Prefers window seat on flights", body: "Alex always requests a window seat when booking flights, especially on long-haul routes."}
+  b: {title: "Books aisle seat for short flights", body: "Alex tends to book an aisle seat for short domestic flights so he can get up easily."}
+  expect_band: pending   # related topic, different specifics — intended to sit just above t_low
+  similarity: 0.8606
+- name: boundary_hunt_near_t_low_insert_side
+  a: {title: "Prefers window seat on flights", body: "Alex always requests a window seat when booking flights, especially on long-haul routes."}
+  b: {title: "Dislikes flying with layovers", body: "Alex avoids booking flights with layovers longer than two hours because he finds them exhausting."}
+  expect_band: insert   # loosely related, different aspect of the same domain — intended to sit just below t_low
+  similarity: 0.7838
+- name: near_identical_different_domain
+  a: {title: "Prefers oat milk in coffee", body: "He always asks for oat milk instead of dairy when ordering coffee; regular milk upsets his stomach."}
+  b: {title: "Requests oat milk with coffee", body: "He always asks for oat milk rather than dairy when ordering coffee; regular milk upsets his stomach."}
+  expect_band: merge
+  similarity: 0.9775
+- name: paraphrase_pending_band
+  a: {title: "Weekly team standup moved to 10am", body: "The engineering team's daily standup was rescheduled from 9:30am to 10am starting this week."}
+  b: {title: "Standup time changed for the week", body: "This week only, the team's morning sync starts at 10:15am instead of the usual 9:30am slot."}
+  expect_band: pending
+  similarity: 0.8686
+- name: clearly_unrelated_insert_2
+  a: {title: "Weekly team standup moved to 10am", body: "The engineering team's daily standup was rescheduled from 9:30am to 10am starting this week."}
+  b: {title: "Recipe for weekend pancakes", body: "Mix flour, eggs, milk, and a pinch of salt; let the batter rest for ten minutes before cooking on a hot griddle."}
+  expect_band: insert
+  similarity: 0.5778
+- name: shared_boilerplate_prefix_trap
+  a: {title: "Incident report: payment service outage", body: "INCIDENT REPORT. Severity: high. Service: payment-api. Summary: The payment service returned 500 errors for eighteen minutes due to a database connection pool exhaustion after a traffic spike."}
+  b: {title: "Incident report: auth service outage", body: "INCIDENT REPORT. Severity: high. Service: auth-api. Summary: The auth service returned 500 errors for six minutes due to a Redis session store failover taking longer than expected."}
+  # Two boilerplate-sharing but distinct incidents. Pins two measured properties
+  # (QUESTIONS.md "shared-boilerplate-band", resolved 2026-07-16 option a): the
+  # shared "INCIDENT REPORT ..." header never pulls similarity to t_high, so there
+  # is NO false auto-merge (0.8934 < 0.95, 0.056 of margin); and it legitimately
+  # lands in the confirm band -- two reports on a shared template ARE worth
+  # confirming, not clearly distinct, which is 02's honest verdict for 0.80-0.95.
+  expect_band: pending
+  similarity: 0.8934
+- name: short_terse_bodies_merge
+  a: {title: "Gym on Tuesdays", body: "Goes to the gym every Tuesday evening."}
+  b: {title: "Gym Tuesday evenings", body: "Goes to the gym every Tuesday evening."}
+  expect_band: merge   # low-token-count extreme, still an exact-body match
+  similarity: 0.9632
+
+# --- Phase C attr-surface recalibration pairs (fact-searchability-phase-c.md §3.2) ---
+# Each side carries `attrs`; on the OLD surface these are ignored (embed = title+
+# body), on the NEW surface the searchable attrs (strings/dates) render into the
+# embedded document. Baselined on the OLD surface first (build order step 1); the
+# NEW-surface re-baseline (step 4) measures the shift against these pinned
+# before-values. `attrs` uses only construct-searchable keys (string/date).
+- name: attr_restatement_same_attrs
+  # same entity, same attrs, restated body -> stays >= t_high (absorbs). Adding the
+  # identical attr lines to both sides cannot lower similarity.
+  a: {title: "Priya's job", body: "Priya works as a paediatric nurse in Leeds.", attrs: {occupation: "paediatric nurse", location: "Leeds"}}
+  b: {title: "Priya's occupation", body: "Priya works as a paediatric nurse in Leeds now.", attrs: {occupation: "paediatric nurse", location: "Leeds"}}
+  expect_band: merge
+  similarity: 0.9788
+- name: attr_same_attrs_distinct_body
+  # same entity, same attrs, DISTINCT bodies -> the shared attrs push similarity UP
+  # relative to bodies alone; a >= t_high landing merge-links (Phase B preserves both).
+  a: {title: "Priya news", body: "Priya adopted a rescue greyhound last spring.", attrs: {occupation: "paediatric nurse", location: "Leeds"}}
+  b: {title: "Priya update", body: "Priya started training for a marathon this year.", attrs: {occupation: "paediatric nurse", location: "Leeds"}}
+  expect_band: insert
+  similarity: 0.7341
+- name: attr_distinct_dates_locations
+  # same shape, DIFFERENT date/location attrs + distinct body -> the differing attr
+  # lines push similarity DOWN (distinct facts differentiate further; the over-merge
+  # direction moves away from the band).
+  a: {title: "Coast trip", body: "The family took a holiday by the sea.", attrs: {occurred_on: "2023-06-15", location: "Brighton"}}
+  b: {title: "Mountain trip", body: "The family took a holiday in the hills.", attrs: {occurred_on: "2024-12-20", location: "Snowdonia"}}
+  expect_band: pending
+  similarity: 0.8586
+- name: attr_different_entities_shared_value
+  # different entities, one coincidentally-shared attr value (both in Leeds) -> the
+  # shared token adds little; distinct occupations/bodies keep them apart.
+  a: {title: "Priya", body: "Priya is a paediatric nurse.", attrs: {occupation: "paediatric nurse", location: "Leeds"}}
+  b: {title: "Tom", body: "Tom is a secondary-school teacher.", attrs: {occupation: "secondary-school teacher", location: "Leeds"}}
+  expect_band: insert
+  similarity: 0.6336
+- name: attr_less_control_pair
+  # NO attrs on either side -> new surface == old surface EXACTLY (tolerance 0). The
+  # identity pin: attr-less nodes are unmoved by Phase C.
+  a: {title: "Coffee maker descaling", body: "The office coffee machine needs descaling monthly."}
+  b: {title: "Descale the coffee machine", body: "The office coffee machine should be descaled every month."}
+  expect_band: merge
+  similarity: 0.9601

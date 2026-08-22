@@ -1,0 +1,199 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_PASSWORD: engram, POSTGRES_DB: engram_test}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ENGRAPHY_TEST_DATABASE_URL: postgres://postgres:engram@localhost:5432/engram_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -e '.[dev]'
+      - name: install dbmate
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo chmod +x /usr/local/bin/dbmate
+      # ubuntu-latest's default postgresql-client is not pinned to pg16 and can
+      # drift ahead of the pgvector/pg16 service above -- a pg_dump newer than
+      # the server it's dumping from is exactly the client/server mismatch
+      # test_shell_integration.py exists to catch, so pin the client to match
+      # the service via the PGDG apt repo rather than trust whatever ships.
+      - name: install postgresql-client-16 (pinned to match the pg16 service)
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+          sudo sed -i 's|deb https|deb [signed-by=/usr/share/keyrings/postgresql.gpg] https|' /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          # Proof, not assumption: fail loudly here rather than let a version
+          # mismatch surface as a confusing pg_dump/pg_restore error later.
+          pg_dump --version | grep -q ' 16\.' || { echo "pg_dump is not version 16 -- mismatches the pgvector/pg16 service"; pg_dump --version; exit 1; }
+      # dbmate migrations from empty DB (doubles as migration test — design/01)
+      - run: dbmate --migrations-dir engraphy/db/migrations --url "$ENGRAPHY_TEST_DATABASE_URL" up
+      - run: ruff check .
+      # CI grep gates (design/implementation plans):
+      - name: guard — GUCs set only in db.py
+        run: '! grep -rn "set_config.*engram\." engraphy/ --include="*.py" | grep -v "server/db.py" | grep -v tests/'
+      - name: guard — no embed() inside transactions
+        run: python scripts/check_no_embed_in_transaction.py
+      # design/09: the harness may import the engine, never the reverse -- that
+      # is what keeps LLM clients out of the engine's dependency closure.
+      - name: guard — engine does not import the benchmark harness
+        run: python scripts/check_engine_does_not_import_bench.py
+      - run: pytest --cov=engraphy -q
+      # attr_spec.py alone requires 100% branch coverage (its plan §Test plan):
+      - run: pytest engraphy/tests/test_attr_spec_py.py --cov=engraphy.core.attr_spec --cov-branch --cov-fail-under=100
+      # E1 exit gate: perf budgets at 10k seeded nodes (design/02 §Performance).
+      # Downloads the pinned embedding model on first run; roles/grants self-provisioned.
+      - name: perf budgets (bench.py)
+        run: python -m engraphy.tests.bench
+        env:
+          ENGRAPHY_BENCH_ITERS: "30"
+
+  # Exercises the SHIPPED deploy artifacts the way an operator does, following
+  # deploy/checklist.md's cloud profile end to end. The `test` job above proves
+  # the code works; this proves the packaging, images, compose wiring and the
+  # first-boot sequence work -- a distinction that mattered: an end-to-end
+  # operator walkthrough found eleven issues that the full unit suite was green
+  # through, five of which this job would have caught before a human saw them
+  # (model-cache permission crash-loop, missing healthcheck, the admin verbs'
+  # missing package data, migrate's host-tool dependency, and the pack-schema
+  # FileNotFoundError).
+  #
+  # Slow by nature (~15-20 min): it builds a torch-bearing image and downloads
+  # the ~523MB embedding model on first boot. That is the cost of testing the
+  # real artifact; it runs in parallel with `test`.
+  deploy-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+
+      # The MCP client for the round trip. Deliberately NOT `pip install .` --
+      # the client must reach the server over HTTP like any agent would, with no
+      # engraphy code in the process.
+      - name: install MCP client deps
+        run: pip install "mcp>=1.9" httpx
+
+      - name: write .env (checklist step 1)
+        run: |
+          printf 'POSTGRES_PASSWORD=%s\nENGRAPHY_APP_ROLE_PASSWORD=%s\n' \
+            "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
+
+      - name: postgres up + healthy (step 2)
+        run: |
+          docker compose up -d postgres
+          for i in $(seq 1 30); do
+            docker compose ps --format '{{.Status}}' postgres | grep -q healthy && exit 0
+            sleep 2
+          done
+          echo "postgres never became healthy"; docker compose logs postgres; exit 1
+
+      # Runs in the admin sidecar: no dbmate/psql/pg_dump on the host, and
+      # postgres publishes no port. Proves the sidecar is self-sufficient.
+      - name: migrate via admin sidecar (step 3)
+        run: docker compose --profile admin run --rm admin engraphy-admin migrate --dump-dir /backups
+
+      - name: provision app role via admin sidecar (step 4)
+        run: |
+          docker compose --profile admin run --rm admin sh -c \
+            'psql "$ENGRAPHY_DATABASE_URL" -v ON_ERROR_STOP=1 \
+               -v app_role_password="$ENGRAPHY_APP_ROLE_PASSWORD" \
+               -f deploy/provision-app-role.sql'
+
+      # The healthcheck is the point: "container running" != "server usable"
+      # while the model downloads. A crash-loop must fail here, loudly, rather
+      # than being mistaken for a slow download.
+      - name: engraphy up + healthcheck green (step 6)
+        run: |
+          docker compose up -d engraphy
+          for i in $(seq 1 90); do
+            status="$(docker compose ps --format '{{.Status}}' engraphy)"
+            case "$status" in
+              *"(healthy)"*)   echo "healthy after ~$((i*10))s"; exit 0 ;;
+              *Restarting*|*Exit*) echo "engraphy is crash-looping: $status"
+                                   docker compose logs engraphy; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "engraphy never became healthy"; docker compose logs engraphy; exit 1
+
+      - name: space + pack + token (step 7)
+        run: |
+          docker compose --profile admin run --rm admin \
+            engraphy-admin space create --id smoke --display-name "CI Smoke" --principal ci
+          docker compose --profile admin run --rm admin \
+            engraphy-admin pack apply packs/starter/pack.yaml --space smoke
+          # The token prints exactly once -- capture it here or it is unrecoverable.
+          docker compose --profile admin run --rm --no-TTY admin \
+            engraphy-admin token create --space smoke --principal ci \
+              --client-name ci-smoke --role readwrite \
+            | tr -d '\r' | tail -n 1 > /tmp/engraphy_token
+          test -s /tmp/engraphy_token || { echo "no token captured"; exit 1; }
+
+      # The actual product check: a real MCP client over the wire doing
+      # write -> paraphrase recall -> briefing -> near-duplicate merge.
+      - name: MCP round trip
+        run: |
+          ENGRAPHY_TOKEN="$(cat /tmp/engraphy_token)" \
+          ENGRAPHY_URL=http://127.0.0.1:8000 \
+          ENGRAPHY_SCOPE=personal-ci \
+            python scripts/deploy_smoke_mcp.py
+
+      # The restore half of the backup contract, on the deployment shape. This
+      # step exists because its absence let a real bug ship: the sidecar
+      # installed an unpinned postgresql-client (pg17) against a pg16 server,
+      # and `pg_restore` 17 emits a `SET transaction_timeout` that pg16
+      # rejects -- so `verify-restore` was broken on the cloud profile while
+      # every other job stayed green. `migrate` alone never caught it, because
+      # a pre-dump only ever WRITES a dump; nothing read one back until the
+      # first real drill (2026-07-21). Asserting the sentinel line matters as
+      # much as the exit code: a space with no sentinel legitimately logs a
+      # skip, so a pass here must prove the configured-sentinel path ran.
+      - name: backup/restore drill (dump -> verify-restore)
+        run: |
+          docker compose --profile admin run --rm --no-TTY admin sh -c \
+            'pg_dump --format=custom --file /tmp/ci.pgdump "$ENGRAPHY_DATABASE_URL" &&
+             engraphy-admin verify-restore --against /tmp/ci.pgdump' | tee /tmp/vr.log
+          grep -q "retrieved from config" /tmp/vr.log \
+            || { echo "verify-restore did not resolve a sentinel from config"; exit 1; }
+
+      - name: server logs (on failure)
+        if: failure()
+        run: docker compose logs
+
+      - name: tear down
+        if: always()
+        run: docker compose --profile admin down -v
+
+  # Windows lane for the admin CLI. psycopg's async mode rejects Windows'
+  # default ProactorEventLoop, which silently shipped a completely dead
+  # `engraphy-admin token create` on Windows -- no token, therefore no MCP client
+  # could be onboarded at all. Nothing in the Linux suite can catch that.
+  #
+  # No database here on purpose: GitHub's Windows runners cannot use service
+  # containers and pgvector is unavailable, but the regression is cleanly
+  # detectable without one (against a dead DSN, the correct loop yields a
+  # connection error while the broken one yields psycopg's InterfaceError before
+  # any socket work). See scripts/check_windows_event_loop.py.
+  windows-cli:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install .
+      - name: guard — async admin verbs run on a compatible event loop
+        run: python scripts/check_windows_event_loop.py

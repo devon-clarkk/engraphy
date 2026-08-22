@@ -1,0 +1,36 @@
+{
+  "tool": "resolve_duplicate",
+  "outcome": "inserted",
+  "request": {
+    "name": "resolve_duplicate",
+    "arguments": {
+      "pending_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "resolution": "distinct"
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "inserted",
+    "node": {
+      "id": "b5f8c2a1-0000-4000-8000-000000000abc",
+      "type": "error",
+      "scope": "project-alpha",
+      "title": "Import path casing issue",
+      "body": "Something about import casing and CI, but phrased differently.",
+      "attrs": {
+        "severity": "medium",
+        "happened_at": "2026-07-10"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "relates_edge_added": true,
+    "resonance": []
+  },
+  "note": "distinct path inserts and adds a relates_to edge to the nearest candidate.",
+  "volatile": [
+    "response.node.id",
+    "response.node.created_at"
+  ]
+}

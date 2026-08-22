@@ -1,0 +1,58 @@
+{
+  "tool": "traverse",
+  "outcome": "ok",
+  "request": {
+    "name": "traverse",
+    "arguments": {
+      "start_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "direction": "both",
+      "max_depth": 2
+    }
+  },
+  "response": {
+    "v": 1,
+    "detail": "summary",
+    "nodes": [
+      {
+        "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "type": "error",
+        "scope": "project-alpha",
+        "title": "Vite build fails on case-sensitive import",
+        "attrs": {
+          "severity": "high",
+          "happened_at": "2026-07-06"
+        },
+        "status": "active",
+        "author": "devon",
+        "created_at": "2026-07-06T12:00:00Z",
+        "depth": 0
+      },
+      {
+        "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "type": "pattern",
+        "scope": "project-alpha",
+        "title": "CI is case-sensitive; local macOS is not",
+        "attrs": {},
+        "status": "active",
+        "author": "devon",
+        "created_at": "2026-07-06T12:05:00Z",
+        "depth": 1
+      }
+    ],
+    "edges": [
+      {
+        "src": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "dst": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+        "type": "relates_to"
+      }
+    ],
+    "truncated": false
+  },
+  "note": "summary envelope = node envelope without body (design/07 §Detail levels).",
+  "volatile": [
+    "response.nodes[].id",
+    "response.nodes[].created_at",
+    "response.edges[].src",
+    "response.edges[].dst"
+  ]
+}

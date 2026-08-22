@@ -1,0 +1,48 @@
+{
+  "tool": "write",
+  "outcome": "merged_linked",
+  "request": {
+    "name": "write",
+    "arguments": {
+      "scope": "project-alpha",
+      "type": "fact",
+      "title": "Priya promoted to charge nurse",
+      "body": "Priya was promoted to charge nurse on the paediatric ward in June 2026.",
+      "attrs": {
+        "as_of": "2026-06-01"
+      }
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "merged_linked",
+    "node": {
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "type": "fact",
+      "scope": "project-alpha",
+      "title": "Priya promoted to charge nurse",
+      "body": "Priya was promoted to charge nurse on the paediatric ward in June 2026.",
+      "attrs": {
+        "as_of": "2026-06-01"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "canonical": {
+      "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+      "type": "fact",
+      "scope": "project-alpha",
+      "title": "Priya works as a paediatric nurse"
+    },
+    "similarity": 0.96,
+    "cluster_edge_added": true,
+    "resonance": []
+  },
+  "note": "A `merged_linked` outcome (Phase B, design/analysis/fact-searchability-model.md §2.1): the incoming write banded >= t_high against the canonical (same topic) but the novelty gate judged its content distinct, so BOTH are kept -- the incoming inserts as its own embedded, searchable member row (`node`, the full write.node envelope, keeping its own attrs) and a `same_topic` edge links member -> canonical. `canonical` is a summary stub (id/type/scope/title, no body). `similarity` is vs the banded candidate, 2dp. `cluster_edge_added: true` means the pack declared the `same_topic` edge type + rule; see write_merged_linked_no_rule.json for the graceful-skip variant. The member is a newly written node, so it carries a resonance report exactly as an `inserted` write does.",
+  "volatile": [
+    "response.node.id",
+    "response.node.created_at",
+    "response.canonical.id"
+  ]
+}

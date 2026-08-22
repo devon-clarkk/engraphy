@@ -1,0 +1,113 @@
+# Example Engraphy pack: a general-purpose personal/work memory schema.
+#
+# This is a first-party example used by the test suite to exercise the pack
+# mechanism against a fuller, more demanding schema than the starter pack: closed
+# attribute specs, enums, dates, conditional requirements, wildcard edge rules, an
+# ambient scope, a multi-section briefing, and a tool alias. Build your own pack
+# by declaring node types, edge types, edge rules, and a briefing the same way
+# (see docs/03-packs.md).
+pack: example
+version: 1
+
+node_types:
+  error:
+    description: "A concrete thing that went wrong: a failed deploy, a broken migration, a missed deadline. Specific, dated, past tense. Write it after the incident is understood, not during firefighting."
+    attrs:
+      required: {severity: {enum: [low, medium, high]}, happened_at: {type: date}}
+      optional: {surface: {type: string}}
+      closed: true
+  pattern:
+    description: "The generalization behind one or more errors. The bridge from incident to policy: link derived_from to the errors that taught it."
+    attrs:
+      required: {occurrences: {type: int}}
+      closed: true
+  decision:
+    description: "A standing policy adopted in response to a pattern (or proactively). Present tense, prescriptive. Supersede rather than edit when it changes."
+    attrs:
+      optional: {review_after: {type: date}}
+      closed: true
+  check:
+    description: "A concrete, verifiable test tied to a decision: a command, a hook, or a manual question. A decision without a check regresses to a wish."
+    attrs:
+      required: {method: {enum: [command, hook, manual]}}
+      optional: {command: {type: string}}
+      requires: [{key: command, when: {key: method, equals: command}}]
+      closed: true
+  preference:
+    description: "A durable like/dislike/default. strength=hard is never overridden without asking; soft is a default."
+    attrs:
+      required: {strength: {enum: [hard, soft]}}
+      optional: {domain: {type: string}}
+      closed: true
+  commitment:
+    description: "A dated or recurring obligation. Roll next_due forward when it is handled."
+    attrs:
+      required: {cadence: {type: string}, next_due: {type: date}}
+      optional: {channel: {type: string}}
+      closed: true
+  goal:
+    description: "An ongoing aim with direction but no cadence. Distinct from a commitment (no schedule) and a decision (not a policy)."
+    attrs:
+      required: {status: {enum: [active, paused, done]}}
+      optional: {target_date: {type: date}}
+      closed: true
+  person:
+    description: "Someone the user needs context on: their relationship, constraints, and relevant facts."
+    attrs:
+      required: {relation: {type: string}}
+      optional: {contact_notes: {type: string}}
+      closed: true
+  resource:
+    description: "A pointer at something external: a URL, dashboard, account, document location, or device. Never store secrets here; point at the secret store instead."
+    attrs:
+      required: {location: {type: string}, kind: {type: string}}
+      closed: true
+  fact:
+    description: "A bounded escape hatch for a stable fact that fits no other type. Prefer a specific type when one fits; fact growth is reviewed periodically."
+    attrs: {closed: true}
+
+edge_types:
+  derived_from:  {description: "This pattern came from this incident.", bidirectional: false}
+  addresses:     {description: "This decision responds to this pattern.", bidirectional: false}
+  verified_by:   {description: "This check verifies compliance with this decision.", bidirectional: false}
+  supersedes:    {description: "Replacement; the old node's status becomes superseded.", bidirectional: false}
+  recurrence_of: {description: "The same mistake happened again: the strongest signal that a pattern or decision is missing or failing.", bidirectional: false}
+  involves:      {description: "This memory concerns this person.", bidirectional: false}
+  references:    {description: "This memory points at this external resource.", bidirectional: false}
+  relates_to:    {description: "Weak generic association; traversal treats it as bidirectional.", bidirectional: true}
+
+edge_rules:
+  - {type: derived_from,  src: pattern,  dst: error}
+  - {type: addresses,     src: decision, dst: pattern}
+  - {type: verified_by,   src: decision, dst: check}
+  - {type: supersedes,    src: decision, dst: decision}
+  - {type: supersedes,    src: pattern,  dst: pattern}
+  - {type: recurrence_of, src: error,    dst: error}
+  - {type: involves,      src: "*",      dst: person}
+  - {type: references,    src: "*",      dst: resource}
+  - {type: relates_to,    src: "*",      dst: "*"}
+
+ambient_scopes: [life]
+
+briefing:
+  sections:
+    - {name: standing_decisions, type: decision, status: active,
+       include_linked: {edge: verified_by, direction: out}}
+    - {name: due_commitments, type: commitment,
+       where_attr: {key: next_due, before: "+3d"}, order_by_attr: next_due}
+    - {name: active_goals, type: goal, where_attr: {key: status, equals: active}}
+    - {name: relevant, semantic: true, types: [pattern, preference], top_k: 5}
+    - {name: open_errors, type: error, recent: 14d,
+       without_edge: {edge: derived_from, direction: in}}
+  footer: {inbox_pending_count: true}
+
+tool_aliases:
+  log_error:
+    binds: write
+    preset: {type: error}
+    description: "Record something that went wrong, after it is understood. Read the resonance report: a similar past error means recurrence; propose completing the pattern/decision/check chain."
+
+tool_descriptions:
+  briefing: "Call this before your first action in a session: active decisions and their checks, due commitments, goals, and patterns or preferences relevant to the task hint."
+  write: "Write memory for understood errors, adopted decisions, stated preferences, obligations, and goals. The server deduplicates and returns resonance; read it."
+  search: "Mid-task recall when entering unfamiliar territory. Use scope='all' only for an explicit cross-project question."

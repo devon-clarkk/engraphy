@@ -1,0 +1,41 @@
+# design/07 Pack file schema — rule under test: edge_types.*.bidirectional type: boolean
+# Fixture for pack validate; valid=False.
+pack: fixture
+version: 1
+node_types:
+  widget:
+    description: A minimal node type for schema-fixture testing.
+    attrs:
+      required:
+        status:
+          enum:
+          - open
+          - closed
+      optional:
+        note:
+          type: string
+      closed: true
+edge_types:
+  relates_to:
+    description: Generic association.
+    bidirectional: 'yes'
+edge_rules:
+- type: relates_to
+  src: widget
+  dst: widget
+ambient_scopes:
+- scratch
+briefing:
+  sections:
+  - name: recent
+    type: widget
+    recent: 7d
+  footer:
+    inbox_pending_count: true
+tool_aliases:
+  log_widget:
+    binds: write
+    preset:
+      type: widget
+tool_descriptions:
+  write: Custom description.

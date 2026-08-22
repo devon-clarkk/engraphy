@@ -1,0 +1,305 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pack",
+    "version",
+    "node_types",
+    "edge_types"
+  ],
+  "properties": {
+    "pack": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,40}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pack_format": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "The pack FILE FORMAT this pack was authored against (packs/schema.json's own shape) -- distinct from 'version', which is the pack's own content revision. Absent means format 1 (the only format that has ever existed). engraphy/admin/packs.py's CURRENT_PACK_FORMAT is this engine's own understanding; pack apply/upgrade warn (not refuse) when a pack declares a format newer than that (design/04 s.Versioning and release discipline)."
+    },
+    "node_types": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{1,40}$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "description"
+          ],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "attrs": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "required": {
+                  "$ref": "#/$defs/attrmap"
+                },
+                "optional": {
+                  "$ref": "#/$defs/attrmap"
+                },
+                "closed": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "requires": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/conditional"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "edge_types": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{1,40}$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "description"
+          ],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "bidirectional": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    "edge_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "src",
+          "dst"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          },
+          "dst": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ambient_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "briefing": {
+      "$ref": "#/$defs/briefing"
+    },
+    "tool_aliases": {
+      "type": "object"
+    },
+    "tool_descriptions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "attrmap": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z][a-z0-9_]{1,40}$": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "string",
+                "int",
+                "number",
+                "bool",
+                "date"
+              ]
+            },
+            "enum": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "searchable": {
+              "type": "boolean",
+              "description": "Phase C (fact-searchability-model.md I2): whether this attr's value enters the searchable surface (embedding + tsvector weight C). Optional. Absent => the construct-based default: string/date searchable, enum/bool/int/number not (the discriminate-vs-homogenize line, fact-searchability-phase-c.md §1). Set true to include a low-cardinality attr, false to exclude a string/date. Orthogonal to type/enum."
+            }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "type"
+              ]
+            },
+            {
+              "required": [
+                "enum"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "conditional": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "when"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "when": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "equals"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "equals": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "briefing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sections"
+      ],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "status": {
+                "type": "string",
+                "default": "active"
+              },
+              "semantic": {
+                "type": "boolean"
+              },
+              "top_k": {
+                "type": "integer",
+                "maximum": 10
+              },
+              "recent": {
+                "type": "string",
+                "pattern": "^[0-9]+d$"
+              },
+              "where_attr": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "equals": {
+                    "type": "string"
+                  },
+                  "before": {
+                    "type": "string"
+                  },
+                  "after": {
+                    "type": "string"
+                  }
+                }
+              },
+              "order_by_attr": {
+                "type": "string"
+              },
+              "include_linked": {
+                "type": "object",
+                "properties": {
+                  "edge": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "enum": [
+                      "out",
+                      "in"
+                    ]
+                  }
+                }
+              },
+              "without_edge": {
+                "type": "object",
+                "properties": {
+                  "edge": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "enum": [
+                      "out",
+                      "in"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "footer": {
+          "type": "object",
+          "properties": {
+            "inbox_pending_count": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

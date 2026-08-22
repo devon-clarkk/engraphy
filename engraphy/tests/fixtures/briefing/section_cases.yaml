@@ -1,0 +1,270 @@
+# Golden fixtures — briefing section grammar. Normative: design/02 §The briefing
+# engine + design/07 §Pack file schema ($defs.briefing) + Devon's Q1-Q4 gate
+# decisions (2026-07-16, recorded in DECISIONS-DELTA.md).
+#
+# Each case: a seed graph (labelled nodes/edges + optional extra scopes/inbox),
+# a briefing config (the pack `briefing:` fragment), the briefing scope/hint, and
+# the expected sections (node LABELS in order, linked labels per node) + footer.
+# The harness (test_briefing.py) maps labels -> real ids, seeds via
+# embed_document, runs briefing(), maps ids back to labels, and byte-compares
+# label sequences + linked + footer.
+#
+# Node/edge types are auto-created loose (closed:false, wildcard edge rules) by
+# the harness from the types the seed uses -- these cases test the GRAMMAR, not
+# attr validation. The Example byte-compare (example_briefing.yaml) instead
+# applies the real example pack.
+#
+# created_days_ago sets a node's created_at (for `recent`); seed_order pins the
+# updated_at ordering for the cap case (each node committed in its own txn, so
+# transaction_timestamp advances; explicit ids break any microsecond tie).
+
+- name: type_status_and_include_linked_full_readable_filtered
+  # type+status filter; include_linked pulls each decision's checks (FULL, Q3);
+  # an archived decision is excluded (status defaults active); a check in an
+  # unreadable scope is silently dropped from linked (Q3 readability, no placeholder).
+  scope: scope1
+  seed:
+    scopes:
+      - {id: hidden, owner: p2, visibility: private}   # p1 cannot read
+    principals: [p2]
+    nodes:
+      - {label: D1, type: decision, scope: scope1, title: "Pin dependencies", body: "Always pin exact dependency versions in production."}
+      - {label: D2, type: decision, scope: scope1, title: "Review before merge", body: "Every change gets a second reviewer before merging to main."}
+      - {label: D3, type: decision, scope: scope1, status: archived, title: "Old policy", body: "A retired decision that must not appear."}
+      - {label: C1, type: check, scope: scope1, title: "Lockfile present", body: "CI fails if the lockfile is missing or stale."}
+      - {label: C2, type: check, scope: scope1, title: "Approver count", body: "Branch protection requires one approval."}
+      - {label: C3, type: check, scope: hidden, title: "Secret check", body: "A check p1 cannot read."}
+    edges:
+      - {type: verified_by, src: D1, dst: C1}
+      - {type: verified_by, src: D2, dst: C2}
+      - {type: verified_by, src: D1, dst: C3}   # target unreadable -> dropped
+  briefing:
+    sections:
+      - {name: standing_decisions, type: decision, status: active,
+         include_linked: {edge: verified_by, direction: out}}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: standing_decisions
+        nodes: [D1, D2]        # D3 archived, excluded; order updated_at desc (D2 newer)
+        order: updated_at_desc  # harness computes+verifies from seeded order
+        linked:
+          D1: [C1]             # C3 unreadable -> absent, no placeholder
+          D2: [C2]
+    footer: {inbox_pending: 0}
+    node_detail: full
+    linked_detail: full
+
+- name: where_attr_before_and_order_by_attr
+  # where_attr {before: +3d} keeps only commitments due within 3 days;
+  # order_by_attr next_due sorts ascending (soonest first).
+  scope: scope1
+  seed:
+    nodes:
+      - {label: M_today, type: commitment, scope: scope1, title: "Standup", body: "Daily standup.", attrs: {next_due: "REL:+0d"}}
+      - {label: M_soon, type: commitment, scope: scope1, title: "Report", body: "Weekly report.", attrs: {next_due: "REL:+2d"}}
+      - {label: M_far, type: commitment, scope: scope1, title: "Quarterly", body: "Quarterly review.", attrs: {next_due: "REL:+30d"}}
+    # M_far is beyond +3d -> excluded; M_today before M_soon by next_due asc.
+  briefing:
+    sections:
+      - {name: due_commitments, type: commitment,
+         where_attr: {key: next_due, before: "+3d"}, order_by_attr: next_due}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: due_commitments
+        nodes: [M_today, M_soon]
+    footer: {inbox_pending: 0}
+
+- name: where_attr_equals_and_empty_section
+  # where_attr {equals}; plus a second section that matches nothing -> nodes: [].
+  scope: scope1
+  seed:
+    nodes:
+      - {label: G_active, type: goal, scope: scope1, title: "Ship v1", body: "Ship the first release.", attrs: {status: "active"}}
+      - {label: G_paused, type: goal, scope: scope1, title: "Rewrite", body: "Deferred rewrite.", attrs: {status: "paused"}}
+  briefing:
+    sections:
+      - {name: active_goals, type: goal, where_attr: {key: status, equals: active}}
+      - {name: open_errors, type: error, recent: 14d}   # no error nodes seeded
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - {name: active_goals, nodes: [G_active]}
+      - {name: open_errors, nodes: []}   # empty section still included (07)
+    footer: {inbox_pending: 0}
+
+- name: recent_and_without_edge
+  # recent: 14d keeps only recently-created; without_edge {derived_from, in}
+  # keeps only errors with no incoming derived_from (unexplained "open" errors).
+  scope: scope1
+  seed:
+    nodes:
+      - {label: E_open, type: error, scope: scope1, created_days_ago: 2, title: "Deploy failed", body: "The deploy failed because a migration was skipped."}
+      - {label: E_explained, type: error, scope: scope1, created_days_ago: 3, title: "Cache stampede", body: "A cache stampede took down the API under load."}
+      - {label: E_old, type: error, scope: scope1, created_days_ago: 40, title: "Ancient incident", body: "An incident from long ago, outside the recency window."}
+      - {label: P1, type: pattern, scope: scope1, created_days_ago: 3, title: "Add migration gate", body: "Block deploys when a migration is pending."}
+    edges:
+      - {type: derived_from, src: P1, dst: E_explained}   # E_explained has incoming derived_from
+  briefing:
+    sections:
+      - {name: open_errors, type: error, recent: 14d,
+         without_edge: {edge: derived_from, direction: in}}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: open_errors
+        nodes: [E_open]    # E_explained has the edge; E_old is too old
+    footer: {inbox_pending: 0}
+
+- name: semantic_no_hint_and_blank_hint_are_empty
+  # Q2: a semantic section with no hint (and with a blank/whitespace hint)
+  # returns nodes: [] -- there is no query to run.
+  scope: scope1
+  hint: "   "     # whitespace-only behaves identically to absent
+  seed:
+    nodes:
+      - {label: PR1, type: preference, scope: scope1, title: "Oat milk", body: "Prefers oat milk in coffee."}
+  briefing:
+    sections:
+      - {name: relevant, semantic: true, types: [pattern, preference], top_k: 5}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - {name: relevant, nodes: []}
+    footer: {inbox_pending: 0}
+
+- name: semantic_with_hint_membership
+  # A hinted semantic section retrieves the type-filtered, <=top_k relevant
+  # nodes. Membership asserted, NOT exact model order (real embeddings).
+  #
+  # Relevance floor (QUESTIONS.md "semantic-section-relevance-floor", resolved
+  # 2026-07-17, Devon option b / Fable design; 02 §The briefing engine, 07
+  # §Exact formulas): a vector-leg candidate below briefing.semantic_floor
+  # (default 0.50, query<->document cosine) is dropped before fusion; lexical
+  # hits are never floor-dropped. The `excludes` on PR_far is legitimate under
+  # that rule: it shares no words with the hint (no lexical match -- the hint's
+  # tsquery is an AND over coffee/machine/descaling/... and "aisle seat" hits
+  # none), so it can ONLY enter via the vector leg, and its off-topic cosine
+  # must sit below the floor. N_wrongtype is excluded by the types filter, a
+  # separate assertion. top_k stays 5 > candidate count ON PURPOSE: exclusion
+  # must come from the floor, never from truncation.
+  #
+  # hint_similarities pins the measured query<->doc cosines (baseline script,
+  # +-0.02, same protocol as dedup_cases). The floor must discriminate:
+  # coffee nodes >= 0.50 > PR_far. If measurement lands otherwise, that is a
+  # QUESTIONS.md entry (IMPLEMENTER.md: never nudge thresholds or fixtures).
+  scope: scope1
+  hint: "what do we know about descaling the office coffee machine"
+  floor: 0.50    # briefing.semantic_floor default, stated so the case reads standalone
+  hint_similarities:   # filled by the baseline script; null = not yet measured
+    PR_coffee: 0.8446
+    PA_coffee: 0.6700
+    PR_far: 0.4313
+  seed:
+    nodes:
+      - {label: PR_coffee, type: preference, scope: scope1, title: "Coffee machine descaling", body: "Descale the office coffee machine every month or it fails."}
+      - {label: PA_coffee, type: pattern, scope: scope1, title: "Appliance maintenance cadence", body: "Kitchen appliances need monthly descaling to avoid limescale damage."}
+      - {label: PR_far, type: preference, scope: scope1, title: "Aisle seat", body: "Prefers an aisle seat on short flights."}
+      - {label: N_wrongtype, type: note, scope: scope1, title: "Coffee machine descaling note", body: "Descale the office coffee machine monthly."}
+  briefing:
+    sections:
+      - {name: relevant, semantic: true, types: [pattern, preference], top_k: 5}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: relevant
+        members: [PR_coffee, PA_coffee]   # membership (subset+required), order not pinned
+        excludes: [PR_far, N_wrongtype]    # PR_far: floor-dropped; N_wrongtype: types filter
+    footer: {inbox_pending: 0}
+
+- name: over_cap_ten_default_order
+  # Q1: a non-semantic section caps at 10. Seed 12 matching decisions; expect
+  # exactly 10, ordered updated_at desc then id asc (no order_by_attr given).
+  # The harness seeds each in its own txn (updated_at advances) with explicit
+  # sequential ids, and computes the expected top-10 by the same rule.
+  scope: scope1
+  seed:
+    cap_decisions: 12   # harness generates D01..D12, committed in order
+  briefing:
+    sections:
+      - {name: standing_decisions, type: decision, status: active}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: standing_decisions
+        count: 10
+        order: updated_at_desc   # harness verifies the 10 newest, desc, id tiebreak
+    footer: {inbox_pending: 0}
+
+- name: scope_ambient_union
+  # Q4: briefing(scope1) folds in the reader's readable AMBIENT scopes, so a due
+  # commitment living in the ambient scope surfaces alongside scope1's.
+  scope: scope1
+  seed:
+    scopes:
+      - {id: life, ambient: true}
+      - {id: other, ambient: false}   # non-ambient, not requested -> excluded
+    nodes:
+      - {label: M_scope1, type: commitment, scope: scope1, title: "Scope1 task", body: "A task in scope1.", attrs: {next_due: "REL:+1d"}}
+      - {label: M_life, type: commitment, scope: life, title: "Life task", body: "A task in the ambient life scope.", attrs: {next_due: "REL:+1d"}}
+      - {label: M_other, type: commitment, scope: other, title: "Other task", body: "A task in an unrelated non-ambient scope.", attrs: {next_due: "REL:+1d"}}
+  briefing:
+    sections:
+      - {name: due_commitments, type: commitment, order_by_attr: next_due}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: due_commitments
+        members: [M_scope1, M_life]
+        excludes: [M_other]
+    footer: {inbox_pending: 0}
+
+- name: scope_all_and_audit
+  # Q4: briefing('all') spans every readable scope; and (advisor #3 / 03) an
+  # 'all' read writes one audit_log row.
+  scope: all
+  seed:
+    scopes:
+      - {id: other, ambient: false}
+    nodes:
+      - {label: M_a, type: commitment, scope: scope1, title: "A task", body: "Task A.", attrs: {next_due: "REL:+1d"}}
+      - {label: M_b, type: commitment, scope: other, title: "B task", body: "Task B.", attrs: {next_due: "REL:+1d"}}
+  briefing:
+    sections:
+      - {name: due_commitments, type: commitment, order_by_attr: next_due}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - name: due_commitments
+        members: [M_a, M_b]
+    footer: {inbox_pending: 0}
+    audit_all: true   # harness asserts one action='briefing' audit row with scope=all
+
+- name: footer_inbox_pending_count
+  # The footer is the 14-day NAG: it counts pending rows OLDER than 14 days
+  # (Devon 2026-07-17 option b), in the scope set PLUS unscoped (NULL) rows
+  # (NULL-scope items surface in every briefing). Excluded: a pending row
+  # younger than 14 days (not yet nagged), a pending row in an unreadable
+  # scope, and any non-pending row.
+  scope: scope1
+  seed:
+    scopes:
+      - {id: hidden, owner: p2, visibility: private}
+    principals: [p2]
+    nodes:
+      - {label: D1, type: decision, scope: scope1, title: "A decision", body: "Some standing decision."}
+    inbox:
+      - {scope: scope1, status: pending, created_days_ago: 15}  # counts (aged > 14d, in scope set)
+      - {scope: null, status: pending, created_days_ago: 15}    # counts (aged, unscoped)
+      - {scope: scope1, status: pending, created_days_ago: 3}   # excluded (younger than the 14-day nag)
+      - {scope: hidden, status: pending, created_days_ago: 15}  # excluded (unreadable scope)
+      - {scope: scope1, status: done, created_days_ago: 15}     # excluded (not pending)
+  briefing:
+    sections:
+      - {name: standing_decisions, type: decision, status: active}
+    footer: {inbox_pending_count: true}
+  expect:
+    sections:
+      - {name: standing_decisions, nodes: [D1]}
+    footer: {inbox_pending: 2}

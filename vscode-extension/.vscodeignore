@@ -1,0 +1,15 @@
+# The bundled ./out/extension.js is what ships (esbuild inlines all deps).
+src/**
+tsconfig.json
+esbuild.js
+.gitignore
+.vscode/**
+.vscode-test/**
+out-test/**
+
+# Dev-only tooling & deps (everything is bundled into out/extension.js)
+scripts/**
+node_modules/**
+
+# Keep media/ (icon.png + loop.svg), out/extension.js, README, package.json.
+out/**/*.map

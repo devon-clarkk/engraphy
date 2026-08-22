@@ -1,0 +1,203 @@
+# Golden fixtures -- the inbox lifecycle. Normative: design/02 §The inbox
+# ("automatic dumb capture != memory; deliberate promotion runs the full dedup
+# pipeline; 14-day nag surfaced in briefing footers; discarded rows purged after
+# 30 days"), design/01 (inbox table + the (space_id, status) WHERE status='pending'
+# index), design/03 (inbox_review action list|promote|discard; POST /inbox accepts
+# {kind, payload, scope?}). No 07 canonical envelope exists for inbox -- a promote
+# outcome IS write()'s envelope (design/07 §Canonical tool I/O shapes).
+#
+# Devon's three gate decisions (2026-07-17, recorded in DECISIONS-DELTA.md):
+#  - promote(inbox_id, type, scope, title, body, attrs, links?): the REVIEWER
+#    supplies the write fields; the stored kind/payload are OPAQUE capture
+#    metadata -- never the source of node_type, never a validated node (D1).
+#  - inbox INSERT and UPDATE RLS both: space AND (scope_id IS NULL OR scope_id IN
+#    WRITABLE). UPDATE uses the WRITABLE test -- only a principal who can write
+#    the item's scope may promote/discard it.
+#  - a PENDING promote outcome leaves the inbox row STILL 'pending' (not consumed)
+#    until the parked write terminally resolves via resolve_duplicate; an
+#    inserted/merged outcome flips the row to 'promoted' after the terminal write.
+#
+# Each case: an optional `seed` (extra scopes; existing nodes to act as promote
+# candidates; existing inbox rows with a label), an `action` (op = capture | list
+# | promote | discard, plus its params), and `expect`. The harness (test_inbox.py)
+# seeds under p1 with a private scope1 through the real app-role pool (RLS live),
+# runs the matching engraphy.core.inbox function, and compares.
+#
+# Band control is test-surface, mirroring test_dedup: promote outcomes are forced
+# by candidate PRESENCE + a caller-passed `thresholds`, never by real-model
+# similarity -- band SELECTION is already golden-fixtured (dedup_cases.yaml +
+# test_select_band). insert = no same-type candidate; merge = an identical-vector
+# candidate (similarity 1.0 >= default t_high); pending = a candidate plus
+# thresholds forcing the confirm band. Promoted content is embedded with a
+# synthetic unit vector (promote()'s embedding_vector test override), so lifecycle
+# assertions never depend on the embedding model -- exactly test_dedup's posture.
+#
+# Node/edge types are seeded loose (attr-spec closed:false) so a minimal attrs {}
+# is legal; that keeps these fixtures about the inbox lifecycle, not attr grammar
+# (which attr_spec_cases.yaml owns).
+
+# --- capture: dumb capture lands one pending row -------------------------------
+
+- name: capture_scoped
+  # POST /inbox {kind, payload, scope} -> one pending inbox row carrying the
+  # opaque kind/payload verbatim, scoped to the given (writable) scope.
+  action:
+    op: capture
+    kind: tool_failure
+    payload: {tool: deploy, exit_code: 1, stderr: "migration not run"}
+    scope: scope1
+  expect:
+    inbox:
+      status: pending
+      kind: tool_failure
+      scope: scope1
+      payload: {tool: deploy, exit_code: 1, stderr: "migration not run"}
+
+- name: capture_unscoped
+  # scope omitted ("pin it, I'll file it later") -> scope_id IS NULL. Such a row
+  # is visible/actionable to anyone in the space (the NULL branch of every inbox
+  # policy) and surfaces in every briefing footer.
+  action:
+    op: capture
+    kind: note
+    payload: {text: "look into the flaky auth test"}
+    scope: null
+  expect:
+    inbox:
+      status: pending
+      kind: note
+      scope: null
+      payload: {text: "look into the flaky auth test"}
+
+# --- list: only pending rows, scope-filtered by the SELECT policy --------------
+
+- name: list_only_pending
+  # list surfaces the triage queue: status='pending' only. A promoted or discarded
+  # row is not queue work and must not appear.
+  seed:
+    inbox:
+      - {label: p, kind: note, payload: {t: 1}, scope: scope1, status: pending}
+      - {label: done, kind: note, payload: {t: 2}, scope: scope1, status: promoted}
+      - {label: gone, kind: note, payload: {t: 3}, scope: scope1, status: discarded}
+  action:
+    op: list
+  expect:
+    items: [p]
+
+- name: list_scoped_and_unscoped
+  # The SELECT policy (migration 0013) is space AND (scope_id IS NULL OR readable):
+  # a pending row in a readable scope AND a pending unscoped row both list.
+  seed:
+    inbox:
+      - {label: scoped, kind: note, payload: {t: 1}, scope: scope1, status: pending}
+      - {label: floating, kind: note, payload: {t: 2}, scope: null, status: pending}
+  action:
+    op: list
+  expect:
+    items: [scoped, floating]
+
+# --- promote: the reviewer authors a memory; the full dedup pipeline runs -------
+
+- name: promote_insert
+  # No same-type candidate -> INSERT band. The reviewer's fields become a real
+  # node; the inbox row flips to 'promoted' after the terminal write.
+  seed:
+    inbox:
+      - {label: item, kind: tool_failure, payload: {raw: "..."}, scope: scope1, status: pending}
+  action:
+    op: promote
+    item: item
+    type: widget
+    scope: scope1
+    title: "Deploy failed: migration not run"
+    body: "The deploy failed because the 0014 migration had not been applied."
+    attrs: {}
+  expect:
+    outcome: inserted
+    item_status: promoted
+    node: created
+    node_type: widget
+
+- name: promote_merge
+  # An identical-vector same-type candidate exists (similarity 1.0 >= default
+  # t_high) -> merge band. The promoted body carries distinct content, so Phase B
+  # merge-LINKS it (a searchable member row + same_topic edge) rather than absorbing
+  # it into a get-only addendum. The outcome is terminal (`merged_linked`), so the
+  # inbox row still flips to 'promoted' -- inbox.promote gates on
+  # `!= needs_confirmation`, so it consumes the row for merge_linked exactly as for
+  # inserted/merged.
+  seed:
+    nodes:
+      - {label: cand, type: widget, scope: scope1}
+    inbox:
+      - {label: item, kind: tool_failure, payload: {raw: "..."}, scope: scope1, status: pending}
+  action:
+    op: promote
+    item: item
+    type: widget
+    scope: scope1
+    title: "Duplicate of the candidate"
+    body: "This body merges into the identical-vector candidate."
+    attrs: {}
+  expect:
+    outcome: merged_linked
+    item_status: promoted
+
+- name: promote_pending_stays_pending
+  # A candidate exists and thresholds force the confirm band -> PENDING: a
+  # pending_writes row is parked, NO node is committed, and the inbox row is NOT
+  # consumed -- it stays 'pending' so nothing is lost and it still counts in the
+  # briefing footer (Devon Q3(a)). The reviewer completes it via resolve_duplicate.
+  seed:
+    nodes:
+      - {label: cand, type: widget, scope: scope1}
+    inbox:
+      - {label: item, kind: tool_failure, payload: {raw: "..."}, scope: scope1, status: pending}
+  action:
+    op: promote
+    item: item
+    type: widget
+    scope: scope1
+    title: "Possibly a duplicate"
+    body: "Force the confirm band; the reviewer must resolve this by hand."
+    attrs: {}
+    thresholds: {t_high: 2.0, t_low: -1.0}   # unreachable high, always-reached low -> pending
+  expect:
+    outcome: needs_confirmation
+    item_status: pending
+    node: none
+
+- name: promote_reviewer_type_wins
+  # D1 / payload opacity: the captured payload names a DIFFERENT type ("error"),
+  # but promote takes the REVIEWER's type ("widget"). The node's type is the
+  # reviewer's; the payload is never parsed for node fields.
+  seed:
+    inbox:
+      - {label: item, kind: chat_log, payload: {type: error, note: "opaque -- must be ignored"}, scope: scope1, status: pending}
+  action:
+    op: promote
+    item: item
+    type: widget
+    scope: scope1
+    title: "Authored by the reviewer, not the payload"
+    body: "The stored payload.type='error' must not leak into the node."
+    attrs: {}
+  expect:
+    outcome: inserted
+    item_status: promoted
+    node: created
+    node_type: widget
+
+# --- discard: drop a captured item without promoting it ------------------------
+
+- name: discard_marks_discarded
+  # discard flips a pending row to 'discarded' -- it leaves the queue (list) and
+  # the footer count, and (per design/02) is purged 30 days later by operations.
+  seed:
+    inbox:
+      - {label: item, kind: note, payload: {text: "not worth keeping"}, scope: scope1, status: pending}
+  action:
+    op: discard
+    item: item
+  expect:
+    item_status: discarded

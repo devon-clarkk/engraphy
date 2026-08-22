@@ -1,0 +1,151 @@
+# Cloud profile (design/04 §Deployment shape): engraphy + postgres+pgvector,
+# plus a one-shot `admin` sidecar carrying the Postgres client tools.
+# TLS termination is deliberately NOT a service here -- put a reverse proxy
+# (Caddy, nginx, Traefik) or your provider's load balancer in front for TLS and
+# publish ITS port publicly; leave engraphy's own port bound to loopback (the
+# default below) so it is never reachable except through that proxy. See
+# deploy/checklist.md's cloud section for the full first-boot sequence.
+#
+# Secrets (POSTGRES_PASSWORD, ENGRAPHY_APP_ROLE_PASSWORD) belong in a
+# git-ignored .env file next to this compose file, never here or in git.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: engram
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d engram"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No published port by default: `engraphy` and the `admin` sidecar both reach
+    # postgres over the compose network, so nothing on the host needs it --
+    # including `engraphy-admin migrate`, which runs in the sidecar (that is the
+    # whole point of the sidecar). Uncomment ONLY for ad-hoc host-side access
+    # with your own psql/pg_dump, and keep it bound to loopback if you do:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  # One-shot init (install-friction win #4): migrate + provision the app role
+  # BEFORE the server starts, so `docker compose up` brings the whole stack up
+  # end-to-end with no manual multi-step sequence. Uses the admin image (it
+  # carries psql for the role provisioning); the migrate step runs in-process,
+  # so it needs no dbmate binary. Runs to completion and exits -- `restart: no`
+  # keeps compose from treating its clean exit as a crash. Idempotent, so a
+  # repeated `up` re-runs it harmlessly. ENGRAPHY_DATABASE_URL is the SUPERUSER
+  # connection here (migrations + role creation need owner rights).
+  init:
+    build:
+      context: .
+      target: admin
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_APP_ROLE_PASSWORD: ${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}
+    entrypoint: ["sh", "/app/deploy/compose-init.sh"]
+    volumes:
+      # The unconditional pre-migration dump needs a writable target; same named
+      # `backups` volume the admin sidecar uses (seeded engraphy-owned by the image).
+      - backups:/backups
+
+  engraphy:
+    build:
+      context: .
+      target: server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init:
+        # Server starts only after the schema is migrated and the app role it
+        # connects as exists -- otherwise its boot-time schema gate fails and it
+        # crash-loops. `service_completed_successfully` gates on init's clean exit.
+        condition: service_completed_successfully
+    environment:
+      ENGRAPHY_DATABASE_URL: postgres://engram_app:${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_BIND_HOST: 0.0.0.0
+      ENGRAPHY_BIND_PORT: 8000
+      # Left unset (defaults false): the transport-refusal check
+      # (app.py::check_transport_security) does not fire for 0.0.0.0 anyway
+      # (Python's ipaddress module classifies it private), so this env var
+      # protects nothing on its own -- the real boundary is the `ports:`
+      # mapping below plus whatever reverse proxy you put in front.
+      # ENGRAPHY_INSECURE_TRANSPORT_OK: "false"
+      ENGRAPHY_LAST_BACKUP_STATUS_FILE: /var/lib/engraphy/last_backup_at
+    ports:
+      # Bound to loopback by default -- put a TLS-terminating reverse proxy
+      # on the host (or your provider's load balancer) in front and have IT
+      # publish 443 publicly.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - model-cache:/home/engraphy/.cache/huggingface
+      - backup-status:/var/lib/engraphy
+    # Readiness, not just liveness: on first boot the process downloads the
+    # ~523MB embedding model BEFORE it serves anything, so "container running"
+    # is not "server usable". Without this, `docker compose ps` reports Up
+    # while the server is still downloading -- or while it is crash-looping --
+    # and an operator cannot tell those two apart (exactly what masked the
+    # model-cache permission bug). start_period covers a slow first download;
+    # failures during it do not count against `retries`, so a long download
+    # shows as "starting", and a genuine crash-loop shows as "unhealthy".
+    # python is used rather than curl/wget: the slim base image has neither.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # One-shot operator sidecar -- NOT a long-running service (hence the profile,
+  # which keeps `docker compose up` from starting it). It carries pg_dump /
+  # pg_restore / psql / dbmate, which the server image deliberately omits, so
+  # that `engraphy-admin migrate` keeps its unconditional pre-dump instead of
+  # needing those tools installed on the host.
+  #
+  #   docker compose --profile admin run --rm admin engraphy-admin migrate --dump-dir /backups
+  #   docker compose --profile admin run --rm admin \
+  #     psql "$ENGRAPHY_DATABASE_URL" -v app_role_password=... -f deploy/provision-app-role.sql
+  #
+  # ENGRAPHY_DATABASE_URL here is the SUPERUSER connection (migrations and role
+  # provisioning need owner rights) -- deliberately different from the app-role
+  # URL the `engraphy` service uses.
+  admin:
+    build:
+      context: .
+      target: admin
+    profiles: ["admin"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_APP_ROLE_PASSWORD: ${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}
+    volumes:
+      # Pre-migrate dumps and verify-restore artifacts outlive the throwaway
+      # container. A NAMED volume, not a `./backups` bind mount: a bind mount
+      # takes its ownership from the host directory, which on a fresh checkout
+      # either doesn't exist at all (Docker creates the mountpoint root-owned)
+      # or is owned by whoever checked out the tree -- uid 1000 on a typical
+      # workstation, but not on a CI runner. Either way the sidecar (USER
+      # engraphy, uid 1000) can't write and the pre-dump dies with EACCES. A
+      # named volume is seeded from the image's own /backups, which the admin
+      # stage creates engraphy-owned (see Dockerfile) -- correct on every host.
+      # Retrieve dumps with:
+      #   docker compose --profile admin cp admin:/backups ./backups
+      # and note that `docker compose down -v` DESTROYS them along with the
+      # database, so copy anything you care about out first.
+      - backups:/backups
+
+volumes:
+  postgres-data:
+  model-cache:
+  backup-status:
+  backups:

@@ -1,0 +1,39 @@
+# design/07 Pack file schema — rule under test: node_types patternProperties key ^[a-z][a-z0-9_]{1,40}$
+# Fixture for pack validate; valid=False.
+# PENDING QUESTIONS.md resolution -- see MANIFEST.yaml pending_question flag.
+pack: fixture
+version: 1
+node_types:
+  widget-x:
+    description: A minimal node type for schema-fixture testing.
+    attrs:
+      required:
+        status:
+          enum:
+          - open
+          - closed
+      optional:
+        note:
+          type: string
+      closed: true
+edge_types:
+  relates_to:
+    description: Generic association.
+    bidirectional: true
+edge_rules: []
+ambient_scopes:
+- scratch
+briefing:
+  sections:
+  - name: recent
+    type: widget
+    recent: 7d
+  footer:
+    inbox_pending_count: true
+tool_aliases:
+  log_widget:
+    binds: write
+    preset:
+      type: widget
+tool_descriptions:
+  write: Custom description.

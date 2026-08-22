@@ -1,0 +1,78 @@
+# Golden fixtures — RRF fusion. Normative: design/07 §Exact formulas.
+# score = sum over legs of 1/(60+rank); 6dp; ties -> created_at DESC then id ASC.
+- name: fusion_beats_single_leg
+  vector_ranked: [A, B, C]
+  lexical_ranked: [B, D]
+  expect:                       # B appears in both legs -> wins
+    - {id: B, score: 0.032522}  # 1/61 + 1/62
+    - {id: A, score: 0.016393}  # 1/61
+    - {id: D, score: 0.016129}  # 1/62
+    - {id: C, score: 0.015873}  # 1/63
+- name: tie_break_created_at_desc
+  vector_ranked: [A]
+  lexical_ranked: [B]
+  created_at: {A: "2026-01-01T00:00:00Z", B: "2026-06-01T00:00:00Z"}
+  expect:
+    - {id: B, score: 0.016393}  # tie on score; B newer
+    - {id: A, score: 0.016393}
+- name: tie_break_id_asc_when_same_timestamp
+  vector_ranked: [bbb]
+  lexical_ranked: [aaa]
+  created_at: {aaa: "2026-01-01T00:00:00Z", bbb: "2026-01-01T00:00:00Z"}
+  expect:
+    - {id: aaa, score: 0.016393}
+    - {id: bbb, score: 0.016393}
+- name: single_leg_empty
+  vector_ranked: [X, Y, Z]
+  lexical_ranked: []
+  expect:
+    - {id: X, score: 0.016393}  # 1/61
+    - {id: Y, score: 0.016129}  # 1/62
+    - {id: Z, score: 0.015873}  # 1/63
+- name: both_legs_empty
+  vector_ranked: []
+  lexical_ranked: []
+  expect: []
+- name: limit_truncation
+  # full overlap, reversed order -> every id appears in both legs at mirrored ranks;
+  # A/E tie, B/D tie, C alone in the middle; created_at breaks each tie (DESC).
+  vector_ranked: [A, B, C, D, E]
+  lexical_ranked: [E, D, C, B, A]
+  created_at:
+    A: "2026-01-05T00:00:00Z"
+    B: "2026-01-04T00:00:00Z"
+    C: "2026-01-03T00:00:00Z"
+    D: "2026-01-02T00:00:00Z"
+    E: "2026-01-01T00:00:00Z"
+  limit: 3
+  expect:                       # full order would be A,E,B,D,C — truncated to top 3
+    - {id: A, score: 0.031778}  # 1/61 + 1/65, tie-break beats E (newer)
+    - {id: E, score: 0.031778}  # 1/65 + 1/61
+    - {id: B, score: 0.031754}  # 1/62 + 1/64, tie-break beats D (newer)
+- name: duplicate_free_symmetric_tie
+  # P and Q both appear in both legs (mirrored ranks) -> identical scores; each must
+  # appear exactly once in the output (not twice), broken by id ASC on the exact tie.
+  vector_ranked: [P, Q]
+  lexical_ranked: [Q, P]
+  created_at: {P: "2026-01-01T00:00:00Z", Q: "2026-01-01T00:00:00Z"}
+  expect:
+    - {id: P, score: 0.032522}  # 1/61 + 1/62
+    - {id: Q, score: 0.032522}  # 1/62 + 1/61
+- name: deep_legs_30_duplicate_free_order_preserved
+  # Both legs list the same 30 ids in identical order -> score(n_k) = 2/(60+k), strictly
+  # decreasing in k, so the fused order equals the input order with zero reordering and
+  # zero duplicates despite every id appearing in both legs. Spot-checked at both ends
+  # (k=1 and k=30); the full 30-id order is the invariant under test, not per-id arithmetic.
+  vector_ranked: [n01, n02, n03, n04, n05, n06, n07, n08, n09, n10,
+                  n11, n12, n13, n14, n15, n16, n17, n18, n19, n20,
+                  n21, n22, n23, n24, n25, n26, n27, n28, n29, n30]
+  lexical_ranked: [n01, n02, n03, n04, n05, n06, n07, n08, n09, n10,
+                   n11, n12, n13, n14, n15, n16, n17, n18, n19, n20,
+                   n21, n22, n23, n24, n25, n26, n27, n28, n29, n30]
+  expect_order: [n01, n02, n03, n04, n05, n06, n07, n08, n09, n10,
+                 n11, n12, n13, n14, n15, n16, n17, n18, n19, n20,
+                 n21, n22, n23, n24, n25, n26, n27, n28, n29, n30]
+  expect_count: 30             # not 60 — the duplicate-free invariant
+  spot_check_scores:
+    n01: 0.032787              # 2/61
+    n30: 0.022222               # 2/90

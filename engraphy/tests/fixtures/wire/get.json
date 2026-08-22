@@ -1,0 +1,60 @@
+{
+  "tool": "get",
+  "outcome": "ok",
+  "request": {
+    "name": "get",
+    "arguments": {
+      "ids": [
+        "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "00000000-0000-4000-8000-000000000000"
+      ]
+    }
+  },
+  "response": {
+    "v": 1,
+    "nodes": [
+      {
+        "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "type": "error",
+        "scope": "project-alpha",
+        "title": "Vite build fails on case-sensitive import",
+        "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+        "attrs": {
+          "severity": "high",
+          "happened_at": "2026-07-06"
+        },
+        "status": "active",
+        "author": "devon",
+        "created_at": "2026-07-06T12:00:00Z",
+        "addenda": [
+          {
+            "merged_at": "2026-07-09T09:00:00Z",
+            "source_client": "devon-laptop",
+            "author_principal": "devon",
+            "body": "Same lesson, reworded: ./Foo vs foo.tsx bites only in Linux CI."
+          }
+        ],
+        "edges": {
+          "out": [
+            {
+              "src": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+              "dst": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+              "type": "relates_to"
+            }
+          ],
+          "in": []
+        }
+      }
+    ],
+    "missing": [
+      "00000000-0000-4000-8000-000000000000"
+    ]
+  },
+  "volatile": [
+    "response.nodes[].id",
+    "response.nodes[].created_at",
+    "response.nodes[].addenda[].merged_at",
+    "response.nodes[].edges.out[].src",
+    "response.nodes[].edges.out[].dst"
+  ]
+}

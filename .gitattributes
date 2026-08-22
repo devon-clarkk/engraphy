@@ -1,0 +1,13 @@
+# Shell scripts MUST stay LF in the working tree, on every platform. On a
+# Windows checkout with core.autocrlf set, git otherwise rewrites them to CRLF,
+# and the container's /bin/sh then rejects deploy/compose-init.sh at boot
+# ("set: Illegal option -"), breaking `docker compose up`. Scoped narrowly
+# (no repo-wide `* text=auto`) to avoid renormalizing the whole tree.
+*.sh text eol=lf
+
+# Binary assets — never apply end-of-line conversion or diff as text.
+*.png binary
+*.ico binary
+*.vsix binary
+*.woff binary
+*.woff2 binary

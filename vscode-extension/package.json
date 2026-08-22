@@ -1,0 +1,237 @@
+{
+  "name": "engraphy",
+  "displayName": "Engraphy",
+  "description": "Engraphy — the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
+  "version": "0.4.0",
+  "publisher": "engraphy",
+  "license": "UNLICENSED",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devon-clarkk/engraphy"
+  },
+  "activationEvents": [
+    "onMcpCollection:engraphy",
+    "onView:engraphyStats",
+    "onView:engraphyConfirm",
+    "onView:engraphyExplorer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "engraphy",
+        "label": "Engraphy"
+      }
+    ],
+    "configuration": {
+      "title": "Engraphy",
+      "properties": {
+        "engraphy.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000/mcp/",
+          "markdownDescription": "URL of the Engraphy MCP endpoint (Streamable HTTP). For a local bring-up this is `http://127.0.0.1:8000/mcp/`; for a hosted deployment point it at `/mcp/` behind your TLS proxy. **Keep the trailing slash** — the server 307-redirects `/mcp` → `/mcp/`, and the redirect round-trip adds ~10s of latency per call (the extension normalizes a missing slash for you, but the default is correct as shipped).",
+          "order": 1
+        },
+        "engraphy.token": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Bearer token for the Engraphy server. The token **is** your identity — it resolves to a (space, principal, role) on the server. Mint one with `engraphy-admin token create`. Sent as `Authorization: Bearer <token>`.",
+          "order": 2
+        },
+        "engraphy.space": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional label for the space this connection targets. **Informational only** — the actual space is determined by your `engraphy.token`. Used to label the server and the status bar.",
+          "order": 3
+        },
+        "engraphy.composeWorkingDirectory": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Working directory containing the Engraphy `compose.yaml` (and its `.env`). Used by **Engraphy: Start local server**. Defaults to the first workspace folder when empty.",
+          "order": 4
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "engraphy",
+          "title": "Engraphy",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "engraphy": [
+        {
+          "id": "engraphyStats",
+          "name": "Impact & usage",
+          "type": "webview"
+        },
+        {
+          "id": "engraphyConfirm",
+          "name": "Confirm-write queue",
+          "type": "webview"
+        },
+        {
+          "id": "engraphyExplorer",
+          "name": "Memory explorer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "engraphy.startLocalServer",
+        "title": "Start local server",
+        "category": "Engraphy"
+      },
+      {
+        "command": "engraphy.reconnect",
+        "title": "Reconnect",
+        "category": "Engraphy"
+      },
+      {
+        "command": "engraphy.refresh",
+        "title": "Refresh",
+        "category": "Engraphy",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "engraphy.search",
+        "title": "Search memory…",
+        "category": "Engraphy",
+        "icon": "$(search)"
+      },
+      {
+        "command": "engraphy.viewNodeDetails",
+        "title": "View node details",
+        "category": "Engraphy"
+      },
+      {
+        "command": "engraphy.pending.resolveById",
+        "title": "Resolve pending duplicate by id…",
+        "category": "Engraphy"
+      },
+      {
+        "command": "engraphy.gettingStarted",
+        "title": "Set up server / Getting Started",
+        "category": "Engraphy",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "engraphy.configureServer",
+        "title": "Connect to a server (set URL + token)…",
+        "category": "Engraphy",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "engraphy.cloudComingSoon",
+        "title": "Engraphy Cloud (coming soon)",
+        "category": "Engraphy"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "engraphy.viewNodeDetails",
+          "when": "false"
+        },
+        {
+          "command": "engraphy.cloudComingSoon",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "engraphy.search",
+          "when": "view == engraphyExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "engraphy.gettingStarted",
+          "when": "view == engraphyConfirm",
+          "group": "navigation@1"
+        },
+        {
+          "command": "engraphy.refresh",
+          "when": "view == engraphyExplorer || view == engraphyConfirm || view == engraphyStats",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "engraphySetup",
+        "title": "Set up Engraphy",
+        "description": "Get from a cold install to a connected memory server — hosted (soon), local Docker, or your own.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Welcome to Engraphy",
+            "description": "Engraphy is a memory engine for AI agents. To use it you need a server to connect to.\nThere are three ways to get one — pick whichever fits.\n[Connect to a server…](command:engraphy.configureServer)",
+            "media": { "markdown": "media/walkthrough/welcome.md" }
+          },
+          {
+            "id": "cloud",
+            "title": "Connect to Engraphy Cloud",
+            "description": "Hosted Engraphy is **not available yet** — this path is coming soon.\n[What's the status?](command:engraphy.cloudComingSoon)",
+            "media": { "markdown": "media/walkthrough/cloud.md" }
+          },
+          {
+            "id": "docker",
+            "title": "Run locally with Docker",
+            "description": "Bring up the compose stack and mint a token — the real, working setup today.\n[Start local server](command:engraphy.startLocalServer)",
+            "media": { "markdown": "media/walkthrough/docker.md" }
+          },
+          {
+            "id": "existing",
+            "title": "I already have a server",
+            "description": "Paste your MCP URL and token; the extension validates and saves them.\n[Connect to a server…](command:engraphy.configureServer)",
+            "media": { "markdown": "media/walkthrough/existing.md" },
+            "completionEvents": ["onSettingChanged:engraphy.serverUrl"]
+          },
+          {
+            "id": "verify",
+            "title": "Verify the connection",
+            "description": "Confirm the server is reachable, then open the confirm-write queue.\n[Reconnect & refresh](command:engraphy.reconnect)",
+            "media": { "markdown": "media/walkthrough/verify.md" },
+            "completionEvents": ["onCommand:engraphy.reconnect"]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "package": "npm run check-types && node esbuild.js --production",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "check-types": "tsc --noEmit -p ./",
+    "make-icon": "node scripts/make-icon.js",
+    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.101.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.6.0"
+  }
+}

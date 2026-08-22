@@ -1,0 +1,40 @@
+{
+  "tool": "resolve_duplicate",
+  "outcome": "merged",
+  "request": {
+    "name": "resolve_duplicate",
+    "arguments": {
+      "pending_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "resolution": "merge",
+      "merge_into": "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "merged",
+    "canonical": {
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "type": "error",
+      "scope": "project-alpha",
+      "title": "Vite build fails on case-sensitive import",
+      "body": "The import used ./Foo but the file is foo.tsx; works on macOS, fails in CI.",
+      "attrs": {
+        "severity": "high",
+        "happened_at": "2026-07-06"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "similarity": 0.87,
+    "addendum_added": true,
+    "links_attached": 0,
+    "links_skipped": 0,
+    "resonance": []
+  },
+  "note": "resolve_duplicate returns the write envelope of the final outcome (design/07). `merge_into` is required when resolution == 'merge' (07's per-argument table; dedup.py's own guard) and names the node the parked write is absorbed into -- here the canonical this envelope reports. It was missing until 2026-07-21, when the wire-enforcement build's fixture-acceptance loop replayed these arguments for the first time and this pair proved impossible; ruled then that the fixture was the wrong artifact, since 07's table and the shipped code already agreed.",
+  "volatile": [
+    "response.canonical.id",
+    "response.canonical.created_at"
+  ]
+}

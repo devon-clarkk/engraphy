@@ -1,0 +1,145 @@
+# Golden fixtures — rerank RRF-across-signals fusion. Normative: design/07 §Exact
+# formulas (RRF), design/implementation/reranking-plan.md §5 (neutrality guard).
+#
+# rerank_fuse(base_fused, signal_ranked, created_at=None, k=60):
+#   base_fused    — the base RRF-fused list search() already computes today
+#                   (rrf_fuse's own [{id, score}, ...] output, in rank order).
+#   signal_ranked — zero or more signal producer orderings, each a plain list
+#                   of ids best-first (a signal produces an ORDERING, not
+#                   scores — see the plan §1). [] means no signal producers
+#                   are wired (the framework's state before Stage 2 adds
+#                   node-distance).
+#
+# Two-branch behavior, not one formula for every input:
+#
+#   1. signal_ranked == [] -> IDENTITY. base_fused is returned completely
+#      unchanged, byte-for-byte (same score floats, not recomputed). This is
+#      what Stage 1 means by "zero signals is a provable no-op": no arithmetic
+#      runs at all, so there is nothing that could disagree with today's
+#      `fused`. (This is *not* the same "1/(60+rank) recompute happens to
+#      preserve order" -- that would still change the SCORE field, which
+#      breaks the Stage 1 byte-identity test against search()'s current
+#      output. See `zero_signals_is_identity_passthrough` below: A's real
+#      two-leg score 0.032787 is deliberately NOT the rank-1 single-leg value
+#      0.016393, so a recompute-based implementation fails this case loudly.)
+#
+#   2. signal_ranked non-empty -> RECOMPUTE. For every id in base_fused:
+#      score = sum over ALL rank-lists (base_fused's own order counts as one
+#      rank-list, plus each entry in signal_ranked) of 1/(60+rank) in that
+#      list, 0 if the id is absent from a given list -- exactly rrf_fuse's
+#      arithmetic (07), generalized from 2 legs to N. base_fused's ORIGINAL
+#      score values are discarded in this branch; only its ORDER (rank
+#      position) feeds the recompute, same as any other participating list.
+#      The cases below give base_fused deliberately implausible placeholder
+#      scores (0.9/0.5/0.1/...) precisely to make that discarding obvious --
+#      the expected output scores do not echo them.
+#
+# Both branches share one invariant, "reorder-only": the output id set always
+# equals base_fused's id set exactly. An id a signal ranks but that is absent
+# from base_fused is never added (never grows the set); an id base_fused
+# carries but a signal omits still gets a positive score from base_fused's own
+# leg alone (never drops the set). Ties -> created_at desc, then id asc (the
+# same total order rrf_fuse uses).
+- name: zero_signals_is_identity_passthrough
+  base_fused:
+    - {id: A, score: 0.032787}  # a real two-leg score (1/61 + 1/61) -- NOT
+                                 # equal to the rank-1 single-leg value
+                                 # (0.016393), so this only passes if the
+                                 # implementation short-circuits to identity
+                                 # rather than recomputing from rank.
+    - {id: B, score: 0.016129}  # 1/62, single-leg
+    - {id: C, score: 0.015873}  # 1/63, single-leg
+  signal_ranked: []
+  expect:
+    - {id: A, score: 0.032787}
+    - {id: B, score: 0.016129}
+    - {id: C, score: 0.015873}
+
+- name: empty_base_is_identity_noop
+  base_fused: []
+  signal_ranked: []
+  expect: []
+
+- name: two_list_rrf_arithmetic
+  # base + one signal, no ties -> pure arithmetic check. base_fused's own
+  # scores (0.9/0.5/0.1) are placeholders and must NOT appear in `expect`.
+  base_fused:
+    - {id: A, score: 0.9}
+    - {id: B, score: 0.5}
+    - {id: C, score: 0.1}
+  signal_ranked:
+    - [C, A, B]
+  expect:
+    - {id: A, score: 0.032522}  # 1/61 (base r1) + 1/62 (signal r2)
+    - {id: C, score: 0.032266}  # 1/63 (base r3) + 1/61 (signal r1)
+    - {id: B, score: 0.032002}  # 1/62 (base r2) + 1/63 (signal r3)
+
+- name: three_list_rrf_arithmetic
+  # base + two signals, every id misses a different one of the four distinct
+  # reciprocal-rank values -> exercises multi-signal summation, not just 2 legs.
+  base_fused:
+    - {id: A, score: 0.9}
+    - {id: B, score: 0.7}
+    - {id: C, score: 0.5}
+    - {id: D, score: 0.3}
+  signal_ranked:
+    - [D, C, B, A]
+    - [B, D, A, C]
+  expect:
+    - {id: B, score: 0.048395}  # 1/62 (base r2) + 1/63 (sig1 r3) + 1/61 (sig2 r1)
+    - {id: D, score: 0.048147}  # 1/64 (base r4) + 1/61 (sig1 r1) + 1/62 (sig2 r2)
+    - {id: A, score: 0.047891}  # 1/61 (base r1) + 1/64 (sig1 r4) + 1/63 (sig2 r3)
+    - {id: C, score: 0.047627}  # 1/63 (base r3) + 1/62 (sig1 r2) + 1/64 (sig2 r4)
+
+- name: signal_cannot_introduce_new_id
+  # Z is ranked first by the signal but never appears in base_fused -> it must
+  # not appear in the output at all (reorder-only; never grows the id set).
+  base_fused:
+    - {id: A, score: 0.9}
+    - {id: B, score: 0.5}
+    - {id: C, score: 0.1}
+  signal_ranked:
+    - [Z, A, B, C]
+  expect:
+    - {id: A, score: 0.032522}  # 1/61 (base r1) + 1/62 (signal r2, after Z)
+    - {id: B, score: 0.032002}  # 1/62 (base r2) + 1/63 (signal r3)
+    - {id: C, score: 0.031498}  # 1/63 (base r3) + 1/64 (signal r4)
+
+- name: signal_partial_coverage_id_survives_via_base
+  # The signal ranks only B; A and C are absent from it (contribute 0 to that
+  # leg) but must still survive in the output -- base membership alone keeps a
+  # positive score (never drops the set).
+  base_fused:
+    - {id: A, score: 0.9}
+    - {id: B, score: 0.5}
+    - {id: C, score: 0.1}
+  signal_ranked:
+    - [B]
+  expect:
+    - {id: B, score: 0.032522}  # 1/62 (base r2) + 1/61 (signal r1)
+    - {id: A, score: 0.016393}  # 1/61 (base r1) + 0 (absent from signal)
+    - {id: C, score: 0.015873}  # 1/63 (base r3) + 0 (absent from signal)
+
+- name: tie_break_created_at_desc_across_signals
+  # A and B swap positions between base and signal -> exact score tie;
+  # created_at DESC breaks it (same convention as rrf_fuse).
+  base_fused:
+    - {id: A, score: 0.9}
+    - {id: B, score: 0.5}
+  signal_ranked:
+    - [B, A]
+  created_at: {A: "2026-01-01T00:00:00Z", B: "2026-06-01T00:00:00Z"}
+  expect:
+    - {id: B, score: 0.032522}  # tie on score; B newer
+    - {id: A, score: 0.032522}
+
+- name: tie_break_id_asc_when_same_timestamp_across_signals
+  base_fused:
+    - {id: aaa, score: 0.9}
+    - {id: bbb, score: 0.5}
+  signal_ranked:
+    - [bbb, aaa]
+  created_at: {aaa: "2026-01-01T00:00:00Z", bbb: "2026-01-01T00:00:00Z"}
+  expect:
+    - {id: aaa, score: 0.032522}
+    - {id: bbb, score: 0.032522}

@@ -1,0 +1,97 @@
+# Bench pack — the ontology every benchmark run ingests against (design/09
+# §Isolation, §Ingest).
+#
+# Two properties matter more than the type list itself:
+#
+# 1. NO `ambient_scopes` KEY. This is load-bearing and is asserted by a test.
+#    The starter pack declares `ambient_scopes: [personal]`, and
+#    `ambient_scope_set_async` expands every write's dedup candidate set to
+#    include the ambient scopes. Under that pack, conversation A's facts would
+#    become merge candidates for conversation B — silently corrupting both the
+#    dedup numbers and the accuracy numbers, in a way that would look like a
+#    surprisingly good dedup result rather than like a bug. The key is omitted
+#    rather than set to `[]` because the schema makes it optional, and an absent
+#    key cannot be half-read.
+#
+# 2. Required attrs are kept to the minimum that still exercises attr-spec
+#    enforcement. Every required attr is a field the LLM extractor must produce
+#    for the write to be accepted, and a field it cannot infer is a field it
+#    will fabricate. Fabrication is noise in an accuracy measurement, and noise
+#    that we introduced. So `commitment.next_due` — required and `date`-typed in
+#    the starter pack — is optional here: chat mentions obligations without
+#    dates constantly, and forcing an ISO date would make the extractor invent
+#    one. `preference.strength` stays required because it is genuinely inferable
+#    from the utterance, and keeping one required enum means the attr-spec
+#    trigger is actually on the path under test.
+#
+# The type list is the starter pack's, plus `event`. Conversational corpora are
+# largely narrative — "we went to the coast", "I left that job" — and with no
+# type for a thing that happened, every such fact collapses into `note` and the
+# ontology stops doing any work. `event` carries an optional free-text `occurred`
+# rather than a `date`, for the fabrication reason above.
+#
+# NOTE on temporal: storing `event.occurred` is not a back door to the temporal
+# workaround design/09 rejects. What is rejected is *filtering on extracted
+# timestamps at retrieval time* to simulate point-in-time query. No retrieval
+# strategy reads this field, and none may.
+
+pack: bench
+version: 1
+
+node_types:
+  note:
+    description: "A durable fact from the conversation that does not fit a more specific type."
+    attrs: {closed: true}
+  person:
+    description: "Someone the speakers discuss: who they are and how they relate to the speaker."
+    attrs:
+      optional: {relation: {type: string}, contact_notes: {type: string}}
+      closed: true
+  preference:
+    description: "A durable like, dislike, or default. strength=hard means never override; soft means default."
+    attrs:
+      required: {strength: {enum: [hard, soft]}}
+      optional: {domain: {type: string}}
+      closed: true
+  event:
+    description: "Something that happened. occurred is free text, exactly as the speaker expressed it."
+    attrs:
+      optional: {occurred: {type: string}, participants: {type: string}}
+      closed: true
+  commitment:
+    description: "A future or recurring obligation the speaker took on."
+    attrs:
+      optional: {cadence: {type: string}, next_due: {type: date}, channel: {type: string}}
+      closed: true
+  project_ref:
+    description: "An ongoing effort or external resource: what it is and where it lives."
+    attrs:
+      optional: {location: {type: string}, kind: {type: string}}
+      closed: true
+
+edge_types:
+  involves:   {description: "This memory concerns this person.", bidirectional: false}
+  references: {description: "This memory points at this project or resource.", bidirectional: false}
+  relates_to: {description: "Weak generic association.", bidirectional: true}
+  supersedes: {description: "Replacement; the old node's status becomes superseded.", bidirectional: false}
+  same_topic: {description: "Same topic, distinct content: the write path banded these nodes as near-duplicates but kept both because each carries its own information. Attached automatically on merge; walk it to see every stored statement on a topic.", bidirectional: true}
+
+edge_rules:
+  - {type: involves,   src: "*", dst: person}
+  - {type: references, src: "*", dst: project_ref}
+  - {type: relates_to, src: "*", dst: "*"}
+  # The merge path attaches same_topic automatically when a near-duplicate
+  # carries distinct content (design/analysis/fact-searchability-model.md §2.2);
+  # wildcard like supersedes: member and canonical are same-type by construction.
+  - {type: same_topic, src: "*", dst: "*"}
+  # supersede() is a core tool under every pack, so the pack must permit the
+  # edge it inserts; the engine rejects cross-type supersession itself.
+  - {type: supersedes, src: "*", dst: "*"}
+
+# No `ambient_scopes` key — see the header. Do not add one.
+
+briefing:
+  sections:
+    - {name: relevant, semantic: true, types: [preference, note, person, event], top_k: 10}
+    - {name: recent_notes, type: note, recent: 30d}
+  footer: {inbox_pending_count: true}

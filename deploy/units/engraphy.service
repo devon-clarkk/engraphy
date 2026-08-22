@@ -1,0 +1,40 @@
+[Unit]
+Description=Engraphy memory server
+# Postgres is a separate prerequisite service (design/04: "one Python process
+# + one Postgres per trust community") -- not managed by this unit. If your
+# distro runs Postgres as its own systemd service, uncomment the next line
+# with its actual unit name so engraphy waits for it on boot.
+# After=postgresql.service
+# Requires=postgresql.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=engraphy
+Group=engraphy
+WorkingDirectory=/opt/engraphy
+
+# EnvironmentFile keeps secrets (ENGRAPHY_DATABASE_URL's password) out of this
+# unit file, which is world-readable under /etc/systemd/system. Create
+# /etc/engraphy/engraphy.env with mode 0600, owned by the `engraphy` user:
+#   ENGRAPHY_DATABASE_URL=postgres://engram_app:...@localhost:5432/engram?sslmode=disable
+#   ENGRAPHY_BIND_HOST=127.0.0.1        # or a tailnet/overlay IP -- never 0.0.0.0 on a bare host
+#   ENGRAPHY_BIND_PORT=8000
+#   ENGRAPHY_LAST_BACKUP_STATUS_FILE=/var/lib/engraphy/last_backup_at
+EnvironmentFile=/etc/engraphy/engraphy.env
+
+ExecStart=/opt/engraphy/.venv/bin/python -m engraphy.server.app
+Restart=on-failure
+RestartSec=5
+
+# Hardening -- this process needs network + the one env file + its venv;
+# nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/engraphy
+
+[Install]
+WantedBy=multi-user.target

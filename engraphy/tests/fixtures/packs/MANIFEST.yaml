@@ -1,0 +1,152 @@
+# Generated manifest: one row per fixture file, per design/07 Pack file schema.
+# `valid: true` files must pass pack validate; all others must fail it.
+# Exact error message text is NOT asserted (07 does not contract pack-validate
+# error strings the way it contracts attr-spec errors) -- see DECISIONS-DELTA.md.
+- file: valid-minimal.yaml
+  valid: true
+  rule: 'baseline: satisfies every rule below'
+- file: invalid-top-level-additional-property.yaml
+  valid: false
+  rule: 'top level additionalProperties: false'
+- file: invalid-missing-pack.yaml
+  valid: false
+  rule: 'required: pack'
+- file: invalid-missing-version.yaml
+  valid: false
+  rule: 'required: version'
+- file: invalid-missing-node-types.yaml
+  valid: false
+  rule: 'required: node_types'
+- file: invalid-missing-edge-types.yaml
+  valid: false
+  rule: 'required: edge_types'
+- file: invalid-pack-name-pattern.yaml
+  valid: false
+  rule: pack.pattern ^[a-z][a-z0-9-]{1,40}$
+- file: invalid-version-not-integer.yaml
+  valid: false
+  rule: version.type integer
+- file: invalid-version-below-minimum.yaml
+  valid: false
+  rule: version.minimum 1
+- file: invalid-node-types-empty.yaml
+  valid: false
+  rule: node_types.minProperties 1
+- file: invalid-node-type-name-pattern.yaml
+  valid: false
+  rule: node_types patternProperties key ^[a-z][a-z0-9_]{1,40}$
+  schema_valid_expected: true
+  name_pattern_violation: true
+  note: passes packs/schema.json alone (patternProperties does not constrain non-matching
+    keys without additionalProperties:false); rejected by
+    engraphy.admin.packs.validate_name_patterns -- QUESTIONS.md 'pack-schema' (resolved)
+- file: invalid-node-type-missing-description.yaml
+  valid: false
+  rule: 'node_types.*.required: description'
+- file: invalid-node-type-additional-property.yaml
+  valid: false
+  rule: 'node_types.* additionalProperties: false'
+- file: invalid-attrs-additional-property.yaml
+  valid: false
+  rule: 'attrs additionalProperties: false'
+- file: invalid-attrmap-key-pattern.yaml
+  valid: false
+  rule: attrmap patternProperties key ^[a-z][a-z0-9_]{1,40}$
+  schema_valid_expected: true
+  name_pattern_violation: true
+  note: passes packs/schema.json alone (patternProperties does not constrain non-matching
+    keys without additionalProperties:false); rejected by
+    engraphy.admin.packs.validate_name_patterns -- QUESTIONS.md 'pack-schema' (resolved)
+- file: invalid-attrmap-oneof-neither.yaml
+  valid: false
+  rule: 'attrmap oneOf: exactly one of type|enum (neither present)'
+- file: invalid-attrmap-enum-empty.yaml
+  valid: false
+  rule: attrmap enum.minItems 1
+- file: invalid-attrmap-type-invalid-value.yaml
+  valid: false
+  rule: attrmap type.enum [string,int,number,bool,date]
+- file: invalid-conditional-missing-when.yaml
+  valid: false
+  rule: 'conditional required: [key, when]'
+- file: invalid-conditional-when-missing-equals.yaml
+  valid: false
+  rule: 'conditional.when required: [key, equals]'
+- file: invalid-closed-wrong-type.yaml
+  valid: false
+  rule: 'attrs.closed type: boolean'
+- file: invalid-edge-type-name-pattern.yaml
+  valid: false
+  rule: edge_types patternProperties key ^[a-z][a-z0-9_]{1,40}$
+  schema_valid_expected: true
+  name_pattern_violation: true
+  note: passes packs/schema.json alone (patternProperties does not constrain non-matching
+    keys without additionalProperties:false); rejected by
+    engraphy.admin.packs.validate_name_patterns -- QUESTIONS.md 'pack-schema' (resolved)
+- file: invalid-edge-type-missing-description.yaml
+  valid: false
+  rule: 'edge_types.*.required: description'
+- file: invalid-edge-type-additional-property.yaml
+  valid: false
+  rule: 'edge_types.* additionalProperties: false'
+- file: invalid-edge-type-bidirectional-wrong-type.yaml
+  valid: false
+  rule: 'edge_types.*.bidirectional type: boolean'
+- file: invalid-edge-rule-missing-dst.yaml
+  valid: false
+  rule: 'edge_rules item required: [type, src, dst]'
+- file: invalid-edge-rule-additional-property.yaml
+  valid: false
+  rule: 'edge_rules item additionalProperties: false'
+- file: invalid-ambient-scopes-wrong-item-type.yaml
+  valid: false
+  rule: 'ambient_scopes.items type: string'
+- file: invalid-briefing-missing-sections.yaml
+  valid: false
+  rule: 'briefing required: sections'
+- file: invalid-briefing-sections-too-many.yaml
+  valid: false
+  rule: briefing.sections maxItems 8
+- file: invalid-briefing-section-missing-name.yaml
+  valid: false
+  rule: 'briefing.sections item required: name'
+- file: invalid-briefing-section-additional-property.yaml
+  valid: false
+  rule: 'briefing.sections item additionalProperties: false'
+- file: invalid-briefing-section-top-k-too-large.yaml
+  valid: false
+  rule: briefing.sections.top_k maximum 10
+- file: invalid-briefing-section-recent-pattern.yaml
+  valid: false
+  rule: briefing.sections.recent pattern ^[0-9]+d$
+- file: invalid-briefing-section-include-linked-direction-enum.yaml
+  valid: false
+  rule: briefing.sections.include_linked.direction enum [out,in]
+- file: invalid-crossref-edge-rule-unknown-src-type.yaml
+  valid: false
+  rule: 'cross-ref: edge_rules.src must name a type defined in this pack'
+  schema_valid_expected: true
+  note: passes packs/schema.json alone (crossref rules aren't JSON-Schema-expressible);
+    must be rejected by pack validate's separate cross-reference pass (07 Pack file
+    schema section, 'Cross-reference validation beyond the schema')
+- file: invalid-crossref-edge-rule-unknown-edge-type.yaml
+  valid: false
+  rule: 'cross-ref: edge_rules.type must name an edge type defined in this pack'
+  schema_valid_expected: true
+  note: passes packs/schema.json alone (crossref rules aren't JSON-Schema-expressible);
+    must be rejected by pack validate's separate cross-reference pass (07 Pack file
+    schema section, 'Cross-reference validation beyond the schema')
+- file: invalid-crossref-briefing-unknown-type.yaml
+  valid: false
+  rule: 'cross-ref: briefing section type(s) must name a type defined in this pack'
+  schema_valid_expected: true
+  note: passes packs/schema.json alone (crossref rules aren't JSON-Schema-expressible);
+    must be rejected by pack validate's separate cross-reference pass (07 Pack file
+    schema section, 'Cross-reference validation beyond the schema')
+- file: invalid-crossref-alias-binds-unknown-tool.yaml
+  valid: false
+  rule: 'cross-ref: aliases may bind only to core tools'
+  schema_valid_expected: true
+  note: passes packs/schema.json alone (crossref rules aren't JSON-Schema-expressible);
+    must be rejected by pack validate's separate cross-reference pass (07 Pack file
+    schema section, 'Cross-reference validation beyond the schema')

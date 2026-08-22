@@ -1,0 +1,62 @@
+{
+  "tool": "briefing",
+  "outcome": "ok",
+  "request": {
+    "name": "briefing",
+    "arguments": {
+      "scope": "project-alpha",
+      "hint": "vite build"
+    }
+  },
+  "response": {
+    "v": 1,
+    "sections": [
+      {
+        "name": "open-decisions",
+        "nodes": [
+          {
+            "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+            "type": "decision",
+            "scope": "project-alpha",
+            "title": "Use pnpm workspaces",
+            "body": "Chosen over npm workspaces for stricter peer resolution.",
+            "attrs": {
+              "status": "open"
+            },
+            "status": "active",
+            "author": "devon",
+            "created_at": "2026-07-01T09:00:00Z",
+            "linked": [
+              {
+                "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+                "type": "pattern",
+                "scope": "project-alpha",
+                "title": "Monorepo tooling notes",
+                "body": "…",
+                "attrs": {},
+                "status": "active",
+                "author": "devon",
+                "created_at": "2026-07-01T09:05:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "recent-errors",
+        "nodes": []
+      }
+    ],
+    "footer": {
+      "inbox_pending": 3
+    }
+  },
+  "note": "section order = pack order; empty sections included with nodes: []; nodes are full detail.",
+  "volatile": [
+    "response.sections[].nodes[].id",
+    "response.sections[].nodes[].created_at",
+    "response.sections[].nodes[].linked[].id",
+    "response.sections[].nodes[].linked[].created_at",
+    "response.footer.inbox_pending"
+  ]
+}

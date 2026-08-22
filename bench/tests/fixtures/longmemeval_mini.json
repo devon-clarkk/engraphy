@@ -1,0 +1,38 @@
+[
+  {
+    "question_id": "q_update_001",
+    "question_type": "knowledge-update",
+    "question": "Where does the user work now?",
+    "answer": "At a bakery on Mill Street",
+    "question_date": "2023/08/20 (Sun) 02:33",
+    "haystack_session_ids": ["s_a", "s_b"],
+    "haystack_dates": ["2023/05/01 (Mon) 09:00", "2023/07/14 (Fri) 18:20"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "I just started at the hardware store downtown.", "has_answer": false},
+        {"role": "assistant", "content": "Congratulations on the new job!"}
+      ],
+      [
+        {"role": "user", "content": "I left the hardware store, I work at a bakery on Mill Street now.", "has_answer": true},
+        {"role": "assistant", "content": "A bakery sounds like a big change."}
+      ]
+    ],
+    "answer_session_ids": ["s_b"]
+  },
+  {
+    "question_id": "q_pref_002_abs",
+    "question_type": "single-session-preference",
+    "question": "What is the user's favourite airline?",
+    "answer": "",
+    "question_date": "2023/09/01 (Fri) 11:00",
+    "haystack_session_ids": ["s_c"],
+    "haystack_dates": ["2023/06/02 (Fri) 12:00"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "I prefer aisle seats on long flights."},
+        {"role": "assistant", "content": "Noted, aisle seats it is."}
+      ]
+    ],
+    "answer_session_ids": []
+  }
+]

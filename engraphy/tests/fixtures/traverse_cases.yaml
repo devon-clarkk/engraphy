@@ -1,0 +1,204 @@
+# Golden fixtures — traversal. Normative: design/02 §Traversal (the recursive-CTE
+# SQL is inlined and normative there), design/07 §Canonical I/O (traverse envelope
+# + detail levels), design/03 tool signature.
+#
+# Each case: a seed graph (labelled nodes/edges) + traverse params + expected
+# nodes (label -> min depth), edges (src/dst/type by label), truncated, and
+# optional resolved_from (canonical label -> original merged label). The harness
+# (test_traverse.py) maps labels -> real ids (explicit sequential ids, so the
+# deterministic ORDER BY is predictable), runs traverse(), maps ids back to
+# labels, and compares.
+#
+# Boring readings pinned here (DECISIONS-DELTA.md 2026-07-17), all the obvious
+# reading of 02's inlined SQL + 07's envelope:
+#  - edge_types omitted = every edge type; max_depth default/cap 4; limit
+#    default/cap 50; direction required; detail default summary.
+#  - limit caps WALK ROWS (the SQL's LIMIT); truncated = more rows than limit.
+#  - a deterministic ORDER BY (depth, src_id, dst_id, type) precedes LIMIT so the
+#    envelope is reproducible (the inlined SQL omits it; unordered LIMIT is not).
+#  - edges are the RAW walked endpoints; nodes resolve merged->canonical with
+#    resolved_from; two walk-ids resolving to one canonical dedupe to min depth.
+#  - bidirectional edge types are walked both ways regardless of direction.
+# Types are auto-created loose; edge types default non-bidirectional unless the
+# seed's edge_types block marks one bidirectional.
+
+- name: out_chain_depths_and_edges
+  # A -verified_by-> B -verified_by-> C, walk out depth 2: all three nodes at
+  # their depth, both edges, start included at depth 0.
+  seed:
+    nodes: [{label: A, type: decision}, {label: B, type: check}, {label: C, type: check}]
+    edges: [{type: verified_by, src: A, dst: B}, {type: verified_by, src: B, dst: C}]
+  traverse: {start: A, direction: out, max_depth: 2}
+  expect:
+    nodes: {A: 0, B: 1, C: 2}
+    edges: [[A, B, verified_by], [B, C, verified_by]]
+    truncated: false
+
+- name: in_direction_walks_incoming
+  # Same chain, walk IN from C: reaches B (1) then A (2) via incoming edges.
+  seed:
+    nodes: [{label: A, type: decision}, {label: B, type: check}, {label: C, type: check}]
+    edges: [{type: verified_by, src: A, dst: B}, {type: verified_by, src: B, dst: C}]
+  traverse: {start: C, direction: in, max_depth: 2}
+  expect:
+    nodes: {C: 0, B: 1, A: 2}
+    edges: [[A, B, verified_by], [B, C, verified_by]]
+    truncated: false
+
+- name: both_direction_union
+  # From B, direction both: reaches A (incoming) and C (outgoing), each at depth 1.
+  seed:
+    nodes: [{label: A, type: decision}, {label: B, type: check}, {label: C, type: check}]
+    edges: [{type: verified_by, src: A, dst: B}, {type: verified_by, src: B, dst: C}]
+  traverse: {start: B, direction: both, max_depth: 2}
+  expect:
+    nodes: {B: 0, A: 1, C: 1}
+    edges: [[A, B, verified_by], [B, C, verified_by]]
+    truncated: false
+
+- name: bidirectional_walked_both_ways
+  # relates_to is bidirectional. Edge stored A -relates_to-> B. Walk OUT from B
+  # still reaches A -- a bidirectional type is walked both ways regardless of
+  # direction (02).
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}]
+    edge_types: [{name: relates_to, bidirectional: true}]
+    edges: [{type: relates_to, src: A, dst: B}]
+  traverse: {start: B, direction: out, max_depth: 1}
+  expect:
+    nodes: {B: 0, A: 1}
+    edges: [[A, B, relates_to]]
+    truncated: false
+
+- name: max_depth_cap
+  # Chain A->B->C->D->E, max_depth 2: only A,B,C returned (D,E beyond the cap).
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}, {label: C, type: note}, {label: D, type: note}, {label: E, type: note}]
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: B, dst: C}
+      - {type: relates_to, src: C, dst: D}
+      - {type: relates_to, src: D, dst: E}
+  traverse: {start: A, direction: out, max_depth: 2}
+  expect:
+    nodes: {A: 0, B: 1, C: 2}
+    edges: [[A, B, relates_to], [B, C, relates_to]]
+    truncated: false
+
+- name: cycle_guard
+  # A->B->C->A. The path-tracked guard stops re-entering A; each edge walked once.
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}, {label: C, type: note}]
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: B, dst: C}
+      - {type: relates_to, src: C, dst: A}
+  traverse: {start: A, direction: out, max_depth: 4}
+  expect:
+    nodes: {A: 0, B: 1, C: 2}
+    edges: [[A, B, relates_to], [B, C, relates_to]]   # C->A guarded (A already on path)
+    truncated: false
+
+- name: limit_truncates_walk_rows
+  # Four depth-1 edges from A; limit 2 keeps the two with smallest dst_id (B, C
+  # by the deterministic order) and flags truncated.
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}, {label: C, type: note}, {label: D, type: note}, {label: E, type: note}]
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: A, dst: C}
+      - {type: relates_to, src: A, dst: D}
+      - {type: relates_to, src: A, dst: E}
+  traverse: {start: A, direction: out, max_depth: 1, limit: 2}
+  expect:
+    nodes: {A: 0, B: 1, C: 1}
+    edges: [[A, B, relates_to], [A, C, relates_to]]
+    truncated: true
+
+- name: edge_type_filter
+  # Two edge types out of A; edge_types [verified_by] walks only that one.
+  seed:
+    nodes: [{label: A, type: decision}, {label: B, type: check}, {label: P, type: person}]
+    edge_types: [{name: involves, bidirectional: false}]
+    edges:
+      - {type: verified_by, src: A, dst: B}
+      - {type: involves, src: A, dst: P}
+  traverse: {start: A, direction: out, max_depth: 1, edge_types: [verified_by]}
+  expect:
+    nodes: {A: 0, B: 1}
+    edges: [[A, B, verified_by]]
+    truncated: false
+
+- name: readability_both_endpoints
+  # An edge to a node in an unreadable scope is not walked -- the edges_read RLS
+  # policy requires BOTH endpoints readable (02: falls out of RLS composition).
+  seed:
+    scopes: [{id: hidden, owner: p2, visibility: private}]
+    principals: [p2]
+    nodes:
+      - {label: A, type: note, scope: scope1}
+      - {label: B, type: note, scope: scope1}
+      - {label: H, type: note, scope: hidden}
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: A, dst: H}   # H unreadable -> this edge filtered
+  traverse: {start: A, direction: out, max_depth: 1}
+  expect:
+    nodes: {A: 0, B: 1}
+    edges: [[A, B, relates_to]]
+    truncated: false
+
+- name: merge_chain_resolves_to_canonical
+  # Walking to a merged node hydrates its CANONICAL, annotated resolved_from
+  # (02 "hydration resolves merge chains"; 07 node envelope resolved_from?).
+  seed:
+    nodes:
+      - {label: A, type: note}
+      - {label: Bcanon, type: note}
+      - {label: Bmerged, type: note, merged_into: Bcanon}
+    edges:
+      - {type: relates_to, src: A, dst: Bmerged}   # walk hits the merged node
+  traverse: {start: A, direction: out, max_depth: 1}
+  expect:
+    nodes: {A: 0, Bcanon: 1}          # Bmerged resolved to Bcanon at its depth
+    edges: [[A, Bmerged, relates_to]]  # edge keeps the RAW walked endpoint
+    resolved_from: {Bcanon: Bmerged}
+    truncated: false
+
+- name: isolated_start_node
+  # A start node with no matching edges: just itself at depth 0, no edges.
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}]
+    edges: [{type: relates_to, src: B, dst: A}]   # incoming only; walking OUT finds nothing
+  traverse: {start: A, direction: out, max_depth: 4}
+  expect:
+    nodes: {A: 0}
+    edges: []
+    truncated: false
+
+- name: depth_is_minimum_over_paths
+  # C is reachable A->C (depth 1) and A->B->C (depth 2); depth = the minimum (1).
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}, {label: C, type: note}]
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: B, dst: C}
+      - {type: relates_to, src: A, dst: C}
+  traverse: {start: A, direction: out, max_depth: 3}
+  expect:
+    nodes: {A: 0, B: 1, C: 1}
+    edges: [[A, B, relates_to], [A, C, relates_to], [B, C, relates_to]]
+    truncated: false
+
+- name: detail_full_includes_body
+  # detail=full carries body on every node (summary, the default, omits it --
+  # asserted structurally by the harness).
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note}]
+    edges: [{type: relates_to, src: A, dst: B}]
+  traverse: {start: A, direction: out, max_depth: 1, detail: full}
+  expect:
+    nodes: {A: 0, B: 1}
+    edges: [[A, B, relates_to]]
+    truncated: false
+    detail: full

@@ -1,0 +1,48 @@
+{
+  "tool": "write",
+  "outcome": "merged_linked",
+  "request": {
+    "name": "write",
+    "arguments": {
+      "scope": "project-alpha",
+      "type": "fact",
+      "title": "Priya promoted to charge nurse",
+      "body": "Priya was promoted to charge nurse on the paediatric ward in June 2026.",
+      "attrs": {
+        "as_of": "2026-06-01"
+      }
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "merged_linked",
+    "node": {
+      "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      "type": "fact",
+      "scope": "project-alpha",
+      "title": "Priya promoted to charge nurse",
+      "body": "Priya was promoted to charge nurse on the paediatric ward in June 2026.",
+      "attrs": {
+        "as_of": "2026-06-01"
+      },
+      "status": "active",
+      "author": "devon",
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    "canonical": {
+      "id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+      "type": "fact",
+      "scope": "project-alpha",
+      "title": "Priya works as a paediatric nurse"
+    },
+    "similarity": 0.96,
+    "cluster_edge_added": false,
+    "resonance": []
+  },
+  "note": "The graceful-skip variant of write_merged_linked.json (design/analysis/fact-searchability-model.md §2.2, missing-rule behavior): the incoming banded >= t_high and was judged novel, so the member row is still inserted and searchable (I1 holds) and the `dedup_log` row still records band `merge_linked` -- but the pack does not declare the `same_topic` edge type + covering rule, so the §1.3 pre-check finds no rule and the engine SKIPS the edge rather than aborting the write on a trigger CheckViolation. `cluster_edge_added: false` discloses this. No fallback to `relates_to` (ruled, Devon 2026-07-28). `pack validate` warns on such packs.",
+  "volatile": [
+    "response.node.id",
+    "response.node.created_at",
+    "response.canonical.id"
+  ]
+}

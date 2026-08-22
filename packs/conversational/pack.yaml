@@ -1,0 +1,159 @@
+# Conversational personal-memory pack.
+#
+# For an assistant that holds personal memory across many sessions of
+# conversation: the people in someone's life, events that happened at
+# particular times, preferences they state, the things and relationships that
+# matter to them, and the decisions and opinions they express over time.
+#
+# The model follows standard personal-knowledge ontologies — schema.org's
+# Person / Event / Organization / Place and ordinary contact/CRM schemas — so
+# an agent finds the canonical fields where it expects them. Analogues are noted
+# in comments for the author's reference; see packs/conversational/agent-guide.md
+# for the agent-facing version and packs/authoring-guide.md for the design rules.
+#
+# Structured attributes are the fields you filter, sort, or recall directly;
+# richer or open-ended knowledge still lives in a node's title/body and accretes
+# safely through dedup. Multi-valued relationships (who attended, who knows whom)
+# are edges, not attributes — the attr grammar is flat and single-valued in v1.
+pack: conversational
+version: 1
+
+node_types:
+
+  # schema.org/Person. The stable identity that facts, events, preferences, and
+  # relationships attach to. A person's open-ended details are `fact` nodes
+  # linked with `involves`; the attributes here are the canonical profile fields.
+  person:
+    description: "A person who matters across conversations. Their identity and the facts you filter or recall directly live here; write open-ended facts about them as linked `fact` nodes."
+    attrs:
+      optional:
+        full_name:    {type: string}          # schema.org/Person.name (when the title is a short/familiar name)
+        pronouns:     {type: string}           # the person's pronouns (vCard/modern contact schemas)
+        relationship: {type: string}           # their relationship TO THE USER: "sister", "manager", "dentist"
+        occupation:   {type: string}           # schema.org/Person.hasOccupation — the role, e.g. "paediatric nurse"
+        location:     {type: string}           # schema.org/Person.homeLocation — where they live
+        birthday:     {type: date}             # schema.org/Person.birthDate
+        email:        {type: string}           # schema.org/Person.email
+        phone:        {type: string}           # schema.org/Person.telephone
+      closed: true
+
+  # schema.org/Thing, specialised in practice to Organization / Place / Product.
+  # The counterpart to `person` for the "things" half of relationships.
+  thing:
+    description: "A non-person entity that recurs in someone's life and can be related to: a place, organization, object, pet, or product."
+    attrs:
+      optional:
+        kind:     {type: string}               # what it is: "restaurant", "employer", "pet", "product"
+        location: {type: string}               # schema.org/Place.address / Organization.location
+        url:      {type: string}               # schema.org/Thing.url
+      closed: true
+
+  # A discrete claim about a person or thing (or the user). schema.org models
+  # these as properties of an entity; Engraphy's grain makes each its own node so
+  # it can be recalled, deduped, and corrected independently.
+  fact:
+    description: "A discrete, durable fact about a person or a thing (or about the user): one fact per node. Facts change, so set `as_of` when the date it holds from is known, and use `supersede` when a fact is later corrected."
+    attrs:
+      optional:
+        as_of: {type: date}                    # the date this fact holds from (bi-temporal 'valid-from')
+      closed: true
+
+  # schema.org/Event. The time is constitutive — an undated happening is a `fact`.
+  event:
+    description: "Something that happened at a particular time. `occurred_on` is required; an undated happening is a `fact`. Attendees and subjects are edges (`involves`, `references`), not attributes."
+    attrs:
+      required:
+        occurred_on: {type: date}              # schema.org/Event.startDate
+      optional:
+        ended_on: {type: date}                 # schema.org/Event.endDate — for multi-day events
+        location: {type: string}               # schema.org/Event.location
+      closed: true
+
+  # A stated like/dislike/default. schema.org has no clean analogue; this follows
+  # ordinary personalization/CRM preference modelling.
+  preference:
+    description: "A like, dislike, or default the user (or another person) has stated. Set `strength: hard` for a firm rule the agent must not override, `soft` for a default; `sentiment` for its direction; `domain` for the area it applies to."
+    attrs:
+      optional:
+        strength:  {enum: [hard, soft]}        # hard = never override; soft = a default
+        sentiment: {enum: [like, dislike]}     # the direction of the preference
+        domain:    {type: string}              # the area: "food", "scheduling", "communication"
+      closed: true
+
+  # A choice someone made and expressed. Revisited over time -> supersede.
+  decision:
+    description: "A choice someone made and expressed — 'we're going with X', 'I'll do Y'. Set `as_of` to when it was made; `supersede` it when it changes."
+    attrs:
+      optional:
+        as_of: {type: date}                    # when the decision was made
+      closed: true
+
+  # A view or judgement someone expressed. Distinct from a decision (a choice)
+  # and a preference (a standing disposition). Shifts over time.
+  opinion:
+    description: "A view or judgement someone expressed — 'I think X', 'I don't rate Y'. Set `as_of` to when it was expressed; `supersede` it when the view changes."
+    attrs:
+      optional:
+        as_of: {type: date}                    # when the opinion was expressed
+      closed: true
+
+edge_types:
+  knows:
+    description: "An interpersonal relationship between two people (schema.org/Person.knows). The nature of the tie goes in a linked `fact` or the people's bodies, or in the person's `relationship` field when it's a relationship to the user."
+    bidirectional: true
+  works_at:
+    description: "This person works at / is a member of this organization (schema.org/Person.worksFor)."
+    bidirectional: false
+  involves:
+    description: "This memory concerns, or was stated by, this person (attendee, subject, or holder)."
+    bidirectional: false
+  references:
+    description: "This memory concerns this thing (schema.org 'about')."
+    bidirectional: false
+  relates_to:
+    description: "A generic association between any two memories or entities, in either direction. Also the edge the duplicate-check handshake attaches when two near-duplicates are resolved as distinct."
+    bidirectional: true
+  supersedes:
+    description: "This node replaces an older one, whose status becomes superseded. Attached by the `supersede` tool when a fact, decision, or opinion changes."
+    bidirectional: false
+  # Attached automatically by the engine's merge path when two writes are
+  # near-duplicates (>= t_high) but each carries distinct content — a fact
+  # cluster. Never attach it manually; walk it to see every stored statement
+  # on a topic. (design/analysis/fact-searchability-model.md §2.2)
+  same_topic:
+    description: "Same topic, distinct content: these memories were near-duplicates at write time and both were kept. Attached automatically on merge."
+    bidirectional: true
+
+edge_rules:
+  - {type: knows,      src: person, dst: person}
+  - {type: works_at,   src: person, dst: thing}
+  - {type: involves,   src: "*",    dst: person}
+  - {type: references, src: "*",    dst: thing}
+  - {type: relates_to, src: "*",    dst: "*"}
+  # The merge path attaches same_topic automatically when a near-duplicate
+  # carries distinct content (design/analysis/fact-searchability-model.md §2.2);
+  # wildcard like supersedes: member and canonical are same-type by construction.
+  - {type: same_topic, src: "*",    dst: "*"}
+  # `supersede` is a core tool under every pack, so this pack must permit the
+  # edge it inserts. Wildcard like the starter pack: the engine already refuses
+  # cross-type supersession itself.
+  - {type: supersedes, src: "*",    dst: "*"}
+
+ambient_scopes: [personal]
+
+briefing:
+  sections:
+    # Firm preferences the agent must honour, surfaced every session.
+    - {name: standing_preferences, type: preference,
+       where_attr: {key: strength, equals: hard}}
+    # Context relevant to what the session is about (needs a hint on the call).
+    - {name: relevant, semantic: true,
+       types: [person, thing, fact, preference, opinion, decision], top_k: 5}
+    # What has happened lately, and what has lately been decided.
+    - {name: recent_events, type: event, recent: 30d}
+    - {name: recent_decisions, type: decision, recent: 30d}
+  footer: {inbox_pending_count: true}
+
+tool_descriptions:
+  briefing: "Call this at the start of a conversation: it returns the user's firm preferences, people and facts relevant to your hint, recent events, and recent decisions."
+  write: "Save a durable personal memory: a fact about someone, an event that happened, a stated preference, or a decision or opinion. The server deduplicates, so re-telling is safe. If a write comes back 'merged' but you were correcting or updating the stored memory rather than restating it, call supersede."
