@@ -9,6 +9,46 @@ Docker + reverse proxy), see the [Deployment guide](05-deployment.md).
 > Engraphy). Prefer `127.0.0.1` over `localhost` in connection URLs — on IPv6-first
 > systems `localhost` adds a ~10 s timeout per connection.
 
+## Quickstart (Docker)
+
+If you just want Engraphy running, this is the whole thing. The cloud profile
+starts Postgres, runs the migrations, provisions the app role, and starts the
+server in one command. Requirements: Docker with Compose.
+
+```bash
+# 1. Configure secrets (never committed; .env is git-ignored)
+cp deploy/.env.example .env   # then edit, or generate them:
+printf 'POSTGRES_PASSWORD=%s\nENGRAPHY_APP_ROLE_PASSWORD=%s\n' \
+  "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
+
+# 2. Bring up Postgres + migrate + provision + serve
+docker compose up -d          # first boot downloads the ~523 MB embedding model
+
+# 3. Create a space, apply the starter pack, mint a client token
+docker compose --profile admin run --rm admin \
+  engraphy-admin space create --id personal --display-name "My Memory" --principal me
+docker compose --profile admin run --rm admin \
+  engraphy-admin pack apply packs/starter/pack.yaml --space personal
+docker compose --profile admin run --rm admin \
+  engraphy-admin token create --space personal --principal me \
+    --client-name my-editor --role readwrite
+```
+
+The server is now on `127.0.0.1:8000`, with the MCP endpoint at
+`http://127.0.0.1:8000/mcp/` (keep the trailing slash). Put a TLS-terminating
+reverse proxy in front before exposing it. The token prints once.
+
+There are scripts that do all of the above for you, including waiting for
+`/healthz` and printing the exact client settings: `./up.sh` then
+`./provision.sh` (or `.\up.ps1` and `.\provision.ps1` on Windows).
+
+The rest of this guide is the **local, no-Docker path**: the same stack
+installed directly on your machine, which is what you want for developing on
+Engraphy itself. For production postures see the
+[Deployment guide](05-deployment.md).
+
+---
+
 ## 0. Prerequisites
 
 - **Postgres 16 with the `pgvector` extension.** The `pgvector/pgvector:pg16`
