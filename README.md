@@ -93,6 +93,41 @@ The server is now on `127.0.0.1:8000` (put a TLS-terminating reverse proxy in
 front to expose it). Point any MCP client at it with the bearer token. The
 [setup guide](docs/02-setup.md) covers the local, no-Docker path as well.
 
+### Or let the scripts do it
+
+`up.sh` and `provision.sh` (with `up.ps1` / `provision.ps1` as Windows
+equivalents) wrap exactly the sequence above, and add the waiting that a
+copy-paste quickstart cannot:
+
+```bash
+./up.sh          # writes .env with random passwords, starts the stack,
+                 # then blocks until /healthz returns 200
+./provision.sh   # creates the space, applies the starter pack, mints a token,
+                 # and prints the client settings to paste in
+```
+
+`up.sh` polls `/healthz` rather than compose's health status, because on first
+boot compose reports `starting` for as long as the model cache takes to seed,
+which looks identical to a crash-loop from the outside. A 200 is the real signal.
+
+Both scripts are safe to re-run: an existing `.env` is never overwritten, and an
+existing space or an already-applied pack is skipped rather than treated as an
+error, so a re-run still mints a fresh token.
+
+Everything is parameterised, with defaults that work unchanged:
+
+| | default | override |
+|---|---|---|
+| space id | `default` | `./provision.sh myspace` or `-Space myspace` |
+| principal | `me` | `./provision.sh myspace alice` or `-Principal alice` |
+| client name | `my-client` | third positional arg, or `-ClientName` |
+| pack | `/app/packs/starter/pack.yaml` | `ENGRAPHY_PACK` or `-Pack` |
+| host port | `8000` | `ENGRAPHY_HOST_PORT` in `.env`, or `-Port` |
+| health timeout | 1800s up, 600s provision | `ENGRAPHY_WAIT_SECS` or `-WaitSeconds` |
+
+The token is printed once and never written to disk by the scripts; the server
+stores only its SHA-256. If you lose it, re-run `provision.sh` for a new one.
+
 ## Using it from a client
 
 Engraphy is an MCP server, so a client connects and calls tools:

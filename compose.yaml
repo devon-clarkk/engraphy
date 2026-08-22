@@ -83,8 +83,9 @@ services:
     ports:
       # Bound to loopback by default -- put a TLS-terminating reverse proxy
       # on the host (or your provider's load balancer) in front and have IT
-      # publish 443 publicly.
-      - "127.0.0.1:8000:8000"
+      # publish 443 publicly. Set ENGRAPHY_HOST_PORT in .env if 8000 is taken;
+      # nothing else needs to change (up.sh / up.ps1 write it for you).
+      - "127.0.0.1:${ENGRAPHY_HOST_PORT:-8000}:8000"
     volumes:
       - model-cache:/home/engraphy/.cache/huggingface
       - backup-status:/var/lib/engraphy
