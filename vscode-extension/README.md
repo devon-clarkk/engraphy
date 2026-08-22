@@ -1,12 +1,21 @@
 # Engraphy for VS Code
 
+**Associative memory for AI agents, modelled on the human mind.**
+
 Bring the **Engraphy** memory engine into VS Code: register it as an MCP server
 for Copilot / agent mode, **and** review and explore your memory directly in the
 editor.
 
-Engraphy is a self-hosted memory engine for AI agents: a typed knowledge graph
-on Postgres + pgvector with embedding-native deduplication, hybrid retrieval,
-real graph traversal, multi-principal spaces, and schema enforcement in the DB.
+The name comes from *engraphy*, an old term from memory science for the process
+of laying down an *engram*, the trace a memory leaves in the brain. Engraphy
+does that for your agents: it checks each new memory against what it already
+knows before the write lands, merging restatements, linking genuinely new facts,
+and never silently overwriting. Nothing is deleted, so history stays walkable.
+
+Engraphy is self-hosted: a typed knowledge graph on Postgres + pgvector with
+embedding-native deduplication, hybrid retrieval, real graph traversal,
+multi-principal spaces, and schema enforcement in the DB. It speaks MCP, and all
+data stays on your own machine.
 
 ## Features
 

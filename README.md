@@ -1,9 +1,17 @@
 # Engraphy
 
-**A self-hosted memory engine for AI agents.** Engraphy stores what an agent
-learns as a typed knowledge graph on Postgres + [pgvector](https://github.com/pgvector/pgvector):
-writes deduplicate themselves against existing memory, retrieval fuses semantic
-and lexical search, isolation between users is enforced by the database, and the
+**Associative memory for AI agents, modelled on the human mind.**
+
+The name comes from *engraphy*, an old term from memory science for the process
+of laying down an *engram*, the trace a memory leaves in the brain. Engraphy
+does that for agents: it checks each new memory against what it already knows
+before the write lands, merging restatements, linking genuinely new facts, and
+never silently overwriting. Nothing is deleted, so history stays walkable.
+
+Engraphy is self-hosted. It stores what an agent learns as a typed knowledge
+graph on Postgres + [pgvector](https://github.com/pgvector/pgvector): writes
+deduplicate themselves against existing memory, retrieval fuses semantic and
+lexical search, isolation between users is enforced by the database, and the
 whole shape of memory is declared per application as a **pack**.
 
 It exists to replace the reference MCP memory server's flat-JSON, single-user,
@@ -151,14 +159,14 @@ an example per tool. A first-party VS Code extension lives in
 
 ## Documentation
 
-- **[docs/](docs/)** — developer documentation: [architecture](docs/01-architecture.md),
+- **[docs/](docs/)**: developer documentation, [architecture](docs/01-architecture.md),
   [setup](docs/02-setup.md), [packs](docs/03-packs.md),
   [tool reference](docs/04-tools-reference.md), [deployment](docs/05-deployment.md),
   and an [end-to-end tutorial](docs/06-tutorial.md).
-- **[design/](design/README.md)** — the design set: the data model, retrieval and
+- **[design/](design/README.md)**: the design set, the data model, retrieval and
   dedup, auth and tenancy, operations, the pack/ontology system, and the
   benchmark harness. This is where the engineering reasoning lives.
-- **[skills/](skills/)** — concise guidance an LLM agent can load to use Engraphy
+- **[skills/](skills/)**: concise guidance an LLM agent can load to use Engraphy
   well (writing and dedup, retrieval, scopes and visibility, answer discipline).
 
 ## Requirements

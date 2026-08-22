@@ -1,8 +1,8 @@
 {
   "name": "engraphy",
-  "displayName": "Engraphy",
-  "description": "Engraphy, the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
-  "version": "0.5.0",
+  "displayName": "Engraphy: associative memory for AI agents",
+  "description": "Associative memory for AI agents, modelled on the human mind. Registers the self-hosted Engraphy MCP server with VS Code, plus a confirm-write queue and memory explorer.",
+  "version": "0.5.1",
   "publisher": "engraphy",
   "license": "BUSL-1.1",
   "icon": "media/icon.png",

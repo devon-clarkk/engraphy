@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.5.1
+
+Marketplace listing copy only. No code, dependency or behaviour change from
+0.5.0, so this build supersedes it for upload.
+
+The listing now leads with the product's tagline, "Associative memory for AI
+agents, modelled on the human mind", and the README explains where the name
+comes from: engraphy, an old term from memory science for the process of laying
+down an engram, the trace a memory leaves in the brain.
+
 ## 0.5.0
 
 First public release. Everything below is a cold-start correctness fix: each one
