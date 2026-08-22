@@ -4,7 +4,7 @@
   "description": "Engraphy — the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
   "version": "0.4.0",
   "publisher": "engraphy",
-  "license": "UNLICENSED",
+  "license": "BUSL-1.1",
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.101.0"
