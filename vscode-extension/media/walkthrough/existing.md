@@ -15,9 +15,14 @@ or the Command Palette). You'll be asked for:
   your identity** — it resolves to a (space, principal, role) on the server.
   Leave the field blank to keep the token you already have set.
 
-The extension saves both to your **User Settings** (`engraphy.serverUrl`,
-`engraphy.token`), then immediately checks `/healthz` and tells you whether it
-connected. You can re-run it any time to switch servers.
+The URL is saved to your **User Settings** (`engraphy.serverUrl`). The **token is
+stored in your OS keychain**, not in `settings.json`, so it is never written in
+plain text and Settings Sync never carries it.
 
-> Prefer editing settings directly? `engraphy.serverUrl` and `engraphy.token`
-> are plain settings — Settings UI or `settings.json` both work.
+The extension then runs an **authenticated** read to confirm the pair actually
+works, and tells you which of the two is wrong if it does not. You can re-run it
+any time to switch servers.
+
+> Prefer editing settings directly? `engraphy.serverUrl` and `engraphy.space` are
+> plain settings, so the Settings UI or `settings.json` both work. The token is
+> not: use this command, so it lands in the keychain.

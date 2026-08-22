@@ -7,9 +7,13 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const t = require('../out-test/toolResult.js');
 const w = require('../out-test/webviewMessages.js');
 const s = require('../out-test/statsModel.js');
+const c = require('../out-test/connection.js');
+const m = require('../out-test/tokenMigration.js');
 
 let passed = 0;
 function check(name, fn) {
@@ -17,6 +21,49 @@ function check(name, fn) {
 	passed++;
 	console.log(`  ok - ${name}`);
 }
+
+// ---- shipped asset guards --------------------------------------------------
+//
+// Every SVG under media/ is painted as a CSS mask so it can follow the theme
+// accent. A mask whose image fails to load paints NOTHING and logs nothing, so
+// a malformed SVG is invisible in every sense. That shipped once: loop-mark.svg
+// named the CSS custom property inside an XML comment, leading hyphens and all,
+// and an XML comment may not contain a double hyphen. The file stopped being
+// well-formed, Chromium refused it as an image, and the header mark plus every
+// large mark in the onboarding block rendered blank in the published 0.4.0 vsix.
+//
+// The check is deliberately narrow: it catches the trap that actually bit,
+// without pulling an XML parser into the test run.
+function svgFiles(dir) {
+	const out = [];
+	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) {
+			out.push(...svgFiles(full));
+		} else if (entry.name.toLowerCase().endsWith('.svg')) {
+			out.push(full);
+		}
+	}
+	return out;
+}
+
+check('every shipped SVG is well-formed (no "--" inside an XML comment)', () => {
+	const files = svgFiles(path.join(__dirname, '..', 'media'));
+	assert.ok(files.length > 0, 'expected at least one SVG under media/');
+	for (const file of files) {
+		const svg = fs.readFileSync(file, 'utf8');
+		assert.ok(/<svg[\s>]/.test(svg), `not an SVG: ${file}`);
+		for (const comment of svg.match(/<!--[\s\S]*?-->/g) || []) {
+			assert.ok(
+				!comment.slice(4, -3).includes('--'),
+				`Malformed XML comment in ${path.relative(process.cwd(), file)}: an XML comment ` +
+					'may not contain "--", so this file will not parse as an image and any CSS mask ' +
+					`using it paints invisible. Offending comment:
+${comment.trim()}`
+			);
+		}
+	}
+});
 
 // ---- parseToolResult ----
 check('prefers structuredContent', () => {
@@ -434,6 +481,279 @@ check('parseStatsMessage: validates setRange/setGroup, accepts controls, rejects
 	assert.strictEqual(s.parseStatsMessage({ type: 'setGroup', groupBy: 'org' }), null);
 	assert.strictEqual(s.parseStatsMessage({ type: 'nope' }), null);
 	assert.strictEqual(s.parseStatsMessage(null), null);
+});
+
+// ---- connection: error classification (src/connection.ts) ----
+//
+// The bug these pin down: 0.4.0 folded a 401 into "unreachable", so a HEALTHY
+// server that rejected your token told you to go start a server. The exact
+// string below is what the MCP SDK surfaces for a real 401 against Engraphy
+// 0.1.0 — note it carries no status digits, which is why a naive /401/ test
+// misses it.
+const SDK_401 = 'Streamable HTTP error: Error POSTing to endpoint: unauthorized';
+
+check('describeError: a real SDK 401 classifies as auth, not transport', () => {
+	const d = c.describeError(new Error(SDK_401), '127.0.0.1:8000');
+	assert.strictEqual(d.class, 'auth');
+	assert.match(d.summary, /rejected this token/i);
+	// The old predicate matched the same string, but with no way to say WHY.
+	assert.ok(w.isConnectionError(SDK_401));
+});
+check('describeError: ECONNREFUSED on the cause chain is transport, with a host-specific remedy', () => {
+	const e = new Error('fetch failed');
+	e.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:8000'), { code: 'ECONNREFUSED' });
+	const d = c.describeError(e, '127.0.0.1:8000');
+	assert.strictEqual(d.class, 'transport');
+	assert.strictEqual(d.code, 'ECONNREFUSED');
+	assert.match(d.summary, /Nothing is listening at 127\.0\.0\.1:8000/);
+	// The bare message is useless on its own, so the cause is folded into detail.
+	assert.match(d.detail, /ECONNREFUSED/);
+});
+check('describeError: auth wins over transport words in the same blob', () => {
+	// A 401 body can carry words the transport regex would claim. "Your token was
+	// rejected" is always the more actionable reading, so auth is tested first.
+	const d = c.describeError(new Error('unauthorized: network error while validating'), 'h');
+	assert.strictEqual(d.class, 'auth');
+});
+check('describeError: an ordinary tool error stays a tool error', () => {
+	const d = c.describeError(new Error('ENGRAPHY_VALIDATION: bad scope'), 'h');
+	assert.strictEqual(d.class, 'tool');
+});
+check('describeError: TLS failures are transport, named by code', () => {
+	const d = c.describeError(Object.assign(new Error('x'), { code: 'CERT_HAS_EXPIRED' }), 'h');
+	assert.strictEqual(d.class, 'transport');
+	assert.match(d.summary, /TLS certificate/);
+});
+check('hostLabel: host:port from a URL, raw string when unparseable', () => {
+	assert.strictEqual(c.hostLabel('http://127.0.0.1:8000/mcp/'), '127.0.0.1:8000');
+	assert.strictEqual(c.hostLabel('not a url'), 'not a url');
+	assert.strictEqual(c.hostLabel(''), '');
+});
+
+// ---- connection: three-way panel state ----
+check('computeConnection: no URL maps to unconfigured', () => {
+	assert.strictEqual(c.computeConnection({ serverConfigured: false, errors: [] }).reason, 'unconfigured');
+});
+check('computeConnection: every band 401 is unauthorized, NOT unreachable', () => {
+	const vm = c.computeConnection({
+		serverConfigured: true,
+		errors: [new Error(SDK_401), new Error(SDK_401)],
+		host: '127.0.0.1:8000',
+		hasToken: true,
+	});
+	assert.strictEqual(vm.reason, 'unauthorized');
+	assert.strictEqual(vm.hasToken, true);
+});
+check('computeConnection: unauthorized with NO token says "requires a token", not "rejected"', () => {
+	const vm = c.computeConnection({
+		serverConfigured: true,
+		errors: [new Error(SDK_401)],
+		host: '127.0.0.1:8000',
+		hasToken: false,
+	});
+	assert.strictEqual(vm.reason, 'unauthorized');
+	assert.match(vm.summary, /requires a token/i);
+	assert.doesNotMatch(vm.summary, /rejected/i);
+});
+check('computeConnection: every band transport-failed is unreachable', () => {
+	const e = Object.assign(new Error('fetch failed'), { code: 'ECONNREFUSED' });
+	const vm = c.computeConnection({ serverConfigured: true, errors: [e, e], host: 'h' });
+	assert.strictEqual(vm.reason, 'unreachable');
+});
+check('computeConnection: one band ok returns null (render bands, error inline)', () => {
+	assert.strictEqual(
+		c.computeConnection({ serverConfigured: true, errors: [null, new Error(SDK_401)], host: 'h' }),
+		null
+	);
+	assert.strictEqual(c.computeConnection({ serverConfigured: true, errors: [null, null] }), null);
+});
+check('computeConnection: mixed auth + transport returns null (no single remedy)', () => {
+	const vm = c.computeConnection({
+		serverConfigured: true,
+		errors: [new Error(SDK_401), Object.assign(new Error('fetch failed'), { code: 'ECONNREFUSED' })],
+		host: 'h',
+	});
+	assert.strictEqual(vm, null);
+});
+check('computeConnection: plain tool errors are not a connection problem', () => {
+	const e = new Error('ENGRAPHY_VALIDATION: bad scope');
+	assert.strictEqual(c.computeConnection({ serverConfigured: true, errors: [e, e], host: 'h' }), null);
+});
+
+// ---- connection: the status bar cannot go green off /healthz alone ----
+check('buildHealthVM: healthz 200 but auth FAILED is never "connected"', () => {
+	// The shipped 0.4.0 bug in one assertion: /healthz is unauthenticated, so it
+	// answers 200 for a server you cannot read a single byte from.
+	const vm = c.buildHealthVM({
+		configured: true,
+		hasToken: true,
+		space: '',
+		serverUrl: 'http://127.0.0.1:8000/mcp/',
+		info: { status: 'ok', version: '0.1.0', spaces: 4 },
+		authOk: false,
+		authError: new Error(SDK_401),
+	});
+	assert.strictEqual(vm.phase, 'unauthorized');
+	assert.strictEqual(vm.usable, false);
+	assert.match(vm.label, /token rejected/i);
+});
+check('buildHealthVM: authenticated probe OK gives connected, with healthz detail', () => {
+	const vm = c.buildHealthVM({
+		configured: true,
+		hasToken: true,
+		space: 'demo',
+		serverUrl: 'http://127.0.0.1:8000/mcp/',
+		info: { status: 'ok', version: '0.1.0', spaces: 4 },
+		authOk: true,
+	});
+	assert.strictEqual(vm.phase, 'connected');
+	assert.strictEqual(vm.usable, true);
+	assert.match(vm.label, /demo/);
+	assert.match(vm.title, /server v0\.1\.0/);
+	assert.match(vm.title, /4 space/);
+});
+check('buildHealthVM: no token set gives "token needed", and never says restart', () => {
+	const vm = c.buildHealthVM({
+		configured: true,
+		hasToken: false,
+		space: '',
+		serverUrl: 'http://127.0.0.1:8000/mcp/',
+		info: { status: 'ok' },
+		authOk: false,
+		authError: new Error(SDK_401),
+	});
+	assert.strictEqual(vm.phase, 'unauthorized');
+	assert.match(vm.label, /token needed/i);
+	assert.match(vm.title, /requires a token/i);
+});
+check('buildHealthVM: nothing listening is unreachable, usable false', () => {
+	const e = Object.assign(new Error('fetch failed'), { code: 'ECONNREFUSED' });
+	const vm = c.buildHealthVM({
+		configured: true,
+		hasToken: true,
+		space: '',
+		serverUrl: 'http://127.0.0.1:8000/mcp/',
+		info: null,
+		healthzError: e,
+		authOk: false,
+		authError: e,
+	});
+	assert.strictEqual(vm.phase, 'unreachable');
+	assert.strictEqual(vm.usable, false);
+});
+check('buildHealthVM: no URL configured is unconfigured, usable false', () => {
+	const vm = c.buildHealthVM({
+		configured: false,
+		hasToken: false,
+		space: '',
+		serverUrl: '',
+		info: null,
+		authOk: false,
+	});
+	assert.strictEqual(vm.phase, 'unconfigured');
+	assert.strictEqual(vm.usable, false);
+});
+check('buildHealthVM: only "connected" is ever usable', () => {
+	const cases = [
+		c.buildHealthVM({ configured: false, hasToken: false, space: '', serverUrl: '', info: null, authOk: false }),
+		c.buildHealthVM({ configured: true, hasToken: true, space: '', serverUrl: 'http://h:1/mcp/', info: null, authOk: false, authError: new Error(SDK_401) }),
+		c.buildHealthVM({ configured: true, hasToken: true, space: '', serverUrl: 'http://h:1/mcp/', info: null, authOk: false, authError: Object.assign(new Error('fetch failed'), { code: 'ECONNREFUSED' }) }),
+		c.buildHealthVM({ configured: true, hasToken: true, space: '', serverUrl: 'http://h:1/mcp/', info: null, authOk: false, authError: new Error('ENGRAPHY_INTERNAL: boom') }),
+	];
+	assert.deepStrictEqual(
+		cases.map((v) => v.phase),
+		['unconfigured', 'unauthorized', 'unreachable', 'degraded']
+	);
+	for (const vm of cases) {
+		assert.strictEqual(vm.usable, false, `${vm.phase} must not be usable`);
+	}
+});
+
+// ---- the recovery block's new message type ----
+check('parseWebviewMessage / parseStatsMessage accept reconnect', () => {
+	assert.deepStrictEqual(w.parseWebviewMessage({ type: 'reconnect' }), { type: 'reconnect' });
+	assert.deepStrictEqual(s.parseStatsMessage({ type: 'reconnect' }), { type: 'reconnect' });
+});
+
+// ---- no private-repo naming leaks into shipped source or assets ----
+check('no ENGRAM naming in src/ or media/', () => {
+	const roots = [path.join(__dirname, '..', 'src'), path.join(__dirname, '..', 'media')];
+	const offenders = [];
+	const walk = (dir) => {
+		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+			const full = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+			} else if (/\.(ts|js|css|svg|md)$/i.test(entry.name)) {
+				// "Engraphy" does not contain "engram", so this only catches the real thing.
+				if (/engram/i.test(fs.readFileSync(full, 'utf8'))) {
+					offenders.push(path.relative(process.cwd(), full));
+				}
+			}
+		}
+	};
+	roots.forEach(walk);
+	assert.deepStrictEqual(offenders, [], `ENGRAM naming leaked into: ${offenders.join(', ')}`);
+});
+
+// ---- token migration planning (src/tokenMigration.ts) ----
+//
+// This is the one sequence in the extension where a mistake destroys a
+// credential the user may not be able to re-mint. Two ways to get it wrong:
+// pick the value VS Code would NOT have resolved (so a working token is
+// replaced by a stale one from a broader scope), or miss a scope that holds a
+// copy (so the plaintext token survives the migration that claimed to remove
+// it). Both are covered below.
+check('planTokenMigration: nothing set is a no-op', () => {
+	assert.deepStrictEqual(m.planTokenMigration(undefined), { value: '', clear: [] });
+	assert.deepStrictEqual(m.planTokenMigration({}), { value: '', clear: [] });
+});
+check('planTokenMigration: blank and whitespace-only values count as absent', () => {
+	assert.deepStrictEqual(m.planTokenMigration({ globalValue: '' }), { value: '', clear: [] });
+	assert.deepStrictEqual(m.planTokenMigration({ globalValue: '   \t ' }), { value: '', clear: [] });
+});
+check('planTokenMigration: a global-only token migrates and clears global', () => {
+	assert.deepStrictEqual(m.planTokenMigration({ globalValue: 'tok-g' }), {
+		value: 'tok-g',
+		clear: ['global'],
+	});
+});
+check('planTokenMigration: most specific scope wins, ALL holders are cleared', () => {
+	// VS Code resolves workspaceFolder over workspace over global, so that is the
+	// token actually in use. Clearing only the one we took would leave the other
+	// two sitting in plain text.
+	assert.deepStrictEqual(
+		m.planTokenMigration({ globalValue: 'g', workspaceValue: 'w', workspaceFolderValue: 'f' }),
+		{ value: 'f', clear: ['global', 'workspace', 'workspaceFolder'] }
+	);
+	assert.deepStrictEqual(m.planTokenMigration({ globalValue: 'g', workspaceValue: 'w' }), {
+		value: 'w',
+		clear: ['global', 'workspace'],
+	});
+});
+check('planTokenMigration: a blank narrow scope does not shadow a real broad one', () => {
+	// An empty workspace override must not win over a working global token, and
+	// must not earn a pointless settings write of its own.
+	assert.deepStrictEqual(m.planTokenMigration({ globalValue: 'tok-g', workspaceValue: '  ' }), {
+		value: 'tok-g',
+		clear: ['global'],
+	});
+});
+check('planTokenMigration: the migrated value is trimmed', () => {
+	assert.strictEqual(m.planTokenMigration({ globalValue: '  tok  ' }).value, 'tok');
+});
+check('planTokenMigration: a real inspect() shape is accepted as-is', () => {
+	// What vscode actually hands back carries extra keys; extras must not confuse
+	// the planner or trip the "nothing set" branch.
+	const inspectLike = {
+		key: 'engraphy.token',
+		defaultValue: '',
+		globalValue: 'tok-g',
+		workspaceValue: undefined,
+		workspaceFolderValue: undefined,
+		languageIds: [],
+	};
+	assert.deepStrictEqual(m.planTokenMigration(inspectLike), { value: 'tok-g', clear: ['global'] });
 });
 
 console.log(`\n${passed} checks passed.`);

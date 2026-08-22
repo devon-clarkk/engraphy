@@ -27,12 +27,13 @@ import {
 import {
 	buildInboxCard,
 	buildPendingCard,
-	computeConnectionState,
 	parseWebviewMessage,
 	themeKindFromEnum,
 	type ConfirmStateVM,
+	type ConnectionVM,
 	type HostToWebview,
 } from './webviewMessages';
+import { computeConnection, describeError, hostLabel } from './connection';
 
 const INBOX_LIMIT = 50;
 const PENDING_LIMIT = 50;
@@ -48,7 +49,14 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 	private inboxTruncated = false;
 	private pendingError: string | null = null;
 	private inboxError: string | null = null;
+	// The RAW thrown values, kept alongside the display strings: the connection
+	// classifier reads `code` and the `cause` chain off the error object, which a
+	// String()-ified message has already thrown away.
+	private pendingRaw: unknown = null;
+	private inboxRaw: unknown = null;
 	private loading = false;
+	/** True on the very first load, so the panel can show skeletons not a spinner. */
+	private firstLoad = true;
 
 	constructor(
 		private readonly extensionUri: vscode.Uri,
@@ -56,8 +64,8 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 		private readonly log: vscode.OutputChannel,
 		/** Native authoring flow for an inbox item (payload shown read-only). */
 		private readonly promoteItem: (item: InboxItemData) => Promise<void>,
-		/** True when a serverUrl is configured (drives the no-server onboarding). */
-		private readonly getServerConfigured: () => boolean
+		/** Current serverUrl + whether a token is stored, for the recovery copy. */
+		private readonly getConnectionInfo: () => { serverUrl: string; hasToken: boolean }
 	) {}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -99,18 +107,26 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private buildState(): ConfirmStateVM {
+		const info = this.getConnectionInfo();
+		const host = hostLabel(info.serverUrl);
+		const noServer = computeConnection({
+			serverConfigured: info.serverUrl.length > 0,
+			errors: [this.pendingRaw, this.inboxRaw],
+			host,
+			hasToken: info.hasToken,
+		});
+		const connection: ConnectionVM = noServer ? { kind: 'no-server', ...noServer } : { kind: 'ok' };
 		return {
-			connection: computeConnectionState({
-				serverConfigured: this.getServerConfigured(),
-				pendingError: this.pendingError,
-				inboxError: this.inboxError,
-			}),
+			connection,
 			pending: this.pending.map((p) => buildPendingCard(p)),
 			inbox: this.inbox.map(buildInboxCard),
-			pendingError: this.pendingError,
-			inboxError: this.inboxError,
+			// Per-band errors are shown inline only when the panel as a whole is fine;
+			// the summary is friendlier than the raw transport string.
+			pendingError: this.pendingRaw ? describeError(this.pendingRaw, host).summary : null,
+			inboxError: this.inboxRaw ? describeError(this.inboxRaw, host).summary : null,
 			inboxTruncated: this.inboxTruncated,
 			loading: this.loading,
+			firstLoad: this.firstLoad,
 		};
 	}
 
@@ -128,6 +144,7 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 		this.postState();
 		await Promise.all([this.reloadPending(), this.reloadInbox()]);
 		this.loading = false;
+		this.firstLoad = false;
 		this.postState();
 		if (vscode.window.activeColorTheme) {
 			this.postTheme(vscode.window.activeColorTheme.kind);
@@ -139,9 +156,11 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 			const res = await this.client.pendingList(PENDING_LIMIT);
 			this.pending = pendingItemsFrom(res);
 			this.pendingError = null;
+			this.pendingRaw = null;
 		} catch (e) {
 			this.pending = [];
 			this.pendingError = this.msg(e);
+			this.pendingRaw = e;
 			this.log.appendLine(`pending_list failed: ${this.pendingError}`);
 		}
 	}
@@ -153,9 +172,11 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 			this.inbox = items;
 			this.inboxTruncated = truncated;
 			this.inboxError = null;
+			this.inboxRaw = null;
 		} catch (e) {
 			this.inbox = [];
 			this.inboxError = this.msg(e);
+			this.inboxRaw = e;
 			this.log.appendLine(`inbox list failed: ${this.inboxError}`);
 		}
 	}
@@ -196,6 +217,10 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 				return;
 			case 'configureServer':
 				await vscode.commands.executeCommand('engraphy.configureServer');
+				this.postState();
+				return;
+			case 'reconnect':
+				await vscode.commands.executeCommand('engraphy.reconnect');
 				this.postState();
 				return;
 		}
@@ -278,7 +303,9 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 		const asset = (name: string): vscode.Uri =>
 			webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', name));
 		const scriptUri = asset('confirm.js');
+		const statesUri = asset('states.js'); // skeletons / empty / error / recovery
 		const styleUri = asset('confirm.css');
+		const statesCss = asset('states.css');
 		const markUri = asset('loop-mark.svg');
 		const csp = [
 			`default-src 'none'`,
@@ -295,6 +322,7 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 	<meta http-equiv="Content-Security-Policy" content="${csp}" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<link href="${styleUri}" rel="stylesheet" />
+	<link href="${statesCss}" rel="stylesheet" />
 	<title>Engraphy — Confirm-write queue</title>
 </head>
 <body>
@@ -309,6 +337,7 @@ export class ConfirmWebviewProvider implements vscode.WebviewViewProvider {
 		</div>
 	</header>
 	<main id="root" aria-live="polite"></main>
+	<script nonce="${nonce}" src="${statesUri}"></script>
 	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

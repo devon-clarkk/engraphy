@@ -204,6 +204,8 @@ export interface StatsStateVM {
 	groupBy: 'space' | 'user';
 	rangeDays: number;
 	view: StatsViewVM | null;
+	/** True while the FIRST load is in flight; drives skeletons over a spinner. */
+	firstLoad?: boolean;
 }
 
 export const STATS_RANGES = [7, 14, 30];
@@ -218,9 +220,14 @@ export type StatsWebviewToHost =
 	| { type: 'setRange'; rangeDays: number }
 	| { type: 'setGroup'; groupBy: 'space' | 'user' }
 	| { type: 'openWalkthrough' }
-	| { type: 'configureServer' };
+	| { type: 'configureServer' }
+	| { type: 'reconnect' };
 
 /**
+ * SUPERSEDED by computeConnection in ./connection (see the note on
+ * isConnectionError in webviewMessages.ts for why this is kept rather than
+ * deleted). Nothing in the extension calls it any more.
+ *
  * Reuse the confirm-queue's connection classifier for the single-error Stats
  * case: a connection/auth failure (or unconfigured URL) swaps the panel for the
  * branded no-server block. The single error is fed to both slots so one dead
@@ -249,6 +256,8 @@ export function parseStatsMessage(raw: unknown): StatsWebviewToHost | null {
 			return { type: 'openWalkthrough' };
 		case 'configureServer':
 			return { type: 'configureServer' };
+		case 'reconnect':
+			return { type: 'reconnect' };
 		case 'setRange': {
 			const n = typeof m.rangeDays === 'number' ? m.rangeDays : Number(m.rangeDays);
 			return Number.isInteger(n) && n > 0 && n <= 3650 ? { type: 'setRange', rangeDays: n } : null;

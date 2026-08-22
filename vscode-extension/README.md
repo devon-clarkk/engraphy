@@ -10,12 +10,12 @@ real graph traversal, multi-principal spaces, and schema enforcement in the DB.
 
 ## Features
 
-### Tier 1 — MCP provider (unchanged)
+### MCP provider
 Contributes `mcpServerDefinitionProviders` and registers a provider via
 `vscode.lm.registerMcpServerDefinitionProvider` (VS Code 1.101+), so Engraphy's
 tools appear in Copilot agent mode. Built from your settings; refreshes on change.
 
-### Tier 2 — Confirm-write queue + Memory explorer
+### Confirm-write queue + Memory explorer
 An **Engraphy** activity-bar container with two views, driven by a typed MCP
 client (Streamable HTTP + bearer token):
 
@@ -35,31 +35,56 @@ client (Streamable HTTP + bearer token):
 - **Memory explorer** — **Search memory…** → results → expand a node to traverse
   to its linked neighbors (`search` / `traverse` / `get`). Click a node to open
   its full JSON.
-- **Status bar** — polls `/healthz`; shows reachable / offline with the space.
+- **Status bar**: requires an authenticated read before it reports connected;
+  see [Connection status](#connection-status).
 - **Refresh** command on both views.
 
-## Pending-duplicate listing (server `pending_list`)
+## Pending-duplicate listing
 
-Earlier the server had no way to list outstanding pending duplicates, so this
-band was a placeholder. The server now ships a read-only **`pending_list`** tool
+The Pending duplicates band reads the server's read-only **`pending_list`** tool
 (`{limit?, offset?}` → `{v:1, pending:[{id, payload_preview, candidates:[{id,
-title, similarity}], expires_at, created_at}]}`) and the band is wired to it
-directly. `payload_preview` is a plain string (title + capped body) rendered
-as-is. A manual **Resolve pending duplicate by id…** command remains for a
-`pending_id` obtained elsewhere.
+title, similarity}], expires_at, created_at}]}`). `payload_preview` is a plain
+string (title plus a capped body) rendered as-is. A manual **Resolve pending
+duplicate by id…** command is also available for a `pending_id` obtained
+elsewhere.
 
-`pending_list` deliberately does **not** filter expired rows — it surfaces
-staleness so the client can show it. Requires a server built from a branch that
-includes `pending_list` (e.g. `feature/pending-list`).
+`pending_list` deliberately does **not** filter expired rows, so that staleness
+stays visible in the client. It requires an Engraphy server at 0.1.0 or newer.
 
-## Settings
+## Connecting
+
+Run **Engraphy: Connect to a server** from the command palette. It asks for the
+MCP URL and your token, saves them, and then validates the connection with an
+authenticated read, so a wrong token is reported as a wrong token rather than as
+a missing server.
+
+### Where your token is kept
+
+Your bearer token **is** your identity on an Engraphy server: it resolves to a
+(space, principal, role). It is stored in the OS keychain through VS Code's
+SecretStorage, not in `settings.json`, so it is never written in plain text and
+is never carried by Settings Sync.
+
+The old `engraphy.token` setting is deprecated. If you have a value there from
+an earlier version, it is moved into the keychain and cleared from your settings
+the first time 0.5.0 activates.
+
+### Settings
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `engraphy.serverUrl` | `http://127.0.0.1:8000/mcp/` | The Engraphy MCP endpoint. Keep the trailing slash — `/mcp` 307-redirects to `/mcp/` and the round-trip adds ~10s/call (the extension normalizes a missing slash anyway). |
-| `engraphy.token` | *(empty)* | Bearer token; **it is your identity**. |
+| `engraphy.token` | *(empty)* | **Deprecated.** Use **Engraphy: Connect to a server**; the token lives in the OS keychain. |
 | `engraphy.space` | *(empty)* | Label only (real space comes from the token). |
 | `engraphy.composeWorkingDirectory` | *(empty)* | Folder with `compose.yaml` + `.env`, for **Start local server**. |
+
+### Connection status
+
+The status bar reports one of: connected, token needed, token rejected,
+unreachable, or no server set. It turns green only after an **authenticated**
+read succeeds. `/healthz` is unauthenticated on an Engraphy server, so it
+answers 200 for a server you hold no valid token for, and reporting health off
+it alone would show a healthy bar over panels that cannot read anything.
 
 ## Build
 
@@ -81,11 +106,6 @@ from VSIX…** on the built `.vsix`. Point `engraphy.serverUrl` / `engraphy.toke
 at a running Engraphy server (or use **Engraphy: Start local server**), open the
 Engraphy activity-bar view, and Refresh.
 
-> Live UI + server round-trips (MCP handshake, tool calls) can only be verified
-> against a running VS Code + live Engraphy server. Headlessly verified here:
-> type-check, unit tests, bundle, and manifest.
+## License
 
-## Publishing (Devon)
-
-Create a Marketplace publisher, swap the placeholder `publisher: "engraphy"`,
-generate a PAT, and run `vsce publish`. (Not published here — no PAT.)
+Business Source License 1.1 (BUSL-1.1). See [LICENSE](LICENSE).

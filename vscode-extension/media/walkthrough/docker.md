@@ -6,8 +6,6 @@ checkout of the Engraphy repo (`compose.yaml` lives at its root).
 > **Future one-liner (not published yet).** A single-command image
 > `docker run ghcr.io/devon-clarkk/engraphy:<tag>` is planned but **not published
 > today** — don't rely on it yet. Until then, use the compose steps below.
-> _TODO: replace this section with the `docker run` one-liner once the image is
-> pushed to GHCR._
 
 ### 1. Create a `.env` next to `compose.yaml`
 

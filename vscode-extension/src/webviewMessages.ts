@@ -35,14 +35,30 @@ export interface InboxCardVM {
 }
 
 /**
- * Whether the panel can talk to a server. 'no-server' swaps the two bands for a
- * branded onboarding block: 'unconfigured' = no serverUrl set at all;
- * 'unreachable' = a URL is set but both reads failed with connection/auth errors
- * (the cold-install case — server not running yet).
+ * Whether the panel can talk to a server. 'no-server' swaps the bands for a
+ * branded recovery block, with the remedy chosen by `reason`:
+ *   'unconfigured'  no serverUrl set at all
+ *   'unreachable'   a URL is set but nothing answered (server not running)
+ *   'unauthorized'  the server answered and refused the token
+ *
+ * The three-way split matters: telling someone whose server is healthy to go
+ * start a server is the wrong remedy, and it was the shipped 0.4.0 behavior.
+ * The classifier that produces these lives in ./connection (computeConnection);
+ * this shape is structurally identical to its NoServerVM.
  */
 export type ConnectionVM =
 	| { kind: 'ok' }
-	| { kind: 'no-server'; reason: 'unconfigured' | 'unreachable'; detail?: string };
+	| {
+			kind: 'no-server';
+			reason: 'unconfigured' | 'unreachable' | 'unauthorized';
+			/** One user-showable sentence naming what actually failed. */
+			summary?: string;
+			/** Raw transport/tool text, rendered behind a closed disclosure. */
+			detail?: string;
+			code?: string | null;
+			/** False when no token is configured, so the copy can say "add one". */
+			hasToken?: boolean;
+		};
 
 /** The whole state the webview renders in one shot. */
 export interface ConfirmStateVM {
@@ -53,6 +69,12 @@ export interface ConfirmStateVM {
 	inboxError: string | null;
 	inboxTruncated: boolean;
 	loading: boolean;
+	/**
+	 * True while the FIRST load is in flight. Drives skeleton placeholders instead
+	 * of a spinner line, so a cold panel never flashes empty and then fills.
+	 * Optional so the desktop's copy of this file stays assignable.
+	 */
+	firstLoad?: boolean;
 }
 
 export type ThemeKind = 'light' | 'dark' | 'high-contrast' | 'high-contrast-light';
@@ -71,7 +93,8 @@ export type WebviewToHost =
 	| { type: 'promote'; inboxId: string }
 	| { type: 'discard'; inboxId: string }
 	| { type: 'openWalkthrough' }
-	| { type: 'configureServer' };
+	| { type: 'configureServer' }
+	| { type: 'reconnect' };
 
 // ---- host-side builders -----------------------------------------------------
 
@@ -251,6 +274,8 @@ export function parseWebviewMessage(raw: unknown): WebviewToHost | null {
 			return { type: 'openWalkthrough' };
 		case 'configureServer':
 			return { type: 'configureServer' };
+		case 'reconnect':
+			return { type: 'reconnect' };
 		default:
 			return null;
 	}
@@ -259,6 +284,13 @@ export function parseWebviewMessage(raw: unknown): WebviewToHost | null {
 // ---- connection state (no-server onboarding decision) -----------------------
 
 /**
+ * SUPERSEDED by describeError/computeConnection in ./connection, which classify
+ * auth separately from transport instead of folding both into 'unreachable'.
+ * Both functions below are kept because this file is carried verbatim by the
+ * Engraphy desktop app; deleting exports here would break that copy and the
+ * shared-package extraction that is meant to reconcile the two. Nothing in the
+ * extension calls them any more.
+ *
  * True when an error string looks like the server being unreachable or
  * rejecting us — a transport/connection/auth failure rather than a normal tool
  * error. Used to decide whether to swap the bands for the onboarding block, so

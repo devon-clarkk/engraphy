@@ -11,6 +11,9 @@
 	const SVG_NS = 'http://www.w3.org/2000/svg';
 	const vscode = acquireVsCodeApi();
 
+	// Shared loading / empty / error / recovery components (media/states.js).
+	const S = window.ENGRAPHY_STATES;
+
 	const els = {
 		root: document.getElementById('root'),
 		refresh: document.getElementById('refresh'),
@@ -30,7 +33,8 @@
 		busy = on;
 		document.body.classList.toggle('busy', on);
 		for (const b of document.querySelectorAll('button')) {
-			b.disabled = on;
+			// Recovery / retry actions stay live: they are the way out of a stuck panel.
+			b.disabled = on && b.dataset.keepEnabled !== '1';
 		}
 	}
 	function action(msg) {
@@ -61,9 +65,6 @@
 		}
 		b.addEventListener('click', onClick);
 		return b;
-	}
-	function note(text, isError) {
-		return el('div', 'note' + (isError ? ' error' : ''), text);
 	}
 	function svgEl(tag, attrs) {
 		const n = document.createElementNS(SVG_NS, tag);
@@ -168,42 +169,6 @@
 
 	// ---- no-server onboarding (shared look with confirm queue) -------------
 
-	function noServerBlock(conn) {
-		const wrap = el('div', 'onboarding');
-		const mark = el('div', 'mark mark-lg');
-		if (markUri) {
-			mark.style.webkitMaskImage = 'url("' + markUri + '")';
-			mark.style.maskImage = 'url("' + markUri + '")';
-		}
-		wrap.appendChild(mark);
-		wrap.appendChild(el('h2', 'onboarding-title brand-mono', 'No server connected'));
-		wrap.appendChild(
-			el(
-				'p',
-				'onboarding-msg',
-				conn.reason === 'unconfigured'
-					? 'Engraphy isn’t pointed at a memory server yet — connect one to see your impact stats.'
-					: 'Can’t reach the Engraphy server at your configured URL. Start one, then refresh.'
-			)
-		);
-		const actions = el('div', 'actions onboarding-actions');
-		actions.appendChild(button('btn btn-approve', 'Set up Engraphy', () => action({ type: 'openWalkthrough' })));
-		actions.appendChild(button('btn btn-secondary', 'Paste URL + token', () => action({ type: 'configureServer' })));
-		actions.appendChild(button('btn btn-ghost', 'Refresh', () => action({ type: 'refresh' })));
-		wrap.appendChild(actions);
-		wrap.appendChild(
-			el('p', 'onboarding-note', 'Hosted Engraphy is coming soon — run locally with Docker or connect your own server.')
-		);
-		if (conn.detail) {
-			const det = el('details');
-			det.appendChild(el('summary', 'cand-label', 'Connection error detail'));
-			const pre = el('pre', 'payload');
-			pre.textContent = conn.detail;
-			det.appendChild(pre);
-			wrap.appendChild(det);
-		}
-		return wrap;
-	}
 
 	// ---- render -------------------------------------------------------------
 
@@ -213,7 +178,18 @@
 		root.textContent = '';
 
 		if (state.connection && state.connection.kind === 'no-server') {
-			root.appendChild(noServerBlock(state.connection));
+			root.appendChild(
+				S.recoveryBlock(
+					state.connection,
+					{
+						onSetup: () => action({ type: 'openWalkthrough' }),
+						onConfigure: () => action({ type: 'configureServer' }),
+						onRetry: () => action({ type: 'refresh' }),
+						onReconnect: () => action({ type: 'reconnect' }),
+					},
+					{ what: 'what your memory is doing for you', markUri: markUri }
+				)
+			);
 			return;
 		}
 
@@ -222,17 +198,31 @@
 		root.appendChild(controls(state));
 
 		if (state.loading) {
-			const n = note('Loading stats…');
-			n.prepend(el('span', 'spinner'));
-			root.appendChild(n);
+			// Tile-shaped skeletons on first paint; a quiet spinner on later refreshes.
+			root.appendChild(state.firstLoad ? S.skeleton(2, 'tile') : S.spinnerNote('Refreshing stats…'));
 			return;
 		}
 		if (state.error || !state.view) {
-			root.appendChild(note(state.error || 'No stats available.', true));
+			root.appendChild(
+				S.errorBlock(state.error || 'No stats available.', () => action({ type: 'refresh' }))
+			);
 			return;
 		}
 
 		const v = state.view;
+
+		// A brand-new space reports real, all-zero data. Rendering a wall of zeroes
+		// reads as broken, so say what is actually true: nothing recorded yet.
+		if (v.tiles.every((t) => !t.value)) {
+			root.appendChild(
+				S.emptyState(
+					'Nothing recorded yet.',
+					'These counters fill in as agents search and write through Engraphy. ' +
+						(state.rangeDays < 30 ? 'Try a wider range, or check back after some use.' : 'Check back after some use.')
+				)
+			);
+			return;
+		}
 
 		// Scope line: what "Whole space" / "You" means for this data.
 		const scope = el('div', 'scope-line');

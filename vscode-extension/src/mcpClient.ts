@@ -45,6 +45,16 @@ export class EngraphyClient {
 	private client: Client | undefined;
 	private transport: StreamableHTTPClientTransport | undefined;
 	private connectionKey = '';
+	/**
+	 * The connect that is currently in flight, keyed by the same url+token string
+	 * as `connectionKey`. Without this, the several callers that fire at startup
+	 * (status bar, confirm panel, stats panel) each raced through the
+	 * `this.client === undefined` check, each built a transport, and only the last
+	 * assignment survived: the losers were never closed, so every activation
+	 * leaked MCP sessions on the server.
+	 */
+	private connecting: Promise<Client> | undefined;
+	private connectingKey = '';
 
 	constructor(
 		private readonly getConnection: () => EngraphyConnection,
@@ -64,11 +74,38 @@ export class EngraphyClient {
 		if (this.client && key === this.connectionKey) {
 			return this.client;
 		}
-		await this.close();
+		// Concurrent callers share ONE connect. Keyed so that a settings change
+		// mid-connect starts a fresh one rather than handing back a client built
+		// with the old token.
+		if (this.connecting && key === this.connectingKey) {
+			return this.connecting;
+		}
+		const attempt = this.openSession(serverUrl, conn.token, key);
+		this.connecting = attempt;
+		this.connectingKey = key;
+		try {
+			return await attempt;
+		} finally {
+			// Only clear if this attempt is still the current one; a newer connect
+			// started under a different key owns the slot now.
+			if (this.connecting === attempt) {
+				this.connecting = undefined;
+				this.connectingKey = '';
+			}
+		}
+	}
+
+	/** Build and connect one transport+client pair, replacing any current one. */
+	private async openSession(
+		serverUrl: string,
+		token: string,
+		key: string
+	): Promise<Client> {
+		await this.close({ keepInFlight: true });
 
 		const headers: Record<string, string> = {};
-		if (conn.token) {
-			headers['Authorization'] = `Bearer ${conn.token}`;
+		if (token) {
+			headers['Authorization'] = `Bearer ${token}`;
 		}
 		const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
 			requestInit: { headers },
@@ -77,7 +114,17 @@ export class EngraphyClient {
 			{ name: 'engraphy-vscode', version: this.clientVersion },
 			{ capabilities: {} }
 		);
-		await client.connect(transport);
+		try {
+			await client.connect(transport);
+		} catch (e) {
+			// A failed connect must not leave a half-open transport behind either.
+			try {
+				await transport.close();
+			} catch {
+				// best-effort teardown
+			}
+			throw e;
+		}
 
 		this.client = client;
 		this.transport = transport;
@@ -90,11 +137,17 @@ export class EngraphyClient {
 		await this.close();
 	}
 
-	async close(): Promise<void> {
+	async close(opts?: { keepInFlight?: boolean }): Promise<void> {
 		const c = this.client;
 		this.client = undefined;
 		this.transport = undefined;
 		this.connectionKey = '';
+		if (!opts?.keepInFlight) {
+			// An external close (reconnect, dispose) also abandons any connect still
+			// in flight, so the next call builds a fresh one.
+			this.connecting = undefined;
+			this.connectingKey = '';
+		}
 		try {
 			await c?.close();
 		} catch {

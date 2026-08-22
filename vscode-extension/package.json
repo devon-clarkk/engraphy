@@ -2,7 +2,7 @@
   "name": "engraphy",
   "displayName": "Engraphy",
   "description": "Engraphy — the memory engine for AI agents. Registers the Engraphy MCP server with VS Code, plus a branded confirm-write queue and memory explorer.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "engraphy",
   "license": "BUSL-1.1",
   "icon": "media/icon.png",
@@ -49,7 +49,9 @@
         "engraphy.token": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Bearer token for the Engraphy server. The token **is** your identity — it resolves to a (space, principal, role) on the server. Mint one with `engraphy-admin token create`. Sent as `Authorization: Bearer <token>`.",
+          "markdownDescription": "**Deprecated — do not use.** The token now lives in the OS keychain (VS Code SecretStorage). Set it with the **Engraphy: Connect to a server** command. A value left here is migrated into the keychain and cleared on next activation.",
+          "markdownDeprecationMessage": "Storing the token here puts a live credential in plain text in `settings.json` and syncs it through Settings Sync. Run **Engraphy: Connect to a server** instead; it stores the token in the OS keychain.",
+          "deprecationMessage": "Deprecated: use the 'Engraphy: Connect to a server' command. The token is stored in the OS keychain, not in settings.",
           "order": 2
         },
         "engraphy.space": {
@@ -222,7 +224,7 @@
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit -p ./",
     "make-icon": "node scripts/make-icon.js",
-    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
+    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts src/connection.ts src/tokenMigration.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"

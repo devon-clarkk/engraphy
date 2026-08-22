@@ -24,6 +24,9 @@
 		els.mark.style.maskImage = 'url("' + markUri + '")';
 	}
 
+	// Shared loading / empty / error / recovery components (media/states.js).
+	const S = window.ENGRAPHY_STATES;
+
 	let busy = false;
 
 	function post(msg) {
@@ -34,7 +37,9 @@
 		busy = on;
 		document.body.classList.toggle('busy', on);
 		for (const b of document.querySelectorAll('button')) {
-			b.disabled = on;
+			// Recovery and retry buttons opt out: they are the only way out of a
+			// stuck panel, so disabling them during a failing action strands the user.
+			b.disabled = on && b.dataset.keepEnabled !== '1';
 		}
 	}
 
@@ -176,14 +181,7 @@
 
 	// ---- section renderers --------------------------------------------------
 
-	function emptyState(text) {
-		const wrap = el('div', 'empty');
-		wrap.appendChild(el('div', 'rings'));
-		wrap.appendChild(el('div', null, text));
-		return wrap;
-	}
-
-	function section(titleText, count, error, items, buildCard, emptyText, truncated) {
+	function section(titleText, count, error, items, buildCard, emptyText, emptySub, truncated) {
 		const sec = el('div', 'section');
 		const head = el('div', 'section-head');
 		head.appendChild(el('span', 'section-title', titleText));
@@ -191,11 +189,13 @@
 		sec.appendChild(head);
 
 		if (error) {
-			sec.appendChild(note(error, true));
+			// One band failing while the other works is a per-band problem, so it
+			// renders inline with its own Retry rather than replacing the panel.
+			sec.appendChild(S.errorBlock(error, () => action({ type: 'refresh' })));
 			return sec;
 		}
 		if (items.length === 0) {
-			sec.appendChild(emptyState(emptyText));
+			sec.appendChild(S.emptyState(emptyText, emptySub));
 			return sec;
 		}
 		for (const it of items) {
@@ -207,51 +207,6 @@
 		return sec;
 	}
 
-	// Branded onboarding shown when there's no reachable server — replaces the
-	// two bands so a cold install sees guidance, not raw HTTP errors.
-	function noServerBlock(conn) {
-		const wrap = el('div', 'onboarding');
-		const mark = el('div', 'mark mark-lg');
-		if (markUri) {
-			mark.style.webkitMaskImage = 'url("' + markUri + '")';
-			mark.style.maskImage = 'url("' + markUri + '")';
-		}
-		wrap.appendChild(mark);
-		wrap.appendChild(el('h2', 'onboarding-title brand-mono', 'No server connected'));
-		wrap.appendChild(
-			el(
-				'p',
-				'onboarding-msg',
-				conn.reason === 'unconfigured'
-					? 'Engraphy isn’t pointed at a memory server yet.'
-					: 'Can’t reach the Engraphy server at your configured URL. If you just installed, you probably need to start one first.'
-			)
-		);
-		const actions = el('div', 'actions onboarding-actions');
-		actions.appendChild(
-			button('btn btn-approve', 'Set up Engraphy', () => action({ type: 'openWalkthrough' }))
-		);
-		actions.appendChild(
-			button('btn btn-secondary', 'Paste URL + token', () => action({ type: 'configureServer' }))
-		);
-		wrap.appendChild(actions);
-		wrap.appendChild(
-			el(
-				'p',
-				'onboarding-note',
-				'Hosted Engraphy is coming soon — run locally with Docker or connect your own server.'
-			)
-		);
-		if (conn.detail) {
-			const det = el('details');
-			det.appendChild(el('summary', 'cand-label', 'Connection error detail'));
-			const pre = el('pre', 'payload');
-			pre.textContent = conn.detail;
-			det.appendChild(pre);
-			wrap.appendChild(det);
-		}
-		return wrap;
-	}
 
 	function render(state) {
 		setBusy(false);
@@ -259,14 +214,25 @@
 		root.textContent = '';
 
 		if (state.loading) {
-			const n = note('Loading…');
-			n.prepend(el('span', 'spinner'));
-			root.appendChild(n);
+			// First paint gets card-shaped skeletons so the panel never flashes empty
+			// and then fills. A later refresh only needs the quiet spinner line.
+			root.appendChild(state.firstLoad ? S.skeleton(3) : S.spinnerNote('Refreshing…'));
 			return;
 		}
 
 		if (state.connection && state.connection.kind === 'no-server') {
-			root.appendChild(noServerBlock(state.connection));
+			root.appendChild(
+				S.recoveryBlock(
+					state.connection,
+					{
+						onSetup: () => action({ type: 'openWalkthrough' }),
+						onConfigure: () => action({ type: 'configureServer' }),
+						onRetry: () => action({ type: 'refresh' }),
+						onReconnect: () => action({ type: 'reconnect' }),
+					},
+					{ what: 'your confirm-write queue', markUri: markUri }
+				)
+			);
 			return;
 		}
 
@@ -277,7 +243,8 @@
 				state.pendingError,
 				state.pending,
 				pendingCard,
-				'No pending duplicates. Writes that collide will land here for you to confirm.',
+				'No pending duplicates.',
+				'Writes that collide with something you already have land here for you to confirm.',
 				false
 			)
 		);
@@ -288,7 +255,8 @@
 				state.inboxError,
 				state.inbox,
 				inboxCard,
-				'Inbox is empty. Captured items awaiting triage will appear here.',
+				'Inbox is empty.',
+				'Items captured for triage appear here. Promote one to author a node from it.',
 				state.inboxTruncated
 			)
 		);

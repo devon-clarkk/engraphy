@@ -14,11 +14,12 @@ import { themeKindFromEnum } from './webviewMessages';
 import {
 	buildStatsView,
 	parseStatsMessage,
-	statsConnectionState,
 	type StatsHostToWebview,
 	type StatsStateVM,
 	type StatsViewVM,
 } from './statsModel';
+import { computeConnection, describeError, hostLabel } from './connection';
+import type { ConnectionVM } from './webviewMessages';
 
 const DEFAULT_RANGE = 30;
 
@@ -32,13 +33,16 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 	private rangeDays = DEFAULT_RANGE;
 	private vm: StatsViewVM | null = null;
 	private error: string | null = null;
+	/** Raw thrown value: the classifier needs `code` and the `cause` chain. */
+	private errorRaw: unknown = null;
 	private loading = false;
+	private firstLoad = true;
 
 	constructor(
 		private readonly extensionUri: vscode.Uri,
 		private readonly client: EngraphyClient,
 		private readonly log: vscode.OutputChannel,
-		private readonly getServerConfigured: () => boolean
+		private readonly getConnectionInfo: () => { serverUrl: string; hasToken: boolean }
 	) {}
 
 	resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -72,13 +76,24 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private buildState(): StatsStateVM {
+		const info = this.getConnectionInfo();
+		const host = hostLabel(info.serverUrl);
+		// Stats has a single band, so its one error fills the only slot.
+		const noServer = computeConnection({
+			serverConfigured: info.serverUrl.length > 0,
+			errors: [this.errorRaw],
+			host,
+			hasToken: info.hasToken,
+		});
+		const connection: ConnectionVM = noServer ? { kind: 'no-server', ...noServer } : { kind: 'ok' };
 		return {
-			connection: statsConnectionState(this.getServerConfigured(), this.error),
+			connection,
 			loading: this.loading,
-			error: this.error,
+			error: this.errorRaw ? describeError(this.errorRaw, host).summary : null,
 			groupBy: this.groupBy,
 			rangeDays: this.rangeDays,
 			view: this.vm,
+			firstLoad: this.firstLoad,
 		};
 	}
 	private postState(): void {
@@ -95,12 +110,15 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 			const res = await this.client.stats(this.rangeDays, this.groupBy);
 			this.vm = buildStatsView(res);
 			this.error = null;
+			this.errorRaw = null;
 		} catch (e) {
 			this.vm = null;
 			this.error = this.msg(e);
+			this.errorRaw = e;
 			this.log.appendLine(`stats failed: ${this.error}`);
 		}
 		this.loading = false;
+		this.firstLoad = false;
 		this.postState();
 		if (vscode.window.activeColorTheme) {
 			this.postTheme(vscode.window.activeColorTheme.kind);
@@ -138,6 +156,10 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 				await vscode.commands.executeCommand('engraphy.configureServer');
 				this.postState();
 				return;
+			case 'reconnect':
+				await vscode.commands.executeCommand('engraphy.reconnect');
+				this.postState();
+				return;
 		}
 	}
 
@@ -150,7 +172,9 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 		const asset = (name: string): vscode.Uri =>
 			webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', name));
 		const confirmCss = asset('confirm.css'); // shared brand/theme base + no-server block
+		const statesCss = asset('states.css'); // skeletons / empty / error / recovery
 		const statsCss = asset('stats.css');
+		const statesUri = asset('states.js');
 		const scriptUri = asset('stats.js');
 		const markUri = asset('loop-mark.svg');
 		const csp = [
@@ -168,6 +192,7 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 	<meta http-equiv="Content-Security-Policy" content="${csp}" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<link href="${confirmCss}" rel="stylesheet" />
+	<link href="${statesCss}" rel="stylesheet" />
 	<link href="${statsCss}" rel="stylesheet" />
 	<title>Engraphy — Stats</title>
 </head>
@@ -183,6 +208,7 @@ export class StatsWebviewProvider implements vscode.WebviewViewProvider {
 		</div>
 	</header>
 	<main id="root" aria-live="polite"></main>
+	<script nonce="${nonce}" src="${statesUri}"></script>
 	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

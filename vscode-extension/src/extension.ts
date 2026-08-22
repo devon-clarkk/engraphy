@@ -23,6 +23,8 @@ import { ExplorerProvider } from './explorerView';
 import { ConfirmWebviewProvider } from './confirmWebview';
 import { StatsWebviewProvider } from './statsWebview';
 import { StatusBar } from './status';
+import { getToken, migrateTokenSetting, primeToken, setToken, watchToken } from './tokenStore';
+import { describeError, hostLabel } from './connection';
 
 const execAsync = promisify(cp.exec);
 
@@ -30,21 +32,31 @@ const PROVIDER_ID = 'engraphy';
 const CONFIG_SECTION = 'engraphy';
 const DOCKER_INSTALL_DOCS = 'https://docs.docker.com/compose/install/';
 
+/**
+ * Current connection settings. The URL and space are ordinary settings; the
+ * token comes from the SecretStorage-backed cache in tokenStore, NOT from
+ * settings.json (see that module for why it is cached rather than awaited).
+ */
 function connection(): EngraphyConnection {
 	const cfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
 	return {
 		serverUrl: (cfg.get<string>('serverUrl') ?? '').trim(),
-		token: (cfg.get<string>('token') ?? '').trim(),
+		token: getToken(),
 		space: (cfg.get<string>('space') ?? '').trim(),
 	};
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const output = vscode.window.createOutputChannel('Engraphy');
 	context.subscriptions.push(output);
 
 	const extensionVersion =
 		(context.extension.packageJSON as { version?: string })?.version ?? '0.0.0';
+
+	// Priming MUST be awaited: connection() reads the cache synchronously, so
+	// registering anything before the token is in hand would race.
+	await primeToken(context);
+	context.subscriptions.push(watchToken(context));
 
 	// ---- Tier 1: MCP provider registration (best-effort; never blocks the UI) ----
 	const didChangeEmitter = new vscode.EventEmitter<void>();
@@ -58,18 +70,25 @@ export function activate(context: vscode.ExtensionContext): void {
 	// Confirm-write queue is now a branded WebviewView (theme-adaptive; see
 	// confirmWebview.ts + media/confirm.*). The memory explorer stays a TreeView
 	// for now — the graph-explorer webview is a deliberate follow-up.
+	// The panels need BOTH the URL and whether a token exists: "the server
+	// refused your token" and "the server needs a token you never set" are the
+	// same 401 but different remedies.
+	const connectionInfo = (): { serverUrl: string; hasToken: boolean } => {
+		const c = connection();
+		return { serverUrl: c.serverUrl, hasToken: c.token.length > 0 };
+	};
 	const confirmProvider = new ConfirmWebviewProvider(
 		context.extensionUri,
 		client,
 		output,
 		(item) => promoteItem(client, output, item),
-		() => connection().serverUrl.length > 0
+		connectionInfo
 	);
 	const statsProvider = new StatsWebviewProvider(
 		context.extensionUri,
 		client,
 		output,
-		() => connection().serverUrl.length > 0
+		connectionInfo
 	);
 	const explorerProvider = new ExplorerProvider(client, output);
 	context.subscriptions.push(
@@ -82,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.window.createTreeView('engraphyExplorer', { treeDataProvider: explorerProvider })
 	);
 
-	const status = new StatusBar(client, () => connection().space);
+	const status = new StatusBar(client, connection);
 	context.subscriptions.push(status);
 
 	const refreshAll = async (): Promise<void> => {
@@ -120,7 +139,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		// (not-yet-available) hosted option.
 		vscode.commands.registerCommand('engraphy.gettingStarted', () => openWalkthrough()),
 		vscode.commands.registerCommand('engraphy.configureServer', () =>
-			runSafely(output, () => configureServer(client, confirmProvider, output))
+			runSafely(output, () => configureServer(context, client, confirmProvider, output))
 		),
 		vscode.commands.registerCommand('engraphy.cloudComingSoon', () => cloudComingSoon())
 	);
@@ -135,6 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 		})
 	);
+
+	// The plaintext-token migration is deliberately NOT awaited before the
+	// registrations above: it writes settings and secrets, and a slow or locked
+	// keychain would otherwise stall activation (including the MCP collection)
+	// behind it, leaving blank panels. It self-heals instead: cfg.update fires
+	// onDidChangeConfiguration, and secrets.onDidChange re-primes the cache, so
+	// both paths below reconnect and repaint on their own once it lands.
+	void migrateTokenSetting(context, output);
 
 	output.appendLine(`Engraphy extension activated (v${extensionVersion}).`);
 	// Initial paint (non-blocking).
@@ -169,13 +196,19 @@ async function maybeOfferFirstRunWalkthrough(
 	}
 }
 
-/** True if /healthz answers within a short budget; false on error/timeout. */
+/**
+ * True if the server answers an AUTHENTICATED read within a short budget.
+ *
+ * Deliberately not /healthz: that endpoint is unauthenticated, so a fresh
+ * install pointed at the default URL with no token would look "reachable" and
+ * skip the setup walkthrough, which is precisely the person who needs it.
+ */
 async function probeReachable(client: EngraphyClient, timeoutMs = 3000): Promise<boolean> {
 	const timeout = new Promise<never>((_, reject) =>
 		setTimeout(() => reject(new Error('timeout')), timeoutMs)
 	);
 	try {
-		await Promise.race([client.health(), timeout]);
+		await Promise.race([client.scopeList(), timeout]);
 		return true;
 	} catch {
 		return false;
@@ -475,6 +508,7 @@ function openWalkthrough(): void {
  * connected/unreachable feedback.
  */
 async function configureServer(
+	context: vscode.ExtensionContext,
 	client: EngraphyClient,
 	confirmProvider: ConfirmWebviewProvider,
 	log: vscode.OutputChannel
@@ -492,9 +526,12 @@ async function configureServer(
 	if (!url) {
 		return;
 	}
+	const hasExisting = getToken().length > 0;
 	const token = await vscode.window.showInputBox({
 		title: 'Engraphy → token',
-		prompt: 'Bearer token from `engraphy-admin token create` (leave blank to keep the current one).',
+		prompt: hasExisting
+			? 'Bearer token from `engraphy-admin token create`. Leave blank to keep the stored one.'
+			: 'Bearer token from `engraphy-admin token create`. Stored in the OS keychain, not in settings.json.',
 		password: true,
 		ignoreFocusOut: true,
 	});
@@ -504,21 +541,42 @@ async function configureServer(
 
 	await cfg.update('serverUrl', url.trim(), vscode.ConfigurationTarget.Global);
 	if (token.trim() !== '') {
-		await cfg.update('token', token.trim(), vscode.ConfigurationTarget.Global);
+		try {
+			await setToken(context, token);
+		} catch (e) {
+			log.appendLine(`configureServer: SecretStorage write failed: ${String(e)}`);
+			void vscode.window.showErrorMessage(
+				`Engraphy: could not save the token to the OS keychain (${String(e)}). The URL was saved.`
+			);
+			return;
+		}
 	}
 
 	await client.reconnect();
-	try {
-		const h = await client.health();
+	// Validate with BOTH probes. /healthz is unauthenticated, so reporting
+	// "connected" off it alone would confirm a setup that cannot read a byte.
+	const [healthRes, authRes] = await Promise.allSettled([client.health(), client.scopeList()]);
+	const host = hostLabel(url.trim());
+	if (authRes.status === 'fulfilled') {
+		const h = healthRes.status === 'fulfilled' ? healthRes.value : undefined;
 		void vscode.window.showInformationMessage(
-			`Engraphy: connected — ${h.status}, v${h.version ?? '?'}, ${h.spaces ?? '?'} space(s).`
+			`Engraphy: connected to ${host}` +
+				(h ? ` — ${h.status}, v${h.version ?? '?'}, ${h.spaces ?? '?'} space(s).` : '.')
 		);
-	} catch (e) {
-		log.appendLine(`configureServer: healthz failed for ${url.trim()}: ${String(e)}`);
-		void vscode.window.showWarningMessage(
-			`Engraphy: settings saved, but the server didn't answer at ${url.trim()} (${String(e)}). ` +
-				'Start one (Run locally with Docker) or check the URL/token, then run Reconnect.'
-		);
+	} else {
+		const d = describeError(authRes.reason, host);
+		log.appendLine(`configureServer: authenticated probe failed for ${url.trim()}: ${d.detail}`);
+		if (d.class === 'auth') {
+			void vscode.window.showWarningMessage(
+				`Engraphy: ${host} is running but rejected this token. ` +
+					'Mint a fresh one with `engraphy-admin token create` and run Connect again.'
+			);
+		} else {
+			void vscode.window.showWarningMessage(
+				`Engraphy: settings saved, but ${d.summary} ` +
+					'Start a server (Run locally with Docker) or check the URL, then run Reconnect.'
+			);
+		}
 	}
 	await confirmProvider.refresh();
 }
