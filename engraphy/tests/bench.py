@@ -56,6 +56,10 @@ APP_DATABASE_URL = DATABASE_URL.replace("postgres:engraphy@", f"{APP_ROLE}:{APP_
 
 NODES = int(os.environ.get("ENGRAPHY_BENCH_NODES", "10000"))
 ITERS = int(os.environ.get("ENGRAPHY_BENCH_ITERS", "50"))
+# Unmeasured iterations run before each operation's samples, never subtracted
+# from ITERS: the percentile keeps its full sample basis. Defaults to one full
+# cycle of the query set so every query has a cached plan before timing starts.
+WARMUP = int(os.environ.get("ENGRAPHY_BENCH_WARMUP", "4"))
 ENFORCE = os.environ.get("ENGRAPHY_BENCH_ENFORCE", "1") == "1"
 
 # design/02 s.Performance budgets (ms). (p50, p95) ceilings, baseline-class hardware.
@@ -184,7 +188,21 @@ async def _measure(pool, start_id) -> dict:
     queries = ["topic 42 benchmark note", "synthetic note about something",
                "note number 500", "unrelated lookup phrase"]
 
+    # Warm, then measure. The budgets are a serving-latency contract, and the
+    # first call of the first operation is not serving latency: it lands on a
+    # pool that has opened but not yet connected, on 10k rows written seconds
+    # earlier and still cold in the buffer cache, with no cached plan. `search`
+    # runs first, so it absorbed all of that, and at ITERS=30 `_pct(xs, 95)` is
+    # the second-slowest of thirty samples, which one cold call is enough to
+    # set. That showed up as a p95 of 300.8 ms against a 300 budget on a run
+    # whose p50 was 107.8 ms, faster than the 152 ms baseline: a 2.8x
+    # median-to-p95 gap is a cold outlier, not a slow server. Warming removes
+    # the artefact without moving a budget, and steady-state regressions still
+    # register in every sample. It pairs with ci.yml's single re-measure, which
+    # covers runner contention rather than cold start.
     async def timed(fn):
+        for i in range(WARMUP):
+            await fn(i)
         xs = []
         for i in range(ITERS):
             t0 = time.perf_counter()
