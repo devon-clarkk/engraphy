@@ -78,15 +78,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      # Tags: the exact version, the X.Y line, and `latest` for the server
-      # target so `docker pull ghcr.io/<owner>/engraphy` resolves to the server.
+      # One package per target rather than one package with suffixed tags:
+      # `docker pull ghcr.io/<owner>/engraphy` gets the server, and
+      # `<owner>/engraphy-admin` gets the sidecar, each with its own `latest`.
+      # Tags are the exact version and the X.Y line.
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
-          flavor: |
-            latest=${{ matrix.target == 'server' }}
-            suffix=${{ matrix.target == 'admin' && '-admin' || '' }},onlatest=true
+          images: ghcr.io/${{ github.repository }}${{ matrix.target == 'admin' && '-admin' || '' }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
