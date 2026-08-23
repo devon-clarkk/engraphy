@@ -7,9 +7,9 @@ containers started.
 
 Deliberately a pure over-the-wire client: it imports no engraphy code, connects by
 Streamable HTTP with a bearer token exactly as an agent would, and drives
-write -> paraphrase recall -> briefing -> near-duplicate merge. Mirrors the
-session wiring in engraphy/tests/test_app.py, but against a real socket rather
-than an in-process ASGI transport.
+write -> paraphrase recall -> briefing -> both dedup bands (absorb and
+merge-link). Mirrors the session wiring in engraphy/tests/test_app.py, but
+against a real socket rather than an in-process ASGI transport.
 
 Usage:
     ENGRAPHY_URL=http://127.0.0.1:8000 ENGRAPHY_TOKEN=<bearer> \
@@ -92,8 +92,30 @@ async def main() -> int:
         check("briefing includes the node", in_brief,
               f"sections={[(x.get('name'), len(x.get('nodes') or [])) for x in (b.get('sections') or [])]}")
 
-        # --- dedup: near-duplicate must merge, not duplicate --------------
+        # --- dedup, absorb band: a near-verbatim restatement is absorbed ---
+        # Ordering matters. The absorb write runs BEFORE the merge-link write
+        # because the novelty corpus is "canonical body + addenda + same_topic
+        # peer bodies": once a peer exists, the Jaccard denominator grows and
+        # the band a later write lands in stops being a property of this text
+        # alone. Absorb first, and both bands are deterministic.
         w2 = (await s.call_tool("write", {
+            "scope": SCOPE, "type": "note",
+            "title": "Deploy smoke: connection pooling decision",
+            "body": ("We chose psycopg3's AsyncConnectionPool with a small min_size for the "
+                     "Engraphy service, because per-request connect cost dominated the p50 "
+                     "latency budget for search."),
+            "attrs": {},
+        })).structuredContent or {}
+        check("near-verbatim restatement is absorbed", w2.get("outcome") == "merged",
+              f"outcome={w2.get('outcome')} similarity={w2.get('similarity')}")
+        check("absorb reports the canonical it merged into",
+              (w2.get("canonical") or {}).get("id") == node_id)
+
+        # --- dedup, merge-link band: same topic, distinct wording ----------
+        # A reworded note on the same topic is novel against the corpus, so the
+        # write path keeps it as its own searchable node and joins it to the
+        # canonical with a `same_topic` edge (docs/04-tools-reference.md).
+        w3 = (await s.call_tool("write", {
             "scope": SCOPE, "type": "note",
             "title": "Deploy smoke: connection pooling decision",
             "body": ("We picked psycopg3's AsyncConnectionPool (small min_size) for the Engraphy "
@@ -101,17 +123,38 @@ async def main() -> int:
                      "budget."),
             "attrs": {},
         })).structuredContent or {}
-        check("near-duplicate merges instead of duplicating", w2.get("outcome") == "merged",
-              f"outcome={w2.get('outcome')} similarity={w2.get('similarity')}")
-        check("merge targets the same canonical node",
-              (w2.get("canonical") or {}).get("id") == node_id)
+        member_id = (w3.get("node") or {}).get("id")
+        check("reworded near-duplicate is kept and linked, never duplicated blindly",
+              w3.get("outcome") == "merged_linked",
+              f"outcome={w3.get('outcome')} similarity={w3.get('similarity')}")
+        check("merge-link keeps the new wording as its own node",
+              member_id is not None and member_id != node_id, f"member={member_id}")
+        check("merge-link points at the same canonical",
+              (w3.get("canonical") or {}).get("id") == node_id)
 
         # --- get: merge history top-level, never inside attrs -------------
+        # `addenda` is a top-level wire key on every node (engraphy/core/get.py),
+        # empty until something appends to it. The contract under test is the
+        # SHAPE -- merge history is surfaced top-level and `attrs` never carries
+        # it -- not a count: the only writer of an addendum is the error
+        # re-occurrence path, and the starter pack this space is built from
+        # declares no `error` type.
         g = (await s.call_tool("get", {"ids": [node_id]})).structuredContent or {}
         n0 = (g.get("nodes") or [{}])[0]
-        check("get surfaces merge history top-level", len(n0.get("addenda") or []) >= 1,
-              f"{len(n0.get('addenda') or [])} addendum/a")
+        check("get surfaces merge history top-level", isinstance(n0.get("addenda"), list),
+              f"addenda={n0.get('addenda')!r}")
         check("attrs never carries addenda", "addenda" not in (n0.get("attrs") or {}))
+
+        # The merge-link is traversable from the canonical: the edge is inserted
+        # member -> canonical, so it reads as INBOUND here. Gated on the
+        # envelope's own flag, which is false when the pack declares no
+        # `same_topic` rule for the pair.
+        if w3.get("cluster_edge_added"):
+            inbound = (n0.get("edges") or {}).get("in") or []
+            check("same_topic edge joins the member to the canonical",
+                  any(e.get("type") == "same_topic" and e.get("src") == member_id
+                      for e in inbound),
+                  f"in={[(e.get('type'), e.get('src')) for e in inbound]}")
 
     failed = [label for label, ok, _ in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

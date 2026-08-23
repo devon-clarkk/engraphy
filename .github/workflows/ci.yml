@@ -24,14 +24,19 @@ jobs:
     env:
       ENGRAPHY_TEST_DATABASE_URL: postgres://postgres:engraphy@localhost:5432/engraphy_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install -e '.[dev]'
+      # Pinned for the same reason every other tool here is: `releases/latest`
+      # makes the migration gate depend on whatever shipped this morning, and a
+      # migration runner that changes under CI is indistinguishable from a
+      # migration that broke. Bumping this is a reviewed change.
       - name: install dbmate
         run: |
-          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.35.0/dbmate-linux-amd64
           sudo chmod +x /usr/local/bin/dbmate
+          dbmate --version
       # ubuntu-latest's default postgresql-client is not pinned to pg16 and can
       # drift ahead of the pgvector/pg16 service above -- a pg_dump newer than
       # the server it's dumping from is exactly the client/server mismatch
@@ -93,8 +98,8 @@ jobs:
   deploy-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
 
       # The MCP client for the round trip. Deliberately NOT `pip install .` --
@@ -212,8 +217,8 @@ jobs:
   windows-cli:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
       - run: pip install .
       - name: guard — async admin verbs run on a compatible event loop
