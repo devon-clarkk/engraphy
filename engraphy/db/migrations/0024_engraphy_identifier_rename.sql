@@ -329,31 +329,53 @@ END
 $mig$;
 
 -- migrate:down
--- Exact inverse of the up-path, in reverse order. Same technique throughout:
--- read the installed definition and substitute the namespace literal back.
+-- Mirrors the up-path STEP FOR STEP, in the same order, not in reverse.
+--
+-- That ordering is not a stylistic choice. The policy and function-body blocks
+-- both read the installed definition and substitute a literal into it, and both
+-- rely on the function RENAME having already happened: after the rename,
+-- pg_get_expr renders the reverted function names straight from the OID, so the
+-- policy text needs only its GUC literal changed. Reversing the order instead
+-- (policies first) rewrites a policy to call engram_readable_scopes() while that
+-- function is still named engraphy_readable_scopes, and the whole migration dies
+-- on `function engram_readable_scopes() does not exist`.
+
+ALTER FUNCTION public.engraphy_addenda_text(jsonb)          RENAME TO engram_addenda_text;
+ALTER FUNCTION public.engraphy_readable_scopes()            RENAME TO engram_readable_scopes;
+ALTER FUNCTION public.engraphy_writable_scopes()            RENAME TO engram_writable_scopes;
+ALTER FUNCTION public.engraphy_validate_attrs(jsonb, jsonb) RENAME TO engram_validate_attrs;
+
+-- Allow-list is the POST-revert names, because the rename above has already
+-- landed by the time this runs.
 DO $mig$
+DECLARE
+  r record;
 BEGIN
-  INSERT INTO node_types (space_id, name, description, attr_spec)
-  SELECT space_id, 'engram_sentinel', description, attr_spec
-  FROM node_types WHERE name = 'engraphy_sentinel'
-  ON CONFLICT (space_id, name) DO NOTHING;
-  UPDATE nodes       SET type     = 'engram_sentinel' WHERE type     = 'engraphy_sentinel';
-  UPDATE edge_rules  SET src_type = 'engram_sentinel' WHERE src_type = 'engraphy_sentinel';
-  UPDATE edge_rules  SET dst_type = 'engram_sentinel' WHERE dst_type = 'engraphy_sentinel';
-  DELETE FROM node_types WHERE name = 'engraphy_sentinel';
+  FOR r IN
+    SELECT p.oid, pg_get_functiondef(p.oid) AS def
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN (
+        'engram_addenda_text', 'engram_readable_scopes',
+        'engram_writable_scopes', 'engram_validate_attrs',
+        'nodes_validate_attrs_fn', 'nodes_touch_fn', 'edges_validate_fn')
+      AND pg_get_functiondef(p.oid) ~ 'engraphy[._]'
+  LOOP
+    EXECUTE replace(replace(r.def, 'engraphy.', 'engram.'), 'engraphy_', 'engram_');
+  END LOOP;
 END
 $mig$;
 
-DO $mig$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engraphy_app')
-     AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engram_app')
-  THEN
-    EXECUTE 'ALTER ROLE engraphy_app RENAME TO engram_app';
-  END IF;
-END
-$mig$;
-
+-- Two substitutions, and the second one is only safe because of the ordering.
+-- The function CALLS in these expressions already reverted for free with the
+-- rename above, so by the time pg_get_expr runs here it emits
+-- `public.engram_writable_scopes() AS engraphy_writable_scopes`: a correct call
+-- carrying the auto-generated column alias Postgres stamped in when the up-path
+-- recreated the policy under the new function name. That alias is inert (nothing
+-- references it) but it IS stored, so replacing `engraphy_` here too is what
+-- makes the down-path land byte-identical to the pre-rename schema instead of
+-- merely equivalent to it. Doing the same replace BEFORE the function rename
+-- would have rewritten the call itself and failed.
 DO $mig$
 DECLARE
   r record; stmt text; cmd text;
@@ -367,8 +389,8 @@ BEGIN
     JOIN pg_class c ON c.oid = p.polrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'
-      AND (coalesce(pg_get_expr(p.polqual,      p.polrelid), '') ~ 'engraphy[._]'
-        OR coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~ 'engraphy[._]')
+      AND (coalesce(pg_get_expr(p.polqual,      p.polrelid), '') ~ 'engraphy\.'
+        OR coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~ 'engraphy\.')
   LOOP
     cmd := CASE r.polcmd WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT'
                          WHEN 'w' THEN 'UPDATE' WHEN 'd' THEN 'DELETE'
@@ -394,25 +416,24 @@ END
 $mig$;
 
 DO $mig$
-DECLARE
-  r record;
 BEGIN
-  FOR r IN
-    SELECT p.oid, pg_get_functiondef(p.oid) AS def
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public'
-      AND p.proname IN (
-        'engraphy_addenda_text', 'engraphy_readable_scopes',
-        'engraphy_writable_scopes', 'engraphy_validate_attrs',
-        'nodes_validate_attrs_fn', 'nodes_touch_fn', 'edges_validate_fn')
-      AND pg_get_functiondef(p.oid) ~ 'engraphy[._]'
-  LOOP
-    EXECUTE replace(replace(r.def, 'engraphy.', 'engram.'), 'engraphy_', 'engram_');
-  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engraphy_app')
+     AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engram_app')
+  THEN
+    EXECUTE 'ALTER ROLE engraphy_app RENAME TO engram_app';
+  END IF;
 END
 $mig$;
 
-ALTER FUNCTION public.engraphy_addenda_text(jsonb)          RENAME TO engram_addenda_text;
-ALTER FUNCTION public.engraphy_readable_scopes()            RENAME TO engram_readable_scopes;
-ALTER FUNCTION public.engraphy_writable_scopes()            RENAME TO engram_writable_scopes;
-ALTER FUNCTION public.engraphy_validate_attrs(jsonb, jsonb) RENAME TO engram_validate_attrs;
+DO $mig$
+BEGIN
+  INSERT INTO node_types (space_id, name, description, attr_spec)
+  SELECT space_id, 'engram_sentinel', description, attr_spec
+  FROM node_types WHERE name = 'engraphy_sentinel'
+  ON CONFLICT (space_id, name) DO NOTHING;
+  UPDATE nodes       SET type     = 'engram_sentinel' WHERE type     = 'engraphy_sentinel';
+  UPDATE edge_rules  SET src_type = 'engram_sentinel' WHERE src_type = 'engraphy_sentinel';
+  UPDATE edge_rules  SET dst_type = 'engram_sentinel' WHERE dst_type = 'engraphy_sentinel';
+  DELETE FROM node_types WHERE name = 'engraphy_sentinel';
+END
+$mig$;
