@@ -18,7 +18,7 @@ import pathlib
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import psycopg
 from psycopg_pool import AsyncConnectionPool
@@ -132,7 +132,7 @@ async def main() -> int:
     manifest = {
         "run_id": run_id,
         "benchmark": "dupstream",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "engine_git_sha": _git_sha(),
         "pack": {"name": run_space.pack_name, "version": run_space.pack_version},
         "embedding_model": embedding.MODEL_ID,

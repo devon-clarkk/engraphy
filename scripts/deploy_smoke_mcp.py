@@ -46,13 +46,11 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 async def session():
     async with httpx.AsyncClient(
         base_url=BASE, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=120,
-    ) as http_client:
-        async with streamable_http_client(
-            f"{BASE}/mcp/", http_client=http_client,
-        ) as (read, write_stream, _session_id):
-            async with ClientSession(read, write_stream) as s:
-                await s.initialize()
-                yield s
+    ) as http_client, streamable_http_client(
+        f"{BASE}/mcp/", http_client=http_client,
+    ) as (read, write_stream, _session_id), ClientSession(read, write_stream) as s:
+        await s.initialize()
+        yield s
 
 
 async def main() -> int:

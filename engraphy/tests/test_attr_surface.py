@@ -48,6 +48,19 @@ def test_required_and_optional_both_scanned_reserved_excluded():
     assert "addenda" not in searchable_keys(_spec(optional={"addenda": {"type": "string"}}))
 
 
+def test_non_dict_rule_is_skipped_rather_than_raising():
+    """A malformed rule (not an object) is skipped key by key, not fatal.
+
+    Pack validation is what reports the shape error; selection still has to
+    answer for the keys that ARE well formed, because this runs on every write
+    and must not turn one bad rule into a failed write.
+    """
+    keys = searchable_keys(_spec(
+        optional={"broken": "string", "location": {"type": "string"}},
+    ))
+    assert keys == {"location"}
+
+
 def test_empty_or_missing_spec_yields_no_keys():
     assert searchable_keys({}) == set()
     assert searchable_keys(None) == set()

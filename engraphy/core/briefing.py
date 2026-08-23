@@ -84,7 +84,10 @@ def _resolve_date_bound(value: str) -> str:
         return value  # ISO date, pack-validate checked
     sign, days = m.groups()
     delta = datetime.timedelta(days=int(days))
-    today = datetime.date.today()
+    # Local calendar date, not UTC (ruff DTZ011): REL:+2d resolves against
+    # user-authored attribute dates like a due date, which are calendar dates
+    # rather than instants. "Today" here must mean the operator's today.
+    today = datetime.date.today()  # noqa: DTZ011
     return (today + delta if sign == "+" else today - delta).isoformat()
 
 

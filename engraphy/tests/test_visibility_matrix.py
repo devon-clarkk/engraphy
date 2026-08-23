@@ -18,9 +18,9 @@ import pytest
 from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent / "fixtures"))
-from visibility_matrix import generate_cases  # noqa: E402
+from visibility_matrix import generate_cases
 
-from conftest import APP_ROLE, DATABASE_URL, insert_node, set_identity  # noqa: E402
+from conftest import APP_ROLE, DATABASE_URL, insert_node, set_identity
 
 CASES = list(generate_cases())
 

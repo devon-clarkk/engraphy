@@ -24,6 +24,8 @@ import pytest
 
 from psycopg.types.json import Jsonb
 
+from engraphy.core.dedup import ScopeUnknownError
+
 from engraphy.admin import import_
 from engraphy.admin.import_ import ImportLineError, parse_jsonl, run_import
 from engraphy.core import sentinel
@@ -199,7 +201,7 @@ async def test_import_scope_must_be_writable_by_principal(pool, write_space, tmp
         tmp_path / "in.jsonl",
         [{"type": "widget", "title": "x", "body": "y"}],
     )
-    with pytest.raises(Exception):  # ScopeUnknownError-class; no row escapes
+    with pytest.raises(ScopeUnknownError):  # no row escapes
         await run_import(
             pool, write_space, "p1", "no-such-scope", path, embed_document=_Embedder(),
         )

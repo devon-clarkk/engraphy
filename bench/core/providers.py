@@ -41,18 +41,18 @@ import urllib.request
 from bench.core.llm import DEFAULT_MAX_TOKENS, LLMError, LLMResponse
 
 __all__ = [
+    "CLAUDE_DEFAULT_MODEL",
+    "ENV_PATH",
+    "GEMINI_DEFAULT_MODEL",
+    "GEMINI_FREE_RPD",
+    "GEMINI_FREE_RPM",
     "ClaudeCLIClient",
     "GeminiClient",
     "QuotaExhausted",
     "TransientCLIError",
     "TransientRunStop",
-    "stop_class",
     "read_env_file",
-    "ENV_PATH",
-    "CLAUDE_DEFAULT_MODEL",
-    "GEMINI_DEFAULT_MODEL",
-    "GEMINI_FREE_RPM",
-    "GEMINI_FREE_RPD",
+    "stop_class",
 ]
 
 ENV_PATH = pathlib.Path(__file__).resolve().parents[2] / ".env"
@@ -314,7 +314,7 @@ class ClaudeCLIClient:
 
     def _launch(
         self, rest: list[str], stdin_text: str | None = None
-    ) -> "subprocess.CompletedProcess":
+    ) -> subprocess.CompletedProcess:
         """Run the CLI, tolerating a transiently-missing binary.
 
         A Claude Code self-update replaces claude.exe in place, so the launch can
@@ -346,7 +346,7 @@ class ClaudeCLIClient:
                 return subprocess.run(
                     [*binary, *rest], input=stdin_text, capture_output=True, text=True,
                     timeout=self.timeout, env=self._env(),
-                    encoding="utf-8", errors="replace", cwd=self.workdir,
+                    encoding="utf-8", errors="replace", cwd=self.workdir, check=False,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise LLMError(f"claude CLI timed out after {self.timeout}s") from exc

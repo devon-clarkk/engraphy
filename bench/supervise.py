@@ -80,7 +80,7 @@ def _pid_alive(pid: int) -> bool:
         try:
             out = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=15, check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return True  # cannot tell -> assume alive, refuse to double-launch
@@ -283,7 +283,7 @@ def main() -> int:
         cycle_out = run_dir / f"supervisor-cycle-{cycle}.out"
         with cycle_out.open("w", encoding="utf-8") as fh:
             proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT,
-                                  text=True, encoding="utf-8", errors="replace")
+                                  text=True, encoding="utf-8", errors="replace", check=False)
         tail = _tail(cycle_out)
         answers_after = _answer_count(run_dir)
         progressed = answers_after > answers_before

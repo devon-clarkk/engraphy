@@ -43,7 +43,7 @@ def _as_url(conninfo: str) -> str:
 def _dbmate_up(conninfo: str) -> None:
     result = subprocess.run(
         [str(DBMATE), "--migrations-dir", str(MIGRATIONS_DIR), "--url", _as_url(conninfo), "up"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
 
@@ -132,7 +132,7 @@ def test_run_full_suite_against_populated_schema_passes_with_sentinel(restore_vi
                 "INSERT INTO nodes (id, space_id, type, scope_id, title, body, attrs, embedding, "
                 "embedding_model, source_client, author_principal) VALUES "
                 "(%s, 'vr-space', 'note', 'scope1', 'sentinel title', 'sentinel body', '{}', "
-                + "'[" + ",".join(["0"] * 384) + "]', 'test', 'pytest', 'p1')", (sentinel_id,))
+                 "'[" + ",".join(["0"] * 384) + "]', 'test', 'pytest', 'p1')", (sentinel_id,))
 
     monkeypatch.setattr(verify_restore, "_restore", populate_after_restore)
 

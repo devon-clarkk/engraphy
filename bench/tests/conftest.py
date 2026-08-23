@@ -18,7 +18,7 @@ import uuid
 import psycopg
 import pytest
 
-from engraphy.tests.conftest import DATABASE_URL  # noqa: F401 -- re-exported for tests
+from engraphy.tests.conftest import DATABASE_URL
 from engraphy.tests.conftest import app_conn, conn, pool  # noqa: F401 -- fixture re-export
 
 # The session-scoped autouse fixture that creates the `engram_app` role and

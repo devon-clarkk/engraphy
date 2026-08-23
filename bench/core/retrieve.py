@@ -34,12 +34,12 @@ from bench.core.corpus import Question
 from bench.core.meter import Meter
 
 __all__ = [
+    "STRATEGIES",
+    "BriefingThenSearch",
     "Retrieval",
     "RetrievalStrategy",
     "SearchOnly",
     "SearchThenTraverse",
-    "BriefingThenSearch",
-    "STRATEGIES",
 ]
 
 SOURCE_CLIENT = "engraphy-bench"
@@ -140,7 +140,7 @@ class SearchThenTraverse:
                         pool, run_space.space_id, run_space.principal, hit["node"]["id"],
                         "both", max_depth=self.max_depth, detail="summary",
                     )
-                except Exception:  # noqa: BLE001 -- an unwalkable seed is not fatal
+                except Exception:  # noqa: BLE001,S112 -- an unwalkable seed is not fatal
                     continue
             for node in t.get("nodes", []):
                 if node["id"] not in seen:

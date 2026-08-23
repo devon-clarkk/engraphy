@@ -45,9 +45,9 @@ def main() -> int:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for n in ast.walk(tree):
-            if isinstance(n, ast.Call) and _is_embed_document(n.func) and n.args:
-                if _has_newline_concat(n.args[0]):
-                    violations.append((str(path), n.lineno))
+            if (isinstance(n, ast.Call) and _is_embed_document(n.func) and n.args
+                    and _has_newline_concat(n.args[0])):
+                violations.append((str(path), n.lineno))
 
     if violations:
         for filename, lineno in violations:

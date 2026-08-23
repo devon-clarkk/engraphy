@@ -251,7 +251,7 @@ def _build_mcp_server(pool, rate_limiter: RateLimiter) -> Server:
             return await dispatcher(pool, ctx, merged_args)
         except ToolError as exc:
             return _error_result(exc)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- the one funnel every tool call passes through; see below
             # Every dispatcher wraps its OWN core-layer call in try/except ->
             # to_tool_error, but each one reads its required wire arguments
             # (arguments["scope"], ...) BEFORE that try block -- a missing
@@ -333,7 +333,7 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
             body = await request.json()
             kind = body["kind"]
             payload = body["payload"]
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any malformed body is one 400, by design
             return JSONResponse(
                 {"error": "ENGRAPHY_VALIDATION: request body must be JSON {kind, payload, scope?}"},
                 status_code=400,
@@ -341,7 +341,7 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
         scope_id = body.get("scope")
         try:
             result = await core_capture(pool, ctx.space_id, ctx.principal, kind, payload, scope_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- translated by to_tool_error into a wire error
             return JSONResponse({"error": str(to_tool_error(exc))}, status_code=400)
         return JSONResponse(result)
 

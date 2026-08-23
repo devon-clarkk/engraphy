@@ -30,7 +30,7 @@ from bench.core.answer import is_abstention
 from bench.core.corpus import Question
 from bench.core.judge import Judge, Verdict
 
-__all__ = ["Scorer", "LLMJudgeScorer", "grade_abstention"]
+__all__ = ["LLMJudgeScorer", "Scorer", "grade_abstention"]
 
 
 @runtime_checkable

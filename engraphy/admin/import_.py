@@ -255,7 +255,10 @@ async def run_import(
                 raise AssertionError(f"unexpected import outcome {outcome!r}")
 
     if review_rows:
-        with review_queue_path.open("w", encoding="utf-8", newline="") as fh:
+        # Blocking open in an async function (ruff ASYNC230) is deliberate: this is
+        # a one-shot admin CLI import writing its review queue once, at the end. No
+        # other task shares this event loop, so there is no responsiveness to lose.
+        with review_queue_path.open("w", encoding="utf-8", newline="") as fh:  # noqa: ASYNC230
             writer = csv.writer(fh)
             writer.writerow(_REVIEW_CSV_HEADER)
             writer.writerows(review_rows)

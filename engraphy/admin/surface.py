@@ -89,13 +89,13 @@ def rebuild_surface(
         ]
         if not dry_run:
             with conn.transaction():
-                for nid, scope, new_extra, vector in embedded:
+                for nid, _scope, new_extra, vector in embedded:
                     cur.execute(
                         "UPDATE nodes SET extra_search = %s, embedding = %s::vector, "
                         "embedding_model = %s WHERE id = %s",
                         (new_extra, _vector_literal(vector), embedding.MODEL_ID, nid),
                     )
-        for nid, scope, _extra, _vec in embedded:
+        for _nid, scope, _extra, _vec in embedded:
             summary.re_embedded += 1
             summary.per_scope[scope] = summary.per_scope.get(scope, 0) + 1
         batch.clear()

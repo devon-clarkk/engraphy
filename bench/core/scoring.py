@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-__all__ = ["RuleScore", "score_answer", "normalize", "gold_parts", "coverage"]
+__all__ = ["RuleScore", "coverage", "gold_parts", "normalize", "score_answer"]
 
 _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7,
@@ -122,7 +122,10 @@ def _date_match(a, b) -> bool:
     if ma is not None and mb is not None and ma != mb:
         return False
     sa, sb = _day_set(da), _day_set(db)
-    if sa is not None and sb is not None and not (sa & sb):
+    # Not collapsed into `return not (...)` (ruff SIM103): each early return is a
+    # separate reason two dates are considered different, and the trailing comment
+    # belongs to this one.
+    if sa is not None and sb is not None and not (sa & sb):  # noqa: SIM103
         return False   # both name a day/range and they do not overlap -> different day
     return True
 

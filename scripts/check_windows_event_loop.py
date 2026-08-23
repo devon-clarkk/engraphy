@@ -68,7 +68,7 @@ def check_token_create_verb() -> None:
         [sys.executable, "-m", "engraphy.admin.cli", "token", "create",
          "--space", "x", "--principal", "y", "--client-name", "z", "--role", "readwrite"],
         capture_output=True, text=True, timeout=120,
-        env={**__import__("os").environ, "ENGRAPHY_DATABASE_URL": DEAD_DSN},
+        env={**__import__("os").environ, "ENGRAPHY_DATABASE_URL": DEAD_DSN}, check=False,
     )
     out = (proc.stdout or "") + (proc.stderr or "")
     check(

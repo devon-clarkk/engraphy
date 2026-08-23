@@ -42,8 +42,8 @@ def test_doctor_clean_space_reports_zero_everywhere(conn):
 def test_doctor_stale_pendings_counts_only_expired(conn):
     ctx = bootstrap_space(conn, space_id="doc-pending")
     cur = conn.cursor()
-    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
-    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1)
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)
     cur.execute(
         "INSERT INTO pending_writes (space_id, author_principal, payload, expires_at) "
         "VALUES (%s, %s, %s, %s)",

@@ -185,7 +185,7 @@ def promote_addenda(
     conn.commit()  # close the read transaction before embedding (trap 3)
 
     for node in nodes:
-        node_id, node_type, node_scope, node_title, _body, attrs = node
+        node_id, node_type, node_scope, _node_title, _body, attrs = node
         summary.nodes_scanned += 1
         addenda = list(attrs.get("addenda", []))
         summary.addenda_seen += len(addenda)
@@ -215,7 +215,7 @@ def promote_addenda(
 
         if dry_run:
             summary.promoted += len(embedded)
-            for index, title, body, _attrs, _extra, _vec in embedded:
+            for index, title, _body, _attrs, _extra, _vec in embedded:
                 # per-node detail (§3): what WOULD be promoted.
                 rule_ok = _rule_present(cur, space_id, node_type, node_type)
                 if not rule_ok:

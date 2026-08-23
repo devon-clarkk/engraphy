@@ -39,13 +39,13 @@ def expected_schema_version(migrations_dir: pathlib.Path) -> str:
 
 def pre_dump(conninfo: str, dump_dir: pathlib.Path) -> pathlib.Path:
     dump_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     dump_path = dump_dir / f"pre-migrate-{stamp}.pgdump"
     if shutil.which("pg_dump") is None:
         raise MigrateError("pg_dump not found on PATH -- install the Postgres client tools")
     result = subprocess.run(
         ["pg_dump", "--format=custom", "--file", str(dump_path), conninfo],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
         raise MigrateError(f"pre-dump failed: {result.stderr.strip()}")
@@ -57,7 +57,7 @@ def dbmate_up(conninfo: str, migrations_dir: pathlib.Path) -> str:
         raise MigrateError("dbmate not found on PATH -- install it before running migrate")
     result = subprocess.run(
         ["dbmate", "--migrations-dir", str(migrations_dir), "--no-dump-schema", "--url", conninfo, "up"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
         raise MigrateError(f"dbmate up failed: {result.stderr.strip() or result.stdout.strip()}")
@@ -181,7 +181,7 @@ def restart(restart_cmd: str | None) -> str:
     if not restart_cmd:
         return ("no --restart-cmd given -- restart the engraphy process manually "
                 "(systemctl restart engraphy / docker compose restart engraphy / equivalent)")
-    result = subprocess.run(restart_cmd, shell=True, capture_output=True, text=True)
+    result = subprocess.run(restart_cmd, shell=True, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise MigrateError(f"restart command failed: {result.stderr.strip() or result.stdout.strip()}")
     return f"ran restart command: {restart_cmd!r}"

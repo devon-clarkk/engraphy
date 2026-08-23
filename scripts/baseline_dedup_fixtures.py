@@ -33,7 +33,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from engraphy.core import embedding  # noqa: E402
+from engraphy.core import embedding
 
 FIXTURE = Path(__file__).resolve().parents[1] / "engraphy/tests/fixtures/dedup_cases.yaml"
 T_HIGH, T_LOW = 0.95, 0.80

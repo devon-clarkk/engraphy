@@ -146,5 +146,5 @@ def test_extract_prompt_assembles_and_stays_test_neutral():
     # No LoCoMo-specific terms may leak into a shipped extraction prompt.
     banned = ["palm", "sunset", "greyhound", "pepper", "melanie", "caroline",
               "pottery", "clarinet", "charlotte", "becoming nicole", "doordash"]
-    leaked = [w for w in banned if re.search(rf"\b{re.escape(w)}\b", text, re.I)]
+    leaked = [w for w in banned if re.search(rf"\b{re.escape(w)}\b", text, re.IGNORECASE)]
     assert not leaked, f"extraction prompt leaked dataset terms: {leaked}"

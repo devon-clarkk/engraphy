@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from engraphy.core import embedding  # noqa: E402
+from engraphy.core import embedding
 
 FIXTURE = Path(__file__).resolve().parents[1] / "engraphy/tests/fixtures/briefing/section_cases.yaml"
 CASE = "semantic_with_hint_membership"

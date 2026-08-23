@@ -59,7 +59,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import psycopg
 from psycopg_pool import AsyncConnectionPool
@@ -99,7 +99,7 @@ if sys.platform == "win32":
     # non-ASCII character in a progress line has lost hours of Claude calls to a
     # print statement. Progress output is not worth a crash.
     for _stream in (sys.stdout, sys.stderr):
-        try:
+        try:  # noqa: SIM105 -- the except clause carries the coverage pragma
             _stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):  # pragma: no cover -- redirected stream
             pass
@@ -464,7 +464,18 @@ async def phase_answer(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
         retrieval_lock = asyncio.Lock()
         pending: set[asyncio.Task] = set()
 
-        async def run_one(q: Question) -> tuple[dict, dict]:
+        # The loop-dependent values are bound at def time on purpose. Every task
+        # created for an arm is drained by the `while pending` barrier at the
+        # bottom of this loop before the next arm starts, so these closures never
+        # actually observed a stale `arm` -- but that correctness lived in a
+        # barrier forty lines away and would evaporate the moment anyone let a
+        # task outlive its iteration. Binding here (ruff B023) makes the capture
+        # correct by construction instead of by distant convention.
+        async def run_one(q: Question, *, arm: Arm = arm, strategy=strategy,
+                          arm_space: ArmSpace = arm_space,
+                          sem: asyncio.Semaphore = sem,
+                          retrieval_lock: asyncio.Lock = retrieval_lock,
+                          ) -> tuple[dict, dict]:
             meter = Meter()
             async with retrieval_lock:
                 retrieval = await _retrieve_with_retry(strategy, pool, arm_space, q, meter)
@@ -521,7 +532,7 @@ async def phase_answer(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
         stop_reason = None
         stop_transient = False
 
-        def _consume(t: asyncio.Task) -> None:
+        def _consume(t: asyncio.Task, *, todo: list = todo) -> None:
             """Persist a clean answer; NEVER persist a reader error (so a resume
             re-answers it rather than banking an empty answer as a wrong one)."""
             nonlocal done_n, errored, consec_err, stop_reason, stop_transient
@@ -714,8 +725,8 @@ def _judge_order(rows: list[dict]) -> list[dict]:
     buckets: dict[tuple, list[dict]] = {}
     for r in rows:
         buckets.setdefault((r["arm"], r["category"], r["haystack_id"]), []).append(r)
-    for key in buckets:
-        buckets[key].sort(key=lambda r: hashlib.sha256(r["question_id"].encode()).digest())
+    for bucket in buckets.values():
+        bucket.sort(key=lambda r: hashlib.sha256(r["question_id"].encode()).digest())
 
     keys = sorted(buckets)
     out: list[dict] = []
@@ -745,8 +756,8 @@ def phase_calibrate(ck: Checkpoint, corpus: Corpus, judge: Judge, sample: int) -
     by_cat: dict[str, list[dict]] = {}
     for r in rows:
         by_cat.setdefault(r["category"], []).append(r)
-    for cat in by_cat:
-        by_cat[cat].sort(key=lambda r: hashlib.sha256(
+    for cat_rows in by_cat.values():
+        cat_rows.sort(key=lambda r: hashlib.sha256(
             f"cal:{r['arm']}:{r['question_id']}".encode()).digest())
 
     picked: list[dict] = []
@@ -1169,7 +1180,7 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
         # a defaults run). A run with non-default governance (e.g. dedup.t_high)
         # must be distinguishable from a defaults run forever -- Phase A.
         "space_config": dict(getattr(args, "space_config_parsed", {}) or {}),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "engine_git_sha": _git_sha(),
         "harness_git_sha": _git_sha(),
         "git_tree_dirty": _git_dirty(),
@@ -1351,7 +1362,7 @@ async def main() -> int:
               f"{len(pack_meta[pn]['node_types'])} node types)")
 
     representative_space = pack_spaces[pack_names[0]][0]
-    reader_system, reader_manifest = build_reader_system(args.reader_stance)
+    _reader_system, reader_manifest = build_reader_system(args.reader_stance)
     reader_manifest = {**reader_manifest, "effort": "medium",
                        "model": ROLE_MODELS["reader"]["model"]}
 

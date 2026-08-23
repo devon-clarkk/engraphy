@@ -42,7 +42,7 @@ def scratch_db():
     name = f"engram_shell_it_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(DATABASE_URL, autocommit=True) as c:
         cur = c.cursor()
-        cur.execute(f'CREATE DATABASE "{name}"')  # noqa: S608 -- generated name
+        cur.execute(f'CREATE DATABASE "{name}"')
     conninfo = DATABASE_URL.rsplit("/", 1)[0] + f"/{name}?sslmode=disable"
     try:
         with psycopg.connect(conninfo, autocommit=True) as c:
@@ -53,7 +53,7 @@ def scratch_db():
         yield conninfo
     finally:
         with psycopg.connect(DATABASE_URL, autocommit=True) as c:
-            c.cursor().execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')  # noqa: S608
+            c.cursor().execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
 
 
 def _seed_one_node(conninfo: str) -> str:
@@ -72,7 +72,7 @@ def _seed_one_node(conninfo: str) -> str:
             "INSERT INTO nodes (id, space_id, type, scope_id, title, body, attrs, embedding, "
             "embedding_model, source_client, author_principal) VALUES "
             "(%s, 'shellit', 'note', 'scope1', 'sentinel title', 'sentinel body', '{}', "
-            + "'[" + ",".join(["0"] * 384) + "]', 'test', 'pytest', 'p1')",
+             "'[" + ",".join(["0"] * 384) + "]', 'test', 'pytest', 'p1')",
             (sentinel_id,),
         )
     return sentinel_id

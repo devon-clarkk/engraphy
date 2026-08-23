@@ -25,7 +25,7 @@ from bench.core.meter import Meter, percentile
 from bench.core.retrieve import probe_search
 from bench.dupstream.generate import FactClass, Variant, stream
 
-__all__ = ["ArmResult", "run_arm", "score", "DupstreamResult"]
+__all__ = ["ArmResult", "DupstreamResult", "run_arm", "score"]
 
 # Forced-insert control: t_high/t_low above 1.0 make every similarity fall below
 # the low band, so nothing can merge or park. Test surface, used deliberately

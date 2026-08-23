@@ -29,19 +29,19 @@ from typing import Protocol, runtime_checkable
 from bench.core.corpus import Session, Turn
 
 __all__ = [
-    "NodeDraft",
+    "BODY_MAX",
+    "TITLE_MAX",
     "EdgeDraft",
-    "ExtractWindow",
     "ExtractResult",
-    "Extractor",
-    "VerbatimExtractor",
-    "LLMExtractor",
+    "ExtractWindow",
     "ExtractionError",
+    "Extractor",
+    "LLMExtractor",
+    "NodeDraft",
+    "VerbatimExtractor",
     "build_extraction_schema",
     "validate_against_pack",
     "window_sessions",
-    "TITLE_MAX",
-    "BODY_MAX",
 ]
 
 # Mirrors the DDL's CHECK constraints (design/01: title 3-200, body 1-8000). A

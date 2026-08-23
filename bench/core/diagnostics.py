@@ -27,8 +27,12 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "compact_context", "context_text", "gold_support", "attribute_failure",
-    "MAX_CONTEXT_NODES", "BODY_CHARS",
+    "BODY_CHARS",
+    "MAX_CONTEXT_NODES",
+    "attribute_failure",
+    "compact_context",
+    "context_text",
+    "gold_support",
 ]
 
 MAX_CONTEXT_NODES = 12

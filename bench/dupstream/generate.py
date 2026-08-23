@@ -35,7 +35,7 @@ import pathlib
 import random
 from dataclasses import asdict, dataclass
 
-__all__ = ["Variant", "FactClass", "generate", "write_jsonl", "read_jsonl", "FIXTURE"]
+__all__ = ["FIXTURE", "FactClass", "Variant", "generate", "read_jsonl", "write_jsonl"]
 
 FIXTURE = pathlib.Path(__file__).resolve().parent / "fixtures" / "classes.jsonl"
 

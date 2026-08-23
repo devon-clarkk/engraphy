@@ -75,13 +75,11 @@ def _asgi_http_client(app, raw_token):
 
 @contextlib.asynccontextmanager
 async def _mcp_session(app, raw_token):
-    async with _asgi_http_client(app, raw_token) as http_client:
-        async with streamable_http_client(
-            "http://testserver/mcp/", http_client=http_client,
-        ) as (read, write_stream, _get_session_id):
-            async with ClientSession(read, write_stream) as session:
-                await session.initialize()
-                yield session
+    async with _asgi_http_client(app, raw_token) as http_client, streamable_http_client(
+        "http://testserver/mcp/", http_client=http_client,
+    ) as (read, write_stream, _get_session_id), ClientSession(read, write_stream) as session:
+        await session.initialize()
+        yield session
 
 
 @pytest.fixture
@@ -157,11 +155,10 @@ async def test_repeated_bad_bearers_trip_the_ban(pool):
 
 
 async def test_tools_list_includes_all_fourteen_core_tools(pool, app_space):
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.list_tools()
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.list_tools()
     names = {t.name for t in result.tools}
     # The fifteen core tools (pending_list is the read-only confirm-queue list;
     # stats is the read-only per-space usage-metrics tool, E3; scope_guide is the
@@ -177,43 +174,40 @@ async def test_tools_list_includes_all_fourteen_core_tools(pool, app_space):
 
 
 async def test_write_tool_call_round_trip(pool, app_space):
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "App layer write",
-                "body": "Exercised through the real MCP transport.", "attrs": {},
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "App layer write",
+            "body": "Exercised through the real MCP transport.", "attrs": {},
+        })
     assert result.isError is not True
     assert result.structuredContent["outcome"] == "inserted"
     assert result.structuredContent["node"]["title"] == "App layer write"
 
 
 async def test_readonly_token_on_write_tool_gets_role_error(pool, app_space):
-    space_id, _raw_rw, raw_ro = app_space
+    _space_id, _raw_rw, raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_ro) as session:
-            result = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "Should not land",
-                "body": "Blocked by role gate.", "attrs": {},
-            })
+    async with _running_app(app), _mcp_session(app, raw_ro) as session:
+        result = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "Should not land",
+            "body": "Blocked by role gate.", "attrs": {},
+        })
     assert result.isError is True
     text = result.content[0].text
     assert text.startswith("ENGRAPHY_ROLE:")
 
 
 async def test_missing_required_argument_is_validation_not_internal(pool, app_space):
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            # 'scope' omitted -- the write dispatcher's arguments["scope"]
-            # raises KeyError, which tools/errors.py now maps to VALIDATION.
-            result = await session.call_tool("write", {
-                "type": "widget", "title": "No scope", "body": "Missing a required field.",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        # 'scope' omitted -- the write dispatcher's arguments["scope"]
+        # raises KeyError, which tools/errors.py now maps to VALIDATION.
+        result = await session.call_tool("write", {
+            "type": "widget", "title": "No scope", "body": "Missing a required field.",
+        })
     assert result.isError is True
     assert result.content[0].text.startswith("ENGRAPHY_VALIDATION:")
 
@@ -227,11 +221,10 @@ async def test_rate_limit_trip_carries_retry_after_ms(pool, app_space, conn):
     )
     conn.commit()
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            first = await session.call_tool("scope_list", {})
-            assert first.isError is not True
-            second = await session.call_tool("scope_list", {})
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        first = await session.call_tool("scope_list", {})
+        assert first.isError is not True
+        second = await session.call_tool("scope_list", {})
     assert second.isError is True
     assert second.content[0].text.startswith("ENGRAPHY_RATE_LIMITED:")
     assert second.structuredContent["retry_after_ms"] > 0
@@ -246,14 +239,13 @@ async def test_pack_alias_appears_in_tools_list_and_audits_under_alias_identity(
     )
     conn.commit()
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            listed = await session.list_tools()
-            assert "log_error" in {t.name for t in listed.tools}
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        listed = await session.list_tools()
+        assert "log_error" in {t.name for t in listed.tools}
 
-            result = await session.call_tool("log_error", {
-                "scope": "scope1", "title": "Via alias", "body": "Preset overrides type.",
-            })
+        result = await session.call_tool("log_error", {
+            "scope": "scope1", "title": "Via alias", "body": "Preset overrides type.",
+        })
     assert result.isError is not True
     node_id = result.structuredContent["node"]["id"]
     cur.execute(
@@ -364,14 +356,13 @@ def _install_alias(conn, space_id):
 async def test_unknown_argument_is_refused_at_the_wire(pool, app_space):
     """The closed argument surface. Before enforcement this reached the
     dispatcher, which silently ignored the extra key."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "Extra key",
-                "body": "Has an argument the table does not list.", "flavour": "spicy",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "Extra key",
+            "body": "Has an argument the table does not list.", "flavour": "spicy",
+        })
     assert result.isError is True
     text = result.content[0].text
     assert text.startswith("ENGRAPHY_VALIDATION:")
@@ -381,14 +372,13 @@ async def test_unknown_argument_is_refused_at_the_wire(pool, app_space):
 async def test_explicit_null_is_refused_at_the_wire(pool, app_space):
     """07: absent and null are not the same thing. The message must say what to
     send instead, since a model that retries with null again learns nothing."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "Null attrs",
-                "body": "Sends null rather than omitting.", "attrs": None,
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "Null attrs",
+            "body": "Sends null rather than omitting.", "attrs": None,
+        })
     assert result.isError is True
     text = result.content[0].text
     assert text.startswith("ENGRAPHY_VALIDATION:")
@@ -396,13 +386,12 @@ async def test_explicit_null_is_refused_at_the_wire(pool, app_space):
 
 
 async def test_wrong_type_is_refused_at_the_wire(pool, app_space):
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("search", {
-                "scope": "scope1", "query": "anything", "limit": "25",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("search", {
+            "scope": "scope1", "query": "anything", "limit": "25",
+        })
     assert result.isError is True
     text = result.content[0].text
     assert text.startswith("ENGRAPHY_VALIDATION:")
@@ -413,13 +402,12 @@ async def test_malformed_uuid_is_validation_not_an_internal_cast_failure(pool, a
     """The concrete gap 07 named: uuid arguments used to go straight to Postgres,
     so a malformed one surfaced as a cast failure in the INTERNAL class rather
     than as a caller-fixable ENGRAPHY_VALIDATION."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("traverse", {
-                "start_id": "definitely-not-a-uuid", "direction": "out",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("traverse", {
+            "start_id": "definitely-not-a-uuid", "direction": "out",
+        })
     assert result.isError is True
     text = result.content[0].text
     assert text.startswith("ENGRAPHY_VALIDATION:")
@@ -430,13 +418,12 @@ async def test_a_well_typed_out_of_range_limit_is_clamped_not_refused(pool, app_
     """Clamps stay clamps (07, pinned). This is the regression that would be
     easiest to introduce by "tightening" validation: type errors reject, range
     excess clamps, and search still answers."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            result = await session.call_tool("search", {
-                "scope": "scope1", "query": "anything", "limit": 10000,
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        result = await session.call_tool("search", {
+            "scope": "scope1", "query": "anything", "limit": 10000,
+        })
     assert result.isError is not True
     assert len(result.structuredContent["results"]) <= 25
 
@@ -449,14 +436,13 @@ async def test_alias_call_gets_the_same_validation_as_its_target(pool, app_space
     space_id, raw_rw, _raw_ro = app_space
     _install_alias(conn, space_id)
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            bad_type = await session.call_tool("log_error", {
-                "scope": "scope1", "title": 7, "body": "Title is not a string.",
-            })
-            unknown = await session.call_tool("log_error", {
-                "scope": "scope1", "title": "T", "body": "B", "flavour": "spicy",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        bad_type = await session.call_tool("log_error", {
+            "scope": "scope1", "title": 7, "body": "Title is not a string.",
+        })
+        unknown = await session.call_tool("log_error", {
+            "scope": "scope1", "title": "T", "body": "B", "flavour": "spicy",
+        })
     assert bad_type.isError is True
     assert bad_type.content[0].text.startswith("ENGRAPHY_VALIDATION:")
     assert "title" in bad_type.content[0].text
@@ -469,14 +455,13 @@ async def test_validation_runs_after_the_role_gate(pool, app_space):
     a malformed write must be told ENGRAPHY_ROLE -- leaking "your argument types
     are wrong" to a caller who may not call the tool at all would answer a
     question it was not entitled to ask."""
-    space_id, _raw_rw, raw_ro = app_space
+    _space_id, _raw_rw, raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_ro) as session:
-            result = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": 7,
-                "body": "Malformed AND unauthorized.", "flavour": "spicy",
-            })
+    async with _running_app(app), _mcp_session(app, raw_ro) as session:
+        result = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": 7,
+            "body": "Malformed AND unauthorized.", "flavour": "spicy",
+        })
     assert result.isError is True
     assert result.content[0].text.startswith("ENGRAPHY_ROLE:")
 
@@ -492,12 +477,11 @@ async def test_validation_runs_after_the_rate_gate(pool, app_space, conn):
     )
     conn.commit()
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            first = await session.call_tool("scope_list", {})
-            assert first.isError is not True
-            # Malformed, and over the window: the rate limiter answers first.
-            second = await session.call_tool("scope_list", {"bogus": 1})
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        first = await session.call_tool("scope_list", {})
+        assert first.isError is not True
+        # Malformed, and over the window: the rate limiter answers first.
+        second = await session.call_tool("scope_list", {"bogus": 1})
     assert second.isError is True
     assert second.content[0].text.startswith("ENGRAPHY_RATE_LIMITED:")
 
@@ -505,11 +489,10 @@ async def test_validation_runs_after_the_rate_gate(pool, app_space, conn):
 async def test_published_schemas_carry_real_types_required_and_enums(pool, app_space):
     """tools/list now advertises the enforced surface rather than `{}` per
     property, because both are generated from wire_types.SPEC."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            listed = await session.list_tools()
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        listed = await session.list_tools()
     schemas = {t.name: t.inputSchema for t in listed.tools}
 
     search = schemas["search"]
@@ -529,9 +512,8 @@ async def test_an_alias_publishes_its_targets_generated_schema(pool, app_space, 
     space_id, raw_rw, _raw_ro = app_space
     _install_alias(conn, space_id)
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            listed = await session.list_tools()
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        listed = await session.list_tools()
     schemas = {t.name: t.inputSchema for t in listed.tools}
     assert schemas["log_error"] == schemas["write"]
 
@@ -554,17 +536,16 @@ async def test_admin_tools_validate_before_their_space_admin_gate(pool, app_spac
     served, so nothing leaks. The readonly-token case is the one that mattered
     and it still holds, because that gate is a real pre-dispatch gate.
     """
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            # p1 is a plain member, so this token is readwrite but NOT space_admin.
-            malformed = await session.call_tool("admin_grant", {
-                "scope_id": "scope1", "principal": "p2", "level": "sideways",
-            })
-            well_formed = await session.call_tool("admin_grant", {
-                "scope_id": "scope1", "principal": "p2", "level": "read",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        # p1 is a plain member, so this token is readwrite but NOT space_admin.
+        malformed = await session.call_tool("admin_grant", {
+            "scope_id": "scope1", "principal": "p2", "level": "sideways",
+        })
+        well_formed = await session.call_tool("admin_grant", {
+            "scope_id": "scope1", "principal": "p2", "level": "read",
+        })
     assert malformed.isError is True
     assert malformed.content[0].text.startswith("ENGRAPHY_VALIDATION:")
     # ...and once the arguments are well-formed, the space-admin gate answers.
@@ -583,20 +564,19 @@ async def test_merged_envelope_instruction_reaches_the_caller_over_the_wire(pool
     """
     from engraphy.core.dedup import MERGED_INSTRUCTION
 
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            first = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "Priya's job",
-                "body": "Priya works as a paediatric nurse.",
-            })
-            assert first.structuredContent["outcome"] == "inserted"
-            # Byte-identical text: a guaranteed 1.0 self-hit, so this merges.
-            second = await session.call_tool("write", {
-                "scope": "scope1", "type": "widget", "title": "Priya's job",
-                "body": "Priya works as a paediatric nurse.",
-            })
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        first = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "Priya's job",
+            "body": "Priya works as a paediatric nurse.",
+        })
+        assert first.structuredContent["outcome"] == "inserted"
+        # Byte-identical text: a guaranteed 1.0 self-hit, so this merges.
+        second = await session.call_tool("write", {
+            "scope": "scope1", "type": "widget", "title": "Priya's job",
+            "body": "Priya works as a paediatric nurse.",
+        })
     assert second.isError is not True
     envelope = second.structuredContent
     assert envelope["outcome"] == "merged"
@@ -608,11 +588,10 @@ async def test_write_description_tells_callers_about_the_merge_repair(pool, app_
     """descriptions are not contract (no fixture pins them), but this one is the
     only place a caller learns the rule BEFORE it hits a merge -- the envelope
     only speaks after the fact."""
-    space_id, raw_rw, _raw_ro = app_space
+    _space_id, raw_rw, _raw_ro = app_space
     app = create_app(pool)
-    async with _running_app(app):
-        async with _mcp_session(app, raw_rw) as session:
-            listed = await session.list_tools()
+    async with _running_app(app), _mcp_session(app, raw_rw) as session:
+        listed = await session.list_tools()
     write_tool = next(t for t in listed.tools if t.name == "write")
     assert "supersede" in write_tool.description
     assert "contradicted or updated" in write_tool.description

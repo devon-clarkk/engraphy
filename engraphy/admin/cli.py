@@ -139,9 +139,9 @@ def _create_principal_with_personal_scope(cur, space_id: str, principal_id: str,
             space_id, f"personal-{principal_id}", f"{display_name}'s personal memory",
             # description (migration 0022): give the founding personal scope real
             # routing text so scope_guide is complete for a brand-new space.
-            f"{display_name}'s private memory: personal facts, preferences, people, and "
+            (f"{display_name}'s private memory: personal facts, preferences, people, and "
             "commitments about them. Write here for anything personal to this user rather "
-            "than a shared project or team scope.",
+            "than a shared project or team scope."),
             principal_id,
         ),
     )

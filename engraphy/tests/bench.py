@@ -23,6 +23,7 @@ response to a real miss is investigation, never silently loosening a number here
 """
 
 import asyncio
+import itertools
 import math
 import os
 import random
@@ -149,8 +150,11 @@ def _seed(conn) -> str:
              Jsonb({}), _vec_literal(_rand_unit(rng)), embedding.MODEL_ID, _PRINCIPAL),
         )
         ids.append(cur.fetchone()[0])
-    # A simple chain so traverse(depth 4) has something to walk.
-    for a, b in zip(ids, ids[1:6]):
+    # A simple chain so traverse(depth 4) has something to walk. The slice is
+    # load-bearing: this is deliberately a 5-edge chain over the first handful of
+    # nodes, NOT pairwise over all 10k (which would chain the entire corpus into
+    # one component and turn the traverse budget into a graph-size measurement).
+    for a, b in itertools.pairwise(ids[:6]):
         cur.execute("INSERT INTO edges (space_id, src_id, dst_id, type) VALUES "
                     "(%s, %s, %s, 'relates_to')", (_SPACE, a, b))
     conn.commit()
@@ -172,7 +176,7 @@ def _teardown(conn):
 
 
 def _pct(samples, p):
-    return sorted(samples)[min(len(samples) - 1, int(round(p / 100 * len(samples))) )]
+    return sorted(samples)[min(len(samples) - 1, round(p / 100 * len(samples)) )]
 
 
 async def _measure(pool, start_id) -> dict:

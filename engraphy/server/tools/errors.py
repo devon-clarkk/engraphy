@@ -92,4 +92,4 @@ def _strip_code(exc: Exception, code: str) -> str:
     rather than double it."""
     text = str(exc)
     prefix = f"ENGRAPHY_{code}: "
-    return text[len(prefix):] if text.startswith(prefix) else text
+    return text.removeprefix(prefix)

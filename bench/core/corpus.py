@@ -30,13 +30,13 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 __all__ = [
-    "Turn",
-    "Session",
+    "BenchmarkLoader",
+    "Corpus",
+    "CorpusError",
     "Haystack",
     "Question",
-    "Corpus",
-    "BenchmarkLoader",
-    "CorpusError",
+    "Session",
+    "Turn",
 ]
 
 
@@ -218,8 +218,8 @@ class Corpus:
         by_cat: dict[str, list[Question]] = {}
         for q in self.questions:
             by_cat.setdefault(q.category, []).append(q)
-        for cat in by_cat:
-            by_cat[cat].sort(key=lambda q: hashlib.sha256(f"{seed}:{q.question_id}".encode()).digest())
+        for cat_questions in by_cat.values():
+            cat_questions.sort(key=lambda q: hashlib.sha256(f"{seed}:{q.question_id}".encode()).digest())
 
         picked: list[Question] = []
         cats = sorted(by_cat)

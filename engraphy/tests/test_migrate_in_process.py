@@ -19,6 +19,7 @@ import pytest
 
 from conftest import DATABASE_URL
 from engraphy.admin import migrate
+import contextlib
 
 # ---------------------------------------------------------------------------
 # Pure unit tests: _up_section
@@ -100,10 +101,8 @@ def scratch_db():
     try:
         yield name
     finally:
-        try:
+        with contextlib.suppress(psycopg.Error):
             _drop_db(name)
-        except psycopg.Error:
-            pass
 
 
 def test_apply_migrations_applies_all_and_is_idempotent(scratch_db):
@@ -146,7 +145,7 @@ def _pg_dump_schema(url: str) -> list[str]:
     schema content)."""
     result = subprocess.run(
         ["pg_dump", "--schema-only", "--no-owner", "--no-privileges", url],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"pg_dump failed: {result.stderr.strip()}")
@@ -179,7 +178,7 @@ def test_in_process_schema_is_byte_identical_to_dbmate():
         dbmate_result = subprocess.run(
             ["dbmate", "--migrations-dir", str(migrate.DEFAULT_MIGRATIONS_DIR),
              "--no-dump-schema", "--url", _scratch_url(dbmate_name), "up"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=False,
         )
         assert dbmate_result.returncode == 0, f"dbmate up failed: {dbmate_result.stderr}"
 

@@ -29,8 +29,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "hypothesis>=6.100", "ruff>=0.4", "pytest-cov>=5",
-       "pytest-timeout>=2.3"]  # a deadlocking test must fail the run, not hang it (the dedup race test contends a real advisory lock)
+# Upper bounds on purpose. `ruff>=0.4` meant CI resolved whatever ruff was newest
+# that morning, and a release that widened the default rule set turned a green
+# `ruff check .` into 180 findings with no commit to blame. A linter is part of
+# the build, not a dependency to float: `==` here, plus an explicit
+# [tool.ruff.lint] select below, so a ruff upgrade is a reviewed change. The rest
+# carry major-version caps for the same reason.
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.23,<2", "hypothesis>=6.100,<7", "ruff==0.16.4",
+       "pytest-cov>=5,<7",
+       "pytest-timeout>=2.3,<3"]  # a deadlocking test must fail the run, not hang it (the dedup race test contends a real advisory lock)
 # The benchmark harness (design/09). Deliberately its own extra, not a runtime
 # dependency: the engine must not grow an LLM client, and `pip install engraphy`
 # must not drag one in. `bench/core/llm.py` imports anthropic lazily so that the
@@ -62,6 +69,68 @@ include = ["engraphy*", "packs*", "bench*"]
 
 [tool.ruff]
 line-length = 100
+
+# Ruff's DEFAULT rule set is not a stable contract: it expands between releases.
+# This repo rode the default and a newer ruff turned a green `ruff check .` into
+# 180 findings across 24 rules that nobody had opted into. Both halves of the fix
+# matter -- the version is pinned in [project.optional-dependencies].dev, and the
+# rules are enumerated here, so a ruff upgrade is a deliberate, reviewable change
+# rather than a surprise CI failure. Enumerate NARROWLY: bare "S" or "PL" would
+# pull in all of bandit / all of pylint (including the PLR complexity rules),
+# which is a much larger gate than what is actually being asked for.
+[tool.ruff.lint]
+select = [
+  "E4", "E7", "E9",  # pycodestyle errors (ruff's historical default, minus E5 line-length)
+  "F",               # pyflakes
+  "B",               # flake8-bugbear
+  "SIM",             # flake8-simplify
+  "UP",              # pyupgrade
+  "RUF",             # ruff-specific
+  "ISC",             # implicit string concat
+  "FURB",            # refurb
+  "PLC", "PLW",      # pylint convention + warning only (NOT PLR: complexity metrics)
+  "ASYNC",           # flake8-async
+  "BLE",             # blind except
+  "DTZ",             # naive datetimes
+  "S112",            # try-except-continue that swallows the exception silently
+]
+ignore = [
+  # Typographic characters in bench report output are deliberate: the tables
+  # print en dashes, minus signs and multiplication signs because that is what
+  # the rendered report should read like. Rewriting them to ASCII would change
+  # shipped output to satisfy a lint about homoglyph confusion that does not
+  # apply to prose.
+  "RUF001", "RUF002", "RUF003",
+  # `strict=` on zip() is a per-call-site decision about whether unequal lengths
+  # are a bug or expected truncation. That judgement belongs with whoever writes
+  # the call, not to a blanket sweep that would either add no-op `strict=False`
+  # everywhere or change behaviour at eight sites at once.
+  "B905",
+  # engraphy/core/embedding.py::_model and engraphy/server/db.py::_pool are
+  # intentional module-level lazy singletons -- the embedding model and the
+  # connection pool are process-wide by design and must not be rebuilt per call.
+  "PLW0603",
+  # Lazy/function-local imports are a deliberate architectural device here, not
+  # an oversight: bench/core/llm.py imports `anthropic` inside the function so
+  # the engine's dependency closure stays free of an LLM client (see the `bench`
+  # extra above), and several admin verbs defer heavy imports to keep CLI
+  # start-up cheap. 64 call sites implement that pattern on purpose.
+  "PLC0415",
+  # `raise ... from exc` is a genuine improvement, but it was never part of the
+  # rule set this repo was gated on, and adopting it is 25 edits to exception
+  # paths. Worth doing as its own reviewed commit, not smuggled into a CI fix.
+  "B904",
+  # ruff's own safe fix already collapsed every straightforward nested `with`.
+  # What it declined to touch is what remains: blocks where collapsing forces a
+  # >100-char line to be re-wrapped, and `pytest.raises(...)` wrapping a context
+  # manager, where the nesting is the thing under test. Re-indenting those by
+  # hand is churn with no behavioural content.
+  "SIM117",
+]
+# NOT selected, deliberately: "I" (isort). Enabling it rewrites the import block
+# of 33 files at once. That is pure ordering churn with no correctness content,
+# and it collides head-on with any in-flight branch that touches import lines.
+# Worth adopting on its own commit, when no large rename is in flight.
 
 [tool.ruff.lint.per-file-ignores]
 # Test modules import shared pytest fixtures from sibling test modules (e.g.

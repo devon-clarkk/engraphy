@@ -204,7 +204,7 @@ async def read_rate_limits(conn, space_id: str) -> tuple[int, int]:
     )
     limits = {"rate.read_per_min": DEFAULT_READ_PER_MIN, "rate.write_per_min": DEFAULT_WRITE_PER_MIN}
     for key, value in await cur.fetchall():
-        try:
+        try:  # noqa: SIM105 -- the fallback rationale rides the `pass` below
             limits[key] = int(value)
         except (TypeError, ValueError):
             pass  # a malformed config value falls back to the default, never 0/unbounded

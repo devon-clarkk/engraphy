@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-__all__ = ["StageTiming", "Meter", "TokenCounter", "percentile", "wilson_interval"]
+__all__ = ["Meter", "StageTiming", "TokenCounter", "percentile", "wilson_interval"]
 
 
 @runtime_checkable
@@ -88,7 +88,7 @@ def percentile(samples: list[float], p: float) -> float:
     if not samples:
         return 0.0
     ordered = sorted(samples)
-    k = max(0, min(len(ordered) - 1, int(round((p / 100.0) * len(ordered) + 0.5)) - 1))
+    k = max(0, min(len(ordered) - 1, round((p / 100.0) * len(ordered) + 0.5) - 1))
     return ordered[k]
 
 

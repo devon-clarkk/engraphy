@@ -40,8 +40,8 @@ async def test_list_tools_for_space_includes_pack_aliases(pool, write_space, con
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO config (space_id, key, value) VALUES (%s, 'pack.tool_aliases', %s::jsonb)",
-        (write_space, '{"log_error": {"binds": "write", "preset": {"type": "error"}, '
-                       '"description": "Record something that went wrong."}}'),
+        (write_space, ('{"log_error": {"binds": "write", "preset": {"type": "error"}, '
+                       '"description": "Record something that went wrong."}}')),
     )
     conn.commit()
     entries = await list_tools_for_space(pool, write_space)

@@ -51,7 +51,7 @@ from bench.core.corpus import (
     require,
 )
 
-__all__ = ["LongMemEvalLoader", "QUESTION_TYPES"]
+__all__ = ["QUESTION_TYPES", "LongMemEvalLoader"]
 
 # The six published categories, carried through verbatim as category strings.
 # Listed explicitly so an unrecognized type is a loud failure rather than a

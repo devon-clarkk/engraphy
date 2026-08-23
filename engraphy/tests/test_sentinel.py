@@ -240,7 +240,7 @@ def committed_sentinel_space(conn, request):
     yield space_id, node_id
     for table in ("audit_log", "dedup_log", "edges", "nodes", "config",
                   "scopes", "node_types", "principals"):
-        cur.execute(f"DELETE FROM {table} WHERE space_id = %s", (space_id,))  # noqa: S608
+        cur.execute(f"DELETE FROM {table} WHERE space_id = %s", (space_id,))
     cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
     conn.commit()
 
@@ -295,7 +295,7 @@ def sentinel_write_space(conn, request):
     for table in ("inbox", "pending_writes", "audit_log", "dedup_log", "edges",
                   "nodes", "config", "scope_grants", "scopes", "edge_rules",
                   "edge_types", "node_types", "principals"):
-        cur.execute(f"DELETE FROM {table} WHERE space_id = %s", (space_id,))  # noqa: S608
+        cur.execute(f"DELETE FROM {table} WHERE space_id = %s", (space_id,))
     cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
     conn.commit()
 
@@ -359,7 +359,7 @@ async def test_the_minted_sentinel_is_unsupersedable_through_the_tool_surface(
                         "personal-p1", "Replacement sentinel", "Decoy body.", {},
                         _unit_vector(), "pytest")
     # Any other type: refused by the pre-existing cross-type rule.
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         await supersede(pool, space_id, "p1", minted_id, "note", "personal-p1",
                         "Replacement note", "Decoy body.", {}, _unit_vector(), "pytest")
 

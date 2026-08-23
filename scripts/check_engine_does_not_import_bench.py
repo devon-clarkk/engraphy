@@ -37,11 +37,11 @@ def violations_in(path: pathlib.Path) -> list[tuple[int, str]]:
             for alias in node.names:
                 if _is_bench(alias.name):
                     found.append((node.lineno, f"import {alias.name}"))
-        elif isinstance(node, ast.ImportFrom):
-            # `from . import x` has module None; a relative import can never
-            # reach `bench` from inside `engraphy`, so only absolute ones matter.
-            if node.level == 0 and node.module and _is_bench(node.module):
-                found.append((node.lineno, f"from {node.module} import ..."))
+        # `from . import x` has module None; a relative import can never reach
+        # `bench` from inside `engraphy`, so only absolute ones matter.
+        elif (isinstance(node, ast.ImportFrom) and node.level == 0
+                and node.module and _is_bench(node.module)):
+            found.append((node.lineno, f"from {node.module} import ..."))
     return found
 
 

@@ -36,8 +36,14 @@ from dataclasses import dataclass
 from bench.core.corpus import Question
 from bench.core.llm import LLMError, load_prompt, prompt_hash
 
-__all__ = ["Verdict", "Judge", "JUDGE_PROMPT", "JUDGE_SCHEMA", "JUDGE_PASSES",
-           "self_consistency"]
+__all__ = [
+    "JUDGE_PASSES",
+    "JUDGE_PROMPT",
+    "JUDGE_SCHEMA",
+    "Judge",
+    "Verdict",
+    "self_consistency",
+]
 
 JUDGE_PROMPT = "judge.md"
 

@@ -78,9 +78,7 @@ def _readable(visibility: str, is_owner: bool, grant: str) -> bool:
         return True
     if is_owner:
         return True
-    if grant in ("read", "write"):
-        return True
-    return False
+    return grant in ("read", "write")
 
 
 def _writable(visibility: str, is_owner: bool, grant: str) -> bool:
@@ -88,9 +86,7 @@ def _writable(visibility: str, is_owner: bool, grant: str) -> bool:
         return True
     if is_owner:
         return True
-    if grant == "write":
-        return True
-    return False
+    return grant == "write"
 
 
 def _expect(operation: str, visibility: str, is_owner: bool, grant: str) -> bool:

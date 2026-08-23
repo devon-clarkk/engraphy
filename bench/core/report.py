@@ -31,7 +31,7 @@ from collections import defaultdict
 
 from bench.core.meter import percentile, wilson_interval
 
-__all__ = ["aggregate", "render_report", "load_rows", "render_failures"]
+__all__ = ["aggregate", "load_rows", "render_failures", "render_report"]
 
 # The figure the literature quotes for LoCoMo, and what it excludes. Printed
 # rather than assumed: a reader comparing against a published number needs to
@@ -45,8 +45,8 @@ def load_rows(path: pathlib.Path) -> list[dict]:
     rows: list[dict] = []
     if not path.exists():
         return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
         if line:
             rows.append(json.loads(line))
     return rows
@@ -483,8 +483,8 @@ def _ingest_losses(ing: list[dict]) -> str:
         return ""
 
     lost = sum(totals.values())
-    L = [f"**{lost} of {drafts} drafts ({lost / drafts:.1%}) were refused at write "
-         f"time.** By cause:", ""]
+    L = [(f"**{lost} of {drafts} drafts ({lost / drafts:.1%}) were refused at write "
+         f"time.** By cause:"), ""]
     L += ["| cause | n | what it means |", "|---|---:|---|"]
     for key, n in sorted(totals.items(), key=lambda kv: -kv[1]):
         base = key.split(":")[-1].split("(")[0]
@@ -672,9 +672,9 @@ def _extractor_cost_table(agg: dict, manifest: dict, arm_v: str, arm_l: str) -> 
          f"| drafts written | {v['drafts']} | {m['drafts']} |",
          f"| **active nodes stored** | {v['nodes_written']} | {m['nodes_written']} |",
          f"| edges available to traverse | {v['edges_attached']} | {m['edges_attached']} |",
-         f"| confirm-band round-trips | "
+         (f"| confirm-band round-trips | "
          f"{v['needs_confirmation']} ({v['needs_confirmation']/max(1,v['drafts']):.0%}) | "
-         f"{m['needs_confirmation']} ({m['needs_confirmation']/max(1,m['drafts']):.0%}) |",
+         f"{m['needs_confirmation']} ({m['needs_confirmation']/max(1,m['drafts']):.0%}) |"),
          f"| ingest wall-clock | {v['total_seconds']/60:.0f} min | {m['total_seconds']/60:.0f} min |",
          f"| retrieval payload bytes p50 | {vo['payload_bytes_p50']} | {mo['payload_bytes_p50']} |"]
     return "\n".join(L)

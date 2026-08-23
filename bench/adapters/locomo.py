@@ -50,7 +50,7 @@ from bench.core.corpus import (
     require,
 )
 
-__all__ = ["LoCoMoLoader", "CATEGORY_NAMES"]
+__all__ = ["CATEGORY_NAMES", "LoCoMoLoader"]
 
 # LoCoMo encodes categories as integers. This table is the published mapping;
 # it is written out explicitly (rather than inferred) so that an auditor can

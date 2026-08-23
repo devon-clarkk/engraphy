@@ -37,13 +37,13 @@ from bench.core.extract import EdgeDraft, ExtractResult, Extractor, NodeDraft, w
 from bench.core.space import RunSpace
 
 __all__ = [
+    "SOURCE_CLIENT",
+    "AlwaysDistinct",
     "ConfirmDecision",
     "ConfirmPolicy",
-    "AlwaysDistinct",
-    "LLMAdjudicate",
     "IngestStats",
+    "LLMAdjudicate",
     "ingest_haystack",
-    "SOURCE_CLIENT",
 ]
 
 SOURCE_CLIENT = "engraphy-bench"

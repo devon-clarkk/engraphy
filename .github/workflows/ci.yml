@@ -1,5 +1,13 @@
 name: ci
-on: [push, pull_request]
+# Scoped on purpose. `[push, pull_request]` ran the whole matrix twice for every
+# PR -- once for the branch push, once for the PR -- and burned a deploy-smoke
+# (~15-20 min, builds a torch image) on every push to every side branch. Pushes
+# now gate `main` and release tags; everything else is covered by pull_request.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -52,8 +60,16 @@ jobs:
       - name: guard — engine does not import the benchmark harness
         run: python scripts/check_engine_does_not_import_bench.py
       - run: pytest --cov=engraphy -q
-      # attr_spec.py alone requires 100% branch coverage (its plan §Test plan):
-      - run: pytest engraphy/tests/test_attr_spec_py.py --cov=engraphy.core.attr_spec --cov-branch --cov-fail-under=100
+      # attr_spec.py alone requires 100% branch coverage (its plan §Test plan).
+      # BOTH of the module's dedicated unit-test files are listed, because the
+      # module owns two public functions and they are tested in separate files:
+      # test_attr_spec_py.py covers validate_attrs (the dual-interpreter fixture
+      # cases), and test_attr_surface.py covers searchable_keys, which Phase C
+      # later added to the same module. Naming only the first measured the whole
+      # module against half its tests and reported 81%. Both are pure and need no
+      # Postgres, so this stays a real 100% floor rather than a loosened one.
+      - run: |
+          pytest engraphy/tests/test_attr_spec_py.py engraphy/tests/test_attr_surface.py             --cov=engraphy.core.attr_spec --cov-branch --cov-fail-under=100
       # E1 exit gate: perf budgets at 10k seeded nodes (design/02 §Performance).
       # Downloads the pinned embedding model on first run; roles/grants self-provisioned.
       - name: perf budgets (bench.py)
@@ -84,8 +100,13 @@ jobs:
       # The MCP client for the round trip. Deliberately NOT `pip install .` --
       # the client must reach the server over HTTP like any agent would, with no
       # engraphy code in the process.
+      # Must carry the SAME upper bound as the `mcp` dependency in pyproject.toml.
+      # Unpinned, this step resolved mcp 2.0.0, whose streamable_http_client yields
+      # a 2-tuple instead of the 1.x 3-tuple, and deploy_smoke_mcp.py died on
+      # "not enough values to unpack (expected 3, got 2)" -- a CI-only break, since
+      # the server image installs the pinned range from pyproject.
       - name: install MCP client deps
-        run: pip install "mcp>=1.9" httpx
+        run: pip install "mcp>=1.9,<2" "httpx>=0.27,<1"
 
       - name: write .env (checklist step 1)
         run: |

@@ -46,16 +46,16 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 __all__ = [
-    "ROLE_MODELS",
-    "LLMResponse",
-    "LLMClient",
-    "AnthropicClient",
-    "StubLLM",
-    "LLMError",
-    "load_prompt",
-    "prompt_hash",
     "DEFAULT_MODEL",
     "PROMPTS_DIR",
+    "ROLE_MODELS",
+    "AnthropicClient",
+    "LLMClient",
+    "LLMError",
+    "LLMResponse",
+    "StubLLM",
+    "load_prompt",
+    "prompt_hash",
 ]
 
 # design/09 §Neutrality: model ids are recorded in the run manifest. Opus 4.8 is
@@ -157,7 +157,7 @@ class AnthropicClient:
         max_retries: int = 4,
     ) -> None:
         try:
-            import anthropic  # noqa: PLC0415 -- lazy on purpose; see module docstring
+            import anthropic
         except ImportError as exc:  # pragma: no cover -- depends on the extra
             raise LLMError(
                 "the anthropic SDK is not installed. Install the harness extra: "
@@ -205,7 +205,7 @@ class AnthropicClient:
         started = time.perf_counter()
         try:
             resp = self._client.messages.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001 -- re-raised as LLMError with context
+        except Exception as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
         elapsed = time.perf_counter() - started
 
@@ -253,7 +253,7 @@ class AnthropicClient:
                 model=self.model,
                 messages=[{"role": "user", "content": text}],
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise LLMError(f"count_tokens failed: {type(exc).__name__}: {exc}") from exc
         self._token_cache[key] = resp.input_tokens
         return resp.input_tokens

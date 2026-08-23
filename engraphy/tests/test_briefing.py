@@ -49,7 +49,8 @@ def _rel(value):
     if isinstance(value, str) and value.startswith("REL:"):
         sign = 1 if value[4] == "+" else -1
         return (
-            datetime.date.today() + sign * datetime.timedelta(days=int(value[5:-1]))
+            datetime.date.today()  # noqa: DTZ011 -- mirrors briefing._resolve_relative_date
+            + sign * datetime.timedelta(days=int(value[5:-1]))
         ).isoformat()
     return value
 
@@ -141,9 +142,8 @@ def _seed_space(conn, space_id, seed, *, pack=None, sections=None):
             )
     conn.commit()
 
-    label_to_id, i = {}, 0
-    for n in nodes:
-        i += 1
+    label_to_id = {}
+    for i, n in enumerate(nodes, start=1):
         nid = _label_id(i)
         label_to_id[n["label"]] = nid
         attrs = {k: _rel(v) for k, v in (n.get("attrs") or {}).items()}
@@ -290,7 +290,7 @@ async def test_briefing_merged_node_never_carries_attrs_addenda(pool, conn):
         ],
     }
     config = {"sections": [{"name": "standing_decisions", "type": "decision", "status": "active"}]}
-    label_to_id, by_id = _seed_space(conn, space_id, case_seed, sections=config["sections"])
+    label_to_id, _by_id = _seed_space(conn, space_id, case_seed, sections=config["sections"])
     cur = conn.cursor()
     cur.execute(
         "UPDATE nodes SET attrs = %s WHERE id = %s",
@@ -316,7 +316,7 @@ async def test_example_briefing_byte_compare(pool, conn):
     pack = packs_mod.load_pack_file(PACKS_DIR / "example-pack.yaml")
     assert packs_mod.validate(pack) == [], "the example pack must be valid"
 
-    label_to_id, by_id = _seed_space(conn, space_id, EXAMPLE_PACK["seed"], pack=pack)
+    _label_to_id, by_id = _seed_space(conn, space_id, EXAMPLE_PACK["seed"], pack=pack)
     try:
         result = await briefing(
             pool, space_id, "p1", EXAMPLE_PACK["scope"], EXAMPLE_PACK.get("hint"),

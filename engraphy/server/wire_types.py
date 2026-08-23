@@ -95,7 +95,7 @@ class Arg:
     validation beat the SDK path).
     """
 
-    __slots__ = ("json_type", "required", "enum", "uuid")
+    __slots__ = ("enum", "json_type", "required", "uuid")
 
     def __init__(self, json_type, required=False, enum=None, uuid=False):
         self.json_type = json_type

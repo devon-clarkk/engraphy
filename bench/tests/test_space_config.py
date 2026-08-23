@@ -87,6 +87,6 @@ async def test_default_thigh_merges_096(pool, cfg_space):
     same 0.96 pair into the merge band -- so it is the config, not the harness,
     that changed the band. (Phase B: a distinct-content merge-band write lands
     `merged_linked`; the band is the point here, not the novelty split.)"""
-    space, conn = cfg_space
+    space, _conn = cfg_space
     assert (await _w(pool, space, "anchor", _V0))["outcome"] == "inserted"
     assert (await _w(pool, space, "near-096", _V096))["outcome"] in ("merged", "merged_linked")

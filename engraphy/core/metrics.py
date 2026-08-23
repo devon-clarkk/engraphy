@@ -184,7 +184,7 @@ async def bump_safe(pool, space_id: str, principal: str, counts: dict) -> None:
     try:
         async with transaction(pool, space_id, principal) as conn:
             await bump_many(conn.cursor(), space_id, principal, counts)
-    except Exception:  # noqa: BLE001 -- observability side-effect, never fatal
+    except Exception:
         logger.warning(
             "metrics bump failed (non-fatal) for space=%s principal=%s metrics=%s",
             space_id, principal, sorted(counts), exc_info=True,

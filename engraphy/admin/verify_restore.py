@@ -34,18 +34,18 @@ _SPACE_ID_PROBE = (
 # probe against (an edge case for a near-empty dump).
 _NODE_BODY_LENGTH_PROBE = (
     "nodes.body length CHECK",
-    "INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, embedding, "
+    ("INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, embedding, "
     "embedding_model, source_client, author_principal) "
     "VALUES (%s, %s, %s, 'valid probe title', '', '{}', "
-    "array_fill(0, ARRAY[384])::vector, 'test', 'probe', 'probe')",
+    "array_fill(0, ARRAY[384])::vector, 'test', 'probe', 'probe')"),
     psycopg.errors.CheckViolation,
 )
 _NODE_STATUS_CANONICAL_PROBE = (
     "nodes.status/canonical_id CHECK",
-    "INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, status, canonical_id, "
+    ("INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, status, canonical_id, "
     "embedding, embedding_model, source_client, author_principal) "
     "VALUES (%s, %s, %s, 'valid probe title', 'valid probe body', "
-    "'{}', 'merged', NULL, array_fill(0, ARRAY[384])::vector, 'test', 'probe', 'probe')",
+    "'{}', 'merged', NULL, array_fill(0, ARRAY[384])::vector, 'test', 'probe', 'probe')"),
     psycopg.errors.CheckViolation,
 )
 
@@ -73,13 +73,13 @@ def _scratch_database(admin_conninfo: str, name_prefix: str = "engram_verify_res
     scratch_name = f"{name_prefix}_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(admin_conninfo, autocommit=True) as conn:
         cur = conn.cursor()
-        cur.execute(f'CREATE DATABASE "{scratch_name}"')  # noqa: S608 -- generated name, not user input
+        cur.execute(f'CREATE DATABASE "{scratch_name}"')
     try:
         yield _admin_conninfo(admin_conninfo, scratch_name), scratch_name
     finally:
         with psycopg.connect(admin_conninfo, autocommit=True) as conn:
             cur = conn.cursor()
-            cur.execute(f'DROP DATABASE IF EXISTS "{scratch_name}" WITH (FORCE)')  # noqa: S608
+            cur.execute(f'DROP DATABASE IF EXISTS "{scratch_name}" WITH (FORCE)')
 
 
 def _restore(dump_path: pathlib.Path, scratch_conninfo: str) -> None:
@@ -87,7 +87,7 @@ def _restore(dump_path: pathlib.Path, scratch_conninfo: str) -> None:
         raise VerifyRestoreError("pg_restore not found on PATH -- install the Postgres client tools")
     result = subprocess.run(
         ["pg_restore", "--no-owner", "--no-privileges", "--dbname", scratch_conninfo, str(dump_path)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     # pg_restore exits nonzero on ANY warning (e.g. "role does not exist" for
     # ownership it can't reassign, harmless with --no-owner) as well as real

@@ -62,7 +62,7 @@ def test_run_executes_steps_in_order_and_returns_dump_path(monkeypatch):
     assert [c[0] for c in calls] == ["pre_dump", "apply_migrations", "restart", "smoke_test"]
     assert result["dump_path"] == "/fake/dump.pgdump" or result["dump_path"] == str(pathlib.Path("/fake/dump.pgdump"))
     assert "pre-dump written: " in result["log"][0]
-    assert "migrate up: applied 0016, 0017" == result["log"][1]
+    assert result["log"][1] == "migrate up: applied 0016, 0017"
     assert "ran restart command" in result["log"][2]
     assert "schema_migrations at '0017'" in result["log"][3]
 
@@ -83,7 +83,7 @@ def test_run_with_use_dbmate_shells_out_to_dbmate(monkeypatch):
                          dump_dir=pathlib.Path("/d"), use_dbmate=True)
 
     assert calls == ["dbmate_up"]  # in-process applier NOT called
-    assert "dbmate up: Applying: 0020_x.sql" == result["log"][1]
+    assert result["log"][1] == "dbmate up: Applying: 0020_x.sql"
 
 
 def test_run_stops_at_first_failing_step(monkeypatch):
