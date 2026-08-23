@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/devon-clarkk/engraphy/tree/main/docs
+    about: Architecture, setup, packs, the tool reference, deployment, and a tutorial.
+  - name: Report a security problem
+    url: https://github.com/devon-clarkk/engraphy/security/advisories/new
+    about: Please report vulnerabilities privately, never as a public issue.

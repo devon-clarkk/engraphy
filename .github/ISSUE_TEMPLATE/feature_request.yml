@@ -1,0 +1,33 @@
+name: Feature or change proposal
+description: Propose new behaviour, or a change to behaviour that works as designed.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do that Engraphy makes hard today? Describe the
+        situation rather than the solution, so the design stays open.
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: The change you would make, if you have one in mind.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >
+        Existing tools, pack definitions, or scope arrangements you attempted,
+        and where they fell short.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: >
+            I have read the [tool reference](https://github.com/devon-clarkk/engraphy/blob/main/docs/04-tools-reference.md)
+            and the [design set](https://github.com/devon-clarkk/engraphy/blob/main/design/README.md).
+          required: true

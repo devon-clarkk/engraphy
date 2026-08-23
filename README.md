@@ -2,6 +2,14 @@
 
 **Associative memory for AI agents, modelled on the human mind.**
 
+[![CI](https://github.com/devon-clarkk/engraphy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/devon-clarkk/engraphy/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/devon-clarkk/engraphy?label=release)](https://github.com/devon-clarkk/engraphy/releases/latest)
+[![License: BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![Postgres 16 + pgvector](https://img.shields.io/badge/postgres-16%20%2B%20pgvector-336791)](https://github.com/pgvector/pgvector)
+
+[Quickstart](#quickstart) · [Documentation](docs/) · [Tool reference](docs/04-tools-reference.md) · [Design set](design/README.md) · [Contributing](CONTRIBUTING.md)
+
 The name comes from *engraphy*, an old term from memory science for the process
 of laying down an *engram*, the trace a memory leaves in the brain. Engraphy
 does that for agents: it checks each new memory against what it already knows
@@ -186,6 +194,14 @@ the operator CLI are implemented and covered by a live-Postgres test suite plus 
 CI job that exercises the shipped deploy artifacts end to end. A benchmark harness
 (`bench/`, design/09) runs the engine against public long-term-memory datasets;
 it is a tool for measuring changes, not a source of marketing numbers.
+
+## Contributing
+
+Issues and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers
+getting a development database up, running the suite, what the three CI jobs
+check, and the house style. Security problems go through
+[a private advisory](https://github.com/devon-clarkk/engraphy/security/advisories/new)
+rather than a public issue.
 
 ## License
 

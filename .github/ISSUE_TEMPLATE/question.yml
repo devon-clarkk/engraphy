@@ -1,0 +1,24 @@
+name: Question
+description: Ask about setup, packs, scopes, or how a tool behaves.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        The [documentation](https://github.com/devon-clarkk/engraphy/tree/main/docs)
+        covers setup, packs, the tool reference, deployment, and an end-to-end
+        tutorial. If it did not answer this, the question is a fair one and the
+        docs probably need it.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do, and where you got stuck.
+    validations: {required: true}
+  - type: textarea
+    id: context
+    attributes:
+      label: What you have tried
+      description: >
+        Commands, tool calls, or pack definitions you have already attempted,
+        and what happened.

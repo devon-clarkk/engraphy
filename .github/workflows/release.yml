@@ -1,0 +1,102 @@
+name: release
+
+# Cutting a release is `git tag vX.Y.Z && git push --tags`. Everything below
+# follows from the tag: the distributions are built and attached to a GitHub
+# release, and the two container targets are published to GHCR.
+#
+# ci.yml also triggers on `v*` tags, so the full test matrix runs against the
+# tagged commit alongside this workflow.
+on:
+  push:
+    tags: ['v*']
+
+# Read-only by default; each job widens only to what it needs.
+permissions:
+  contents: read
+
+jobs:
+  # Build the sdist + wheel, prove the tag and the packaged version agree, and
+  # publish the GitHub release with the distributions attached.
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release and upload its assets
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+
+      # A tag that disagrees with engraphy.__version__ ships a wheel whose
+      # version is not the one being announced. Catch it here, before the
+      # release exists, rather than leaving a mislabelled artifact published.
+      - name: tag matches the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("engraphy/__init__.py").read_text()).group(1))')"
+          echo "tag=$tag packaged=$pkg"
+          test "$tag" = "$pkg" || {
+            echo "tag $GITHUB_REF_NAME does not match engraphy.__version__ ($pkg)"; exit 1; }
+
+      - name: build sdist + wheel
+        run: |
+          pip install "build==1.3.0" "twine==6.2.0"
+          python -m build
+          twine check dist/*
+
+      # --generate-notes writes the commit log since the previous tag. A release
+      # already created for this tag is reused, so a re-run repairs a partial
+      # publish instead of failing on it.
+      - name: publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" \
+                 --title "Engraphy ${GITHUB_REF_NAME}" --generate-notes --verify-tag
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+  # Both Dockerfile targets, published to GHCR under the repository's namespace.
+  # Authentication is the workflow's own GITHUB_TOKEN plus `packages: write`; no
+  # personal access token is configured or needed for a push to this repo's own
+  # package namespace.
+  image:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      packages: write        # push to ghcr.io/<owner>/<repo>
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [server, admin]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Tags: the exact version, the X.Y line, and `latest` for the server
+      # target so `docker pull ghcr.io/<owner>/engraphy` resolves to the server.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=${{ matrix.target == 'server' }}
+            suffix=${{ matrix.target == 'admin' && '-admin' || '' }},onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

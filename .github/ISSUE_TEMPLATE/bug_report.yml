@@ -1,0 +1,57 @@
+name: Bug report
+description: Something behaves differently from how it is documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not file security problems here: use the
+        [security advisory form](https://github.com/devon-clarkk/engraphy/security/advisories/new)
+        instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations: {required: true}
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The smallest sequence that shows it. Tool calls with their arguments, or
+        the `engraphy-admin` command you ran, are ideal.
+      placeholder: |
+        1. engraphy-admin space create --id demo ...
+        2. call `write` with {...}
+        3. call `search` with {...}
+    validations: {required: true}
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: >
+        Server logs, the tool response envelope, or the traceback. This is
+        rendered as code, so no backticks are needed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Engraphy version
+      description: The release tag, or the commit you are running.
+      placeholder: v0.1.0
+    validations: {required: true}
+  - type: dropdown
+    id: how-run
+    attributes:
+      label: How are you running it
+      options:
+        - Docker Compose (the cloud profile)
+        - Installed from source, own Postgres
+        - Other
+    validations: {required: true}
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Postgres version
+      placeholder: Ubuntu 24.04, Postgres 16.4 with pgvector 0.7
