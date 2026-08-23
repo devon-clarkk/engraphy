@@ -120,9 +120,11 @@ echo '============================================================'
 echo "$TOKEN"
 echo '============================================================'
 echo ''
-echo 'Client settings (VS Code: Ctrl+, then search "engraphy"):'
-echo "  engraphy.serverUrl  http://127.0.0.1:${PORT}/mcp/     (keep the trailing slash)"
-echo '  engraphy.token      the token above'
-echo "  engraphy.space      ${SPACE}"
+echo 'In VS Code, run the command "Engraphy: Connect to a server" and paste:'
+echo "  server URL   http://127.0.0.1:${PORT}/mcp/     (keep the trailing slash)"
+echo '  token        the token above'
+echo ''
+echo 'The extension stores the token in your OS keychain, not in settings.json.'
+echo "Optional label (Ctrl+, then search \"engraphy\"):  engraphy.space  ${SPACE}"
 echo ''
 echo "Your personal scope in this space is: personal-${PRINCIPAL}"

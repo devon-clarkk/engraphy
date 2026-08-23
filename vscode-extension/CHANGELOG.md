@@ -1,5 +1,36 @@
 # Change Log
 
+## 0.5.2
+
+Setup and onboarding content only. No code, dependency or behaviour change from
+0.5.1, so this build supersedes it for upload.
+
+The Marketplace page had no getting-started path at all. Its first actionable
+heading was "Connecting", which assumed you already had a server running. A
+**Get started** section now sits above Features with the two-command local
+bring-up and the connect steps, and it names the repo rather than assuming you
+can find it.
+
+The Docker walkthrough step had drifted from how the stack actually starts. It
+told you to bring up Postgres, run `engraphy-admin migrate`, and apply
+`provision-app-role.sql` by hand. An `init` sidecar has done all three since the
+one-command bring-up landed, and the server is gated on that sidecar exiting
+cleanly, so the manual sequence was both redundant and a path the compose file no
+longer models. One of its commands could not have worked as printed: it referred
+to `$ENGRAPHY_DATABASE_URL`, which is set inside the admin container but expands
+to nothing in the shell you paste into. The step is now `git clone`, then `up`
+and `provision` (with the PowerShell variants named), with the by-hand commands
+kept below as a corrected alternative.
+
+The walkthrough also told you to get "a checkout of the Engraphy repo" without
+ever saying where from. Both it and the welcome step now link
+<https://github.com/devon-clarkk/engraphy>.
+
+Separately, the repo's `provision` scripts printed client settings that told you
+to paste your token into `engraphy.token`, the setting 0.5.0 deprecated. They now
+point at the **Engraphy: Connect to a server** command and note that the token
+goes to the OS keychain.
+
 ## 0.5.1
 
 Marketplace listing copy only. No code, dependency or behaviour change from

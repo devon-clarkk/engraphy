@@ -17,6 +17,63 @@ embedding-native deduplication, hybrid retrieval, real graph traversal,
 multi-principal spaces, and schema enforcement in the DB. It speaks MCP, and all
 data stays on your own machine.
 
+## Get started
+
+Engraphy is self-hosted, so the extension needs a server to talk to. There is no
+hosted option yet. Bringing one up locally takes two commands.
+
+**Repo: <https://github.com/devon-clarkk/engraphy>**
+
+### 1. Run a server
+
+Requirements: **Docker** (with Compose). Nothing else.
+
+```bash
+git clone https://github.com/devon-clarkk/engraphy.git
+cd engraphy
+
+./up.sh          # writes a .env with random passwords, starts the stack,
+                 # then blocks until /healthz returns 200
+./provision.sh   # creates a space, applies the starter pack, mints a token,
+                 # and prints the URL and token to paste in
+```
+
+On Windows use `.\up.ps1` and `.\provision.ps1`. Both scripts are safe to
+re-run: an existing `.env` is never overwritten, and an existing space or an
+already-applied pack is skipped rather than treated as an error.
+
+`docker compose up -d` on its own is the equivalent one-liner. It is the whole
+bring-up: an `init` sidecar runs the migrations and provisions the database role
+after Postgres is healthy and before the server starts, so there is no separate
+migrate step. You would then run the `engraphy-admin space create` /
+`pack apply` / `token create` trio yourself; `provision` just does that and waits
+for you.
+
+First boot downloads the embedding model (~523 MB) into a volume before the
+server answers anything. That happens once, and `up` waits it out.
+
+### 2. Connect the extension
+
+Run **Engraphy: Connect to a server** from the Command Palette and paste:
+
+| | |
+| --- | --- |
+| Server URL | `http://127.0.0.1:8000/mcp/` (**keep the trailing slash**) |
+| Token | the one `provision` printed |
+
+The token is shown **once** and the server keeps only its SHA-256, so copy it
+when it appears. Lost it? Re-run `provision` for a fresh one. The extension
+stores it in your OS keychain, never in `settings.json`.
+
+The extension then runs an authenticated read to confirm the pair works, so a
+wrong token is reported as a wrong token rather than as a missing server. The
+status bar turns green only after that read succeeds.
+
+There is also a **Set up Engraphy** walkthrough inside the editor (Command
+Palette: **Engraphy: Set up server / Getting Started**) covering the same ground
+step by step, plus a manual-commands variant and what to check when the server
+does not come up.
+
 ## Features
 
 ### MCP provider
@@ -60,12 +117,9 @@ elsewhere.
 `pending_list` deliberately does **not** filter expired rows, so that staleness
 stays visible in the client. It requires an Engraphy server at 0.1.0 or newer.
 
-## Connecting
+## Connection reference
 
-Run **Engraphy: Connect to a server** from the command palette. It asks for the
-MCP URL and your token, saves them, and then validates the connection with an
-authenticated read, so a wrong token is reported as a wrong token rather than as
-a missing server.
+[Get started](#get-started) has the steps. This section is the detail behind them.
 
 ### Where your token is kept
 
@@ -95,7 +149,9 @@ read succeeds. `/healthz` is unauthenticated on an Engraphy server, so it
 answers 200 for a server you hold no valid token for, and reporting health off
 it alone would show a healthy bar over panels that cannot read anything.
 
-## Build
+## Building the extension
+
+For contributors. Users need none of this.
 
 ```bash
 npm install
@@ -111,9 +167,9 @@ The extension is **bundled** with esbuild (the MCP SDK is inlined), so no
 ## Load / test locally
 
 Press <kbd>F5</kbd> for an Extension Development Host, or **Extensions: Install
-from VSIX…** on the built `.vsix`. Point `engraphy.serverUrl` / `engraphy.token`
-at a running Engraphy server (or use **Engraphy: Start local server**), open the
-Engraphy activity-bar view, and Refresh.
+from VSIX…** on the built `.vsix`. Connect it with **Engraphy: Connect to a
+server** (or bring up a server first with **Engraphy: Start local server**), open
+the Engraphy activity-bar view, and Refresh.
 
 ## License
 

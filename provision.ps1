@@ -147,9 +147,11 @@ Write-Host '============================================================'
 Write-Host $token
 Write-Host '============================================================'
 Write-Host ''
-Write-Host 'Client settings (VS Code: Ctrl+, then search "engraphy"):'
-Write-Host "  engraphy.serverUrl  http://127.0.0.1:$port/mcp/     (keep the trailing slash)"
-Write-Host '  engraphy.token      the token above'
-Write-Host "  engraphy.space      $Space"
+Write-Host 'In VS Code, run the command "Engraphy: Connect to a server" and paste:'
+Write-Host "  server URL   http://127.0.0.1:$port/mcp/     (keep the trailing slash)"
+Write-Host '  token        the token above'
+Write-Host ''
+Write-Host 'The extension stores the token in your OS keychain, not in settings.json.'
+Write-Host "Optional label (Ctrl+, then search ""engraphy""):  engraphy.space  $Space"
 Write-Host ''
 Write-Host "Your personal scope in this space is: personal-$Principal"
