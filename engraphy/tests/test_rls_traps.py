@@ -10,7 +10,7 @@ covered by test_visibility_matrix.py or test_db_guc_protocol.py:
   different code path) -- the structural half of "existence is information";
   full not-found translation is a tool-layer (E2) concern.
 - Definer-guard (trap 2): dropping SECURITY DEFINER from
-  engram_readable_scopes() must break the suite (RLS-on-scopes recursion),
+  engraphy_readable_scopes() must break the suite (RLS-on-scopes recursion),
   proving the test suite would actually catch a well-meaning "hardening" revert.
 """
 
@@ -109,7 +109,7 @@ def test_definer_guard_regression(conn):
     cur.execute("SAVEPOINT definer_guard")
     try:
         cur.execute(
-            "ALTER FUNCTION engram_readable_scopes() SECURITY INVOKER"
+            "ALTER FUNCTION engraphy_readable_scopes() SECURITY INVOKER"
         )
         ids = bootstrap_space(conn, space_id="definer-probe")
         cur.execute(f"SET LOCAL ROLE {APP_ROLE}")

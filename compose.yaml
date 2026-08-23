@@ -14,12 +14,12 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: engram
+      POSTGRES_DB: engraphy
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d engram"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d engraphy"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,7 +48,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engraphy?sslmode=disable
       ENGRAPHY_APP_ROLE_PASSWORD: ${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}
     entrypoint: ["sh", "/app/deploy/compose-init.sh"]
     volumes:
@@ -70,7 +70,7 @@ services:
         # crash-loops. `service_completed_successfully` gates on init's clean exit.
         condition: service_completed_successfully
     environment:
-      ENGRAPHY_DATABASE_URL: postgres://engram_app:${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_DATABASE_URL: postgres://engraphy_app:${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}@postgres:5432/engraphy?sslmode=disable
       ENGRAPHY_BIND_HOST: 0.0.0.0
       ENGRAPHY_BIND_PORT: 8000
       # Left unset (defaults false): the transport-refusal check
@@ -127,7 +127,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engram?sslmode=disable
+      ENGRAPHY_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/engraphy?sslmode=disable
       ENGRAPHY_APP_ROLE_PASSWORD: ${ENGRAPHY_APP_ROLE_PASSWORD:?set ENGRAPHY_APP_ROLE_PASSWORD in .env}
     volumes:
       # Pre-migrate dumps and verify-restore artifacts outlive the throwaway

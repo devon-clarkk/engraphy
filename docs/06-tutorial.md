@@ -9,7 +9,7 @@ Prerequisites: a running server and the app installed, per [Setup](02-setup.md).
 We assume the superuser URL is exported:
 
 ```bash
-export ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable"
+export ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable"
 ```
 
 ## 1. Provision the space, pack, and a token

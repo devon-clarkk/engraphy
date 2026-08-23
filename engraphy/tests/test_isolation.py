@@ -9,7 +9,7 @@ space_admin) space-A token and has somehow learned space-B's ids (node ids,
 scope ids, pending/inbox ids). No tool takes a space argument, so the only lever
 is smuggling a B id into a tool call. Every such attempt must resolve as
 not-found / unwritable / empty -- never touch or reveal a B row. The RLS GUC
-(engram.space_id), pinned from the token by db.transaction(), is the backstop
+(engraphy.space_id), pinned from the token by db.transaction(), is the backstop
 behind every tool.
 
 Structure: one two-space fixture, then a breach test per tool, direct RLS

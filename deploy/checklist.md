@@ -92,7 +92,7 @@ launchd (macOS) unit, not Docker — see `deploy/units/`.
    brand-new DB the pre-dump is nearly empty and the restart step has
    nothing to restart yet, which is fine:
    ```
-   ENGRAPHY_DATABASE_URL=postgres://postgres:...@127.0.0.1/engram \
+   ENGRAPHY_DATABASE_URL=postgres://postgres:...@127.0.0.1/engraphy \
      engraphy-admin migrate --dump-dir /var/backups/engraphy
    ```
    (Superuser/owner connection for this step — the app role from step 3

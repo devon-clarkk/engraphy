@@ -79,7 +79,7 @@ def _conninfo(database_url: str | None) -> str:
 
 
 def _mint_sentinel(cur, space_id: str, principal_id: str) -> str:
-    """Register the reserved `engram_sentinel` node type, mint the space's
+    """Register the reserved `engraphy_sentinel` node type, mint the space's
     sentinel node into the founding principal's personal scope, and record its
     id in config under `sentinel.node_id` (design/04 s.Backup contract).
 
@@ -94,7 +94,7 @@ def _mint_sentinel(cur, space_id: str, principal_id: str) -> str:
     model (see engraphy/core/sentinel.py). `attrs` is left `{}`, which the validate
     trigger accepts against SENTINEL_ATTR_SPEC: that spec declares no keys and
     omits `closed`, and BOTH interpreters default `closed` to **true**
-    (`engram_validate_attrs`'s COALESCE, `attr_spec.validate_attrs`'s
+    (`engraphy_validate_attrs`'s COALESCE, `attr_spec.validate_attrs`'s
     `.get("closed", True)`) -- so the sentinel's spec is a closed one with an
     empty key set, and empty attrs satisfy it. That is the stricter reading and
     the desirable one: nothing can ever add an attr to this node. Returns the

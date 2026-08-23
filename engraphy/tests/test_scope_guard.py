@@ -58,7 +58,7 @@ def test_a_named_scope_is_never_refused(no_scope_all):
     assert refuse_scope_all("work", no_scope_all, tool="briefing") is None
 
 
-def test_the_refusal_reaches_the_wire_as_engram_scope():
+def test_the_refusal_reaches_the_wire_as_engraphy_scope():
     """tools/errors.py's mapping, which is what makes this a tool error rather
     than the ENGRAPHY_INTERNAL every unrecognised exception collapses into. The
     prefix must appear exactly once: ToolError re-adds it, and the typed
@@ -101,7 +101,7 @@ class _FakeCursor:
 
 async def test_the_resolver_refuses_before_it_queries_anything():
     """The guard is the resolver's first statement, so a refused call never
-    reaches engram_readable_scopes(). Cheapness is the small reason; the real one
+    reaches engraphy_readable_scopes(). Cheapness is the small reason; the real one
     is that the refusal must not depend on any visibility state being loadable."""
     cur = _FakeCursor(readable=("work", "personal", "health"))
     with pytest.raises(ScopeForbiddenError):

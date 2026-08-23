@@ -133,7 +133,7 @@ Two edges worth including in almost every pack:
 ### Reserved names
 
 Two names are the engine's and a pack may not declare them (validation rejects
-it): the node type **`engram_sentinel`** and the attribute key **`addenda`**
+it): the node type **`engraphy_sentinel`** and the attribute key **`addenda`**
 (engine-managed merge history). See
 [../skills/contracts-and-reserved-names.md](../skills/contracts-and-reserved-names.md).
 
@@ -188,7 +188,7 @@ briefing/attr notes an agent needs, and nothing the generic skills already cover
       is in the body. `closed: true` unless you have a reason.
 - [ ] Every edge you use has an `edge_rules` entry; `relates_to` and `supersedes`
       are defined.
-- [ ] No reserved names (`engram_sentinel`, `addenda`).
+- [ ] No reserved names (`engraphy_sentinel`, `addenda`).
 - [ ] Briefing sections reference only defined types/edges; semantic sections are
       worth a context-window slot.
 - [ ] `pack validate` returns clean.

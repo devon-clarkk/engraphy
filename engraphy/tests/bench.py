@@ -48,11 +48,11 @@ if sys.platform == "win32":
 
 DATABASE_URL = os.environ.get(
     "ENGRAPHY_TEST_DATABASE_URL",
-    "postgres://postgres:engram@localhost:5432/engram_dev?sslmode=disable",
+    "postgres://postgres:engraphy@localhost:5432/engraphy_dev?sslmode=disable",
 )
-APP_ROLE = "engram_app"
-APP_ROLE_PASSWORD = "engram_app_test_only"
-APP_DATABASE_URL = DATABASE_URL.replace("postgres:engram@", f"{APP_ROLE}:{APP_ROLE_PASSWORD}@")
+APP_ROLE = "engraphy_app"
+APP_ROLE_PASSWORD = "engraphy_app_test_only"
+APP_DATABASE_URL = DATABASE_URL.replace("postgres:engraphy@", f"{APP_ROLE}:{APP_ROLE_PASSWORD}@")
 
 NODES = int(os.environ.get("ENGRAPHY_BENCH_NODES", "10000"))
 ITERS = int(os.environ.get("ENGRAPHY_BENCH_ITERS", "50"))
@@ -117,9 +117,9 @@ def _ensure_role(conn) -> None:
     cur.execute(f"GRANT DELETE ON pending_writes TO {APP_ROLE}")
     cur.execute(f"GRANT SELECT ON {ro} TO {APP_ROLE}")
     cur.execute(f"GRANT SELECT, INSERT, UPDATE ON {ungated} TO {APP_ROLE}")
-    cur.execute(f"GRANT EXECUTE ON FUNCTION engram_readable_scopes() TO {APP_ROLE}")
-    cur.execute(f"GRANT EXECUTE ON FUNCTION engram_writable_scopes() TO {APP_ROLE}")
-    cur.execute(f"GRANT EXECUTE ON FUNCTION engram_validate_attrs(jsonb, jsonb) TO {APP_ROLE}")
+    cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_readable_scopes() TO {APP_ROLE}")
+    cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_writable_scopes() TO {APP_ROLE}")
+    cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_validate_attrs(jsonb, jsonb) TO {APP_ROLE}")
 
 
 def _seed(conn) -> str:

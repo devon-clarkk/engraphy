@@ -19,7 +19,7 @@ if sys.platform == "win32":
 
 DATABASE_URL = os.environ.get(
     "ENGRAPHY_TEST_DATABASE_URL",
-    "postgres://postgres:engram@localhost:5432/engram_dev?sslmode=disable",
+    "postgres://postgres:engraphy@localhost:5432/engraphy_dev?sslmode=disable",
 )
 
 # design/01 §Row-level security: "The app's DB role is not BYPASSRLS." No doc
@@ -27,9 +27,9 @@ DATABASE_URL = os.environ.get(
 # idempotently, as test infrastructure for the RLS probe / visibility matrix --
 # roles are cluster-level so this survives the scratch DB being dropped and
 # recreated, but table GRANTs do not, so grants are re-applied every session.
-APP_ROLE = "engram_app"
-APP_ROLE_PASSWORD = "engram_app_test_only"
-APP_DATABASE_URL = DATABASE_URL.replace("postgres:engram@", f"{APP_ROLE}:{APP_ROLE_PASSWORD}@")
+APP_ROLE = "engraphy_app"
+APP_ROLE_PASSWORD = "engraphy_app_test_only"
+APP_DATABASE_URL = DATABASE_URL.replace("postgres:engraphy@", f"{APP_ROLE}:{APP_ROLE_PASSWORD}@")
 
 _RLS_TABLES = ("nodes", "edges", "scopes", "scope_grants", "principals", "pending_writes", "inbox", "dedup_log", "metrics_rollup")
 _READ_ONLY_TABLES = ("spaces", "node_types", "edge_types", "edge_rules", "config")
@@ -55,7 +55,7 @@ def _ensure_app_role():
         # ALTER ROLE ... PASSWORD unconditionally on the existing-role branch
         # too: roles are cluster-level (shared across every database on this
         # server, not scoped to the one this connection is in), so anything
-        # else that ever runs ALTER ROLE engram_app PASSWORD against this
+        # else that ever runs ALTER ROLE engraphy_app PASSWORD against this
         # same cluster (e.g. manually testing deploy/provision-app-role.sql
         # against a scratch DB on the same server) silently desyncs this
         # constant from the real password, and every APP_DATABASE_URL
@@ -74,9 +74,9 @@ def _ensure_app_role():
         cur.execute(f"GRANT DELETE ON {', '.join(_DELETE_TABLES)} TO {APP_ROLE}")
         cur.execute(f"GRANT SELECT ON {', '.join(_READ_ONLY_TABLES)} TO {APP_ROLE}")
         cur.execute(f"GRANT SELECT, INSERT, UPDATE ON {', '.join(_UNGATED_WRITE_TABLES)} TO {APP_ROLE}")
-        cur.execute(f"GRANT EXECUTE ON FUNCTION engram_readable_scopes() TO {APP_ROLE}")
-        cur.execute(f"GRANT EXECUTE ON FUNCTION engram_writable_scopes() TO {APP_ROLE}")
-        cur.execute(f"GRANT EXECUTE ON FUNCTION engram_validate_attrs(jsonb, jsonb) TO {APP_ROLE}")
+        cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_readable_scopes() TO {APP_ROLE}")
+        cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_writable_scopes() TO {APP_ROLE}")
+        cur.execute(f"GRANT EXECUTE ON FUNCTION engraphy_validate_attrs(jsonb, jsonb) TO {APP_ROLE}")
         # schema_migrations exists only on a dbmate-provisioned DB (CI); the
         # local dev DB has never been through dbmate, so it is absent there.
         # /healthz reads it through the app-role pool (applied_schema_version),
@@ -112,7 +112,7 @@ async def pool():
 
 @pytest.fixture
 def app_conn():
-    """engram_app connection (non-superuser, non-BYPASSRLS) -- RLS is live on
+    """engraphy_app connection (non-superuser, non-BYPASSRLS) -- RLS is live on
     this connection. Callers must set_identity() before querying RLS-gated
     tables; with no identity set, current_setting returns NULL and every
     policy denies (fail-closed, by design)."""
@@ -131,7 +131,7 @@ def set_identity(conn, space_id, principal):
     Async pipeline code (E1's dedup write path onward) uses the real
     transaction() wrapper instead -- see test_dedup.py."""
     conn.cursor().execute(
-        "SELECT set_config('engram.space_id', %s, true), set_config('engram.principal', %s, true)",
+        "SELECT set_config('engraphy.space_id', %s, true), set_config('engraphy.principal', %s, true)",
         (space_id, principal),
     )
 

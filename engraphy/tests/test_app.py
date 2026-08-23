@@ -276,9 +276,9 @@ async def test_inbox_capture_endpoint_parks_a_pending_row(pool, app_space, conn)
 
 
 def test_expected_schema_version_is_the_latest_migration_file():
-    # engraphy/db/migrations' newest file (migration 0023, the api_tokens
-    # no-scope='all' restriction backing per-token scope limits).
-    assert expected_schema_version() == "0023"
+    # engraphy/db/migrations' newest file (migration 0024, the rename of every
+    # remaining `engram` database identifier to `engraphy`).
+    assert expected_schema_version() == "0024"
 
 
 async def test_applied_schema_version_reads_the_migration_table(pool):

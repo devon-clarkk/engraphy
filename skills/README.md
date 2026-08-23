@@ -20,7 +20,7 @@ connected server's tool list and error messages, not hard-coded here.
 | [retrieval.md](retrieval.md) | Which read tool for which job — `search`, `briefing`, `traverse`, `get` — and what each returns. |
 | [writing-and-dedup.md](writing-and-dedup.md) | Writing memory, the dedup bands and the handshake, and the **contradiction contract**: when a merge means you must `supersede`. |
 | [scopes-and-visibility.md](scopes-and-visibility.md) | Where memory lives, what you can and cannot see, and how to write to the right place. |
-| [contracts-and-reserved-names.md](contracts-and-reserved-names.md) | Envelope and error conventions an agent can trip, and the reserved names (`engram_sentinel`, `attrs.addenda`) the engine owns. |
+| [contracts-and-reserved-names.md](contracts-and-reserved-names.md) | Envelope and error conventions an agent can trip, and the reserved names (`engraphy_sentinel`, `attrs.addenda`) the engine owns. |
 
 ## The shape of a good session
 

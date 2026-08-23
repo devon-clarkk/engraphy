@@ -12,7 +12,7 @@ Expected outcomes derive MECHANICALLY from design/06 §Visibility model — if a
 combination feels ambiguous while implementing, that is a QUESTIONS.md entry,
 not a judgment call.
 
-Derivation (mirrors engram_readable_scopes()/engram_writable_scopes() in
+Derivation (mirrors engraphy_readable_scopes()/engraphy_writable_scopes() in
 design/implementation/visibility-and-rls-plan.md verbatim — these two functions
 are the SINGLE AUTHORITY; nothing here may diverge from their bodies):
 

@@ -73,7 +73,7 @@ Dependencies land in a new `[project.optional-dependencies] bench` extra, so `pi
 
 **The harness calls `engraphy.core` functions in-process. It does not drive the MCP server for full runs.**
 
-In-process is the *real* pipeline, not a bypass: the same `dedup.write` with the same advisory lock, the same band arithmetic, the same attr-spec trigger, and the same RLS — because `db.transaction()` sets the `engram.space_id` / `engram.principal` GUCs identically no matter who calls it. The only things skipped are bearer resolution, rate limiting, and JSON serialization over the wire.
+In-process is the *real* pipeline, not a bypass: the same `dedup.write` with the same advisory lock, the same band arithmetic, the same attr-spec trigger, and the same RLS — because `db.transaction()` sets the `engraphy.space_id` / `engraphy.principal` GUCs identically no matter who calls it. The only things skipped are bearer resolution, rate limiting, and JSON serialization over the wire.
 
 Pure over-HTTP would be marginally more faithful and is impractical: the shipped rate limits are 60 reads and 30 writes per minute per token (`engraphy/server/auth.py`), so a single 1,540-question LoCoMo run plus its ingest would take days. Raising the limits for the benchmark would itself be a non-shipping configuration.
 
@@ -397,7 +397,7 @@ The `gemini-2.5-flash` failure is worth generalising, because it is **the fourth
 
 1. A restore path sat green in CI for weeks while broken.
 2. A golden wire fixture pinned an exchange the server has always refused.
-3. The bench suite's DB fixtures passed only because an earlier session had warmed the `engram_app` role — on a fresh database they failed.
+3. The bench suite's DB fixtures passed only because an earlier session had warmed the `engraphy_app` role — on a fresh database they failed.
 4. **The dead Gemini model id still answers `countTokens`** — so a construction-time check and a token-count probe both passed, and only the first real *generation* failed.
 5. **`smoke_live` made four judge calls and passed, against a 20/day cap.** Four calls cannot distinguish a 20/day allowance from a 1,500/day one. The check answered "can this model reply at all"; the run needed "can it reply 858 times", and nothing in the suite could tell those apart until a real run tried.
 

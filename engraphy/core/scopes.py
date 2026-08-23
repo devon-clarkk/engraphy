@@ -27,9 +27,9 @@ def _scope_row(row) -> dict:
 
 
 async def scope_list(pool, space_id: str, principal: str) -> dict:
-    """Row set is exactly `engram_readable_scopes()` -- no separate
+    """Row set is exactly `engraphy_readable_scopes()` -- no separate
     visibility logic here; the scopes table's own RLS SELECT policy
-    (`id IN engram_readable_scopes()`) already excludes archived scopes and
+    (`id IN engraphy_readable_scopes()`) already excludes archived scopes and
     anything this principal cannot read. `description` is included (migration
     0022) alongside the existing fields."""
     async with transaction(pool, space_id, principal) as conn:
@@ -44,7 +44,7 @@ async def scope_guide(pool, space_id: str, principal: str) -> dict:
     read, each with its description -- what it governs and when to write there --
     so an agent can decide where a new memory belongs before writing. RLS-scoped
     exactly like scope_list (the `scopes` SELECT policy restricts the row set to
-    engram_readable_scopes(); nothing here filters cross-space, so isolation is
+    engraphy_readable_scopes(); nothing here filters cross-space, so isolation is
     the database's, not this query's). A focused subset of scope_list's row: id,
     display_name, description -- see the module/tool docs for the frozen shape."""
     async with transaction(pool, space_id, principal) as conn:
@@ -88,7 +88,7 @@ async def scope_create(
         cur = conn.cursor()
         try:
             # No RETURNING: scopes_read's policy checks id IN
-            # engram_readable_scopes(), a STABLE SECURITY DEFINER function
+            # engraphy_readable_scopes(), a STABLE SECURITY DEFINER function
             # that queries `scopes` itself -- self-referential, so within
             # THIS statement it doesn't see the row THIS statement is still
             # inserting, and RETURNING's implicit SELECT-policy check fails

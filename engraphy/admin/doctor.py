@@ -2,7 +2,7 @@
 orphaned merges, canonical chains >3, nodes with >20 addenda (design/04 s.Hygiene).
 
 attrs_nonconforming has no DB column (DECISIONS-DELTA.md "attrs_nonconforming is
-derived, not stored"): it's computed here on demand from engram_validate_attrs()
+derived, not stored"): it's computed here on demand from engraphy_validate_attrs()
 against each active row's CURRENT node_types.attr_spec. This is possible because
 the write-path trigger (nodes_validate_attrs, 0006_attr_spec_and_triggers.sql)
 already enforces the CURRENT spec on every INSERT/UPDATE -- a nonconforming row
@@ -39,7 +39,7 @@ def _attrs_nonconforming(cur, space_id: str) -> list[str]:
         "SELECT n.type, count(*) FROM nodes n "
         "JOIN node_types nt ON nt.space_id = n.space_id AND nt.name = n.type "
         "WHERE n.space_id = %s AND n.status = 'active' "
-        "AND cardinality(engram_validate_attrs(nt.attr_spec, n.attrs)) > 0 "
+        "AND cardinality(engraphy_validate_attrs(nt.attr_spec, n.attrs)) > 0 "
         "GROUP BY n.type ORDER BY n.type",
         (space_id,),
     )
@@ -135,7 +135,7 @@ def _registry_drift(cur, space_id: str, pack_file: pathlib.Path | None) -> list[
     pack_edge_rules = packs.expand_edge_rules(pack)
 
     db_node_types, db_edge_types, db_edge_rules = packs.current_registry(space_id, cur)
-    # design/04 s.Backup contract: the engine-owned `engram_sentinel` type is
+    # design/04 s.Backup contract: the engine-owned `engraphy_sentinel` type is
     # registered by `space create`, not by a pack, so its presence in the DB and
     # absence from the pack file is the CORRECT state -- reporting it as drift
     # would put a permanent, unfixable line in every healthy instance's doctor

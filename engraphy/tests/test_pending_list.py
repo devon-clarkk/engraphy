@@ -9,7 +9,7 @@ handles the empty case + limit/offset.
 Seeding goes through a superuser autocommit connection (committed, so the
 separate app-role `pool` connection can see the rows); the READ under test goes
 through that app-role pool (NOBYPASSRLS) inside `transaction()`, which sets the
-`engram.space_id` / `engram.principal` GUCs the `pending_writes_read` policy
+`engraphy.space_id` / `engraphy.principal` GUCs the `pending_writes_read` policy
 enforces -- so what these tests exercise is the real RLS path, not a superuser
 bypass. Space ids are derived per-test (like test_dedup.py's write_space) so the
 fixed-id delete-on-setup can never collide with a concurrently-running test.

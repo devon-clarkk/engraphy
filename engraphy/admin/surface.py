@@ -14,7 +14,7 @@ Embeddings are computed OUTSIDE the per-batch transaction (trap 3). `updated_at`
 is preserved (migration 0020: an embedding/extra_search change with unchanged
 semantic content is a re-index, not a content edit). All statuses are rebuilt so
 `include_inactive` search never resurrects a stale-surface vector -- except the
-engine's reserved `engram_sentinel`, whose embedding is a constant by contract
+engine's reserved `engraphy_sentinel`, whose embedding is a constant by contract
 (design/04) and must never be recomputed.
 """
 from dataclasses import dataclass

@@ -18,7 +18,7 @@ WorkingDirectory=/opt/engraphy
 # EnvironmentFile keeps secrets (ENGRAPHY_DATABASE_URL's password) out of this
 # unit file, which is world-readable under /etc/systemd/system. Create
 # /etc/engraphy/engraphy.env with mode 0600, owned by the `engraphy` user:
-#   ENGRAPHY_DATABASE_URL=postgres://engram_app:...@localhost:5432/engram?sslmode=disable
+#   ENGRAPHY_DATABASE_URL=postgres://engraphy_app:...@localhost:5432/engraphy?sslmode=disable
 #   ENGRAPHY_BIND_HOST=127.0.0.1        # or a tailnet/overlay IP -- never 0.0.0.0 on a bare host
 #   ENGRAPHY_BIND_PORT=8000
 #   ENGRAPHY_LAST_BACKUP_STATUS_FILE=/var/lib/engraphy/last_backup_at

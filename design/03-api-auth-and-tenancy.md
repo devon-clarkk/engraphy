@@ -97,7 +97,7 @@ api_tokens: id, space_id, principal, client_name, token_hash, role, revoked, las
 
 - **A token names (space, principal, client, role).** `client_name` (`jess-workstation`, `alex-ipad`) becomes `source_client` provenance; `principal` becomes `author_principal` and drives all visibility filtering ([06](06-teams-and-sharing.md)).
 - Roles: `readwrite`, `readonly`. Instance-admin does not exist in the token table; **space-admin** is a *principal* role (not a token property) gating the space-admin tools ([06](06-teams-and-sharing.md)) — disable-able per deployment via `space_admin_tools: false` for CLI-only postures.
-- The isolation chain, each layer independent: token→(space, principal) binding (no identity parameters anywhere in the API) → every query filtered through `engram_readable_scopes()` → RLS backstop ([01](01-core-data-model.md)) → per-space packs mean even *type names* aren't shared implicitly.
+- The isolation chain, each layer independent: token→(space, principal) binding (no identity parameters anywhere in the API) → every query filtered through `engraphy_readable_scopes()` → RLS backstop ([01](01-core-data-model.md)) → per-space packs mean even *type names* aren't shared implicitly.
 - Revocation: `engraphy-admin token revoke --space alex --principal alex --client alex-ipad` (or the space-admin tool, within a space) — effective next request, no cache window.
 - `engraphy-admin` verbs: `space create|list`, `principal add|archive`, `pack validate|apply|upgrade`, `token create|rotate|revoke|list`, `import`, `config get|set`, `purge-session` (the poisoning-cleanup tool: archive everything from a given `source_session`).
 

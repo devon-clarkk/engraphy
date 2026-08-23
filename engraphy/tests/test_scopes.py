@@ -1,5 +1,5 @@
 """engraphy.core.scopes — scope_list / scope_create / scope_guide. E2-plan.md
-s.3/s.5.4's resolved shapes: row set is exactly engram_readable_scopes() (no
+s.3/s.5.4's resolved shapes: row set is exactly engraphy_readable_scopes() (no
 separate visibility logic); scope_create defaults visibility='private',
 owner_principal=principal, requires confirm=true AND a non-empty description,
 and collapses a duplicate id to ENGRAPHY_VALIDATION naming the id. scope_guide is

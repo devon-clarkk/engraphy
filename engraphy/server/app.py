@@ -104,7 +104,7 @@ _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migratio
 # ContextVar set before the request is dispatched needs no such assumption
 # (a spawned child task still inherits the value already set at spawn time).
 _auth_ctx_var: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
-    "engram_auth_ctx", default=None
+    "engraphy_auth_ctx", default=None
 )
 
 

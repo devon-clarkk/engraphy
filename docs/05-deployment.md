@@ -15,7 +15,7 @@ overview and the reference for auth, scopes, and day-2 tasks.
 
 | Var | Used by | Meaning |
 |---|---|---|
-| `ENGRAPHY_DATABASE_URL` | server (app role) and admin CLI (superuser) | Postgres connection. The **server** uses the non-superuser `engram_app` role; **admin/migrate** use the superuser/owner role. |
+| `ENGRAPHY_DATABASE_URL` | server (app role) and admin CLI (superuser) | Postgres connection. The **server** uses the non-superuser `engraphy_app` role; **admin/migrate** use the superuser/owner role. |
 | `ENGRAPHY_BIND_HOST` | server | interface to bind (default `127.0.0.1`). |
 | `ENGRAPHY_BIND_PORT` | server | port (default `8000`). |
 | `ENGRAPHY_INSECURE_TRANSPORT_OK` | server | set `true` **only** to bind a genuinely public interface without TLS on an overlay-only network. |

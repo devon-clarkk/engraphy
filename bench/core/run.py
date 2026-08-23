@@ -141,9 +141,9 @@ _load_dotenv_defaults()
 
 DB = os.environ.get(
     "ENGRAPHY_TEST_DATABASE_URL",
-    "postgres://postgres:engram@localhost:5432/engram_dev?sslmode=disable",
+    "postgres://postgres:engraphy@localhost:5432/engraphy_dev?sslmode=disable",
 )
-APP_DB = DB.replace("postgres:engram@", "engram_app:engram_app_test_only@")
+APP_DB = DB.replace("postgres:engraphy@", "engraphy_app:engraphy_app_test_only@")
 
 LOADERS = {"locomo": LoCoMoLoader}
 EXTRACTORS = ("verbatim", "llm")

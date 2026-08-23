@@ -93,7 +93,7 @@ def scratch_db():
     Skips (does not fail) if the test cluster won't let us create a database
     from this connection -- some managed/locked-down test DBs won't, and that is
     an environment limitation, not a migrate.py bug."""
-    name = "engram_inproc_scratch"
+    name = "engraphy_inproc_scratch"
     try:
         _create_db(name)
     except psycopg.Error as exc:
@@ -166,8 +166,8 @@ def test_in_process_schema_is_byte_identical_to_dbmate():
     if shutil.which("pg_dump") is None:
         pytest.skip("pg_dump not on PATH -- needed to compare schemas")
 
-    inproc_name = "engram_parity_inproc"
-    dbmate_name = "engram_parity_dbmate"
+    inproc_name = "engraphy_parity_inproc"
+    dbmate_name = "engraphy_parity_dbmate"
     try:
         _create_db(inproc_name)
         _create_db(dbmate_name)

@@ -61,10 +61,10 @@ END $$;
 
 
 --
--- Name: engram_addenda_text(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: engraphy_addenda_text(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.engram_addenda_text(attrs jsonb) RETURNS text
+CREATE FUNCTION public.engraphy_addenda_text(attrs jsonb) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
   SELECT COALESCE(string_agg(elem ->> 'body', ' '), '')
@@ -75,29 +75,29 @@ $$;
 
 
 --
--- Name: engram_readable_scopes(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: engraphy_readable_scopes(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.engram_readable_scopes() RETURNS SETOF text
+CREATE FUNCTION public.engraphy_readable_scopes() RETURNS SETOF text
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
   SELECT s.id FROM scopes s
-  WHERE s.space_id = current_setting('engram.space_id', true)
+  WHERE s.space_id = current_setting('engraphy.space_id', true)
     AND s.archived = false
     AND ( s.visibility IN ('team-read', 'team-write')
-          OR s.owner_principal = current_setting('engram.principal', true)
+          OR s.owner_principal = current_setting('engraphy.principal', true)
           OR EXISTS (SELECT 1 FROM scope_grants g
                      WHERE g.space_id = s.space_id AND g.scope_id = s.id
-                       AND g.principal = current_setting('engram.principal', true)) )
+                       AND g.principal = current_setting('engraphy.principal', true)) )
 $$;
 
 
 --
--- Name: engram_validate_attrs(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: engraphy_validate_attrs(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.engram_validate_attrs(spec jsonb, attrs jsonb) RETURNS text[]
+CREATE FUNCTION public.engraphy_validate_attrs(spec jsonb, attrs jsonb) RETURNS text[]
     LANGUAGE plpgsql IMMUTABLE
     AS $_$
 DECLARE
@@ -185,21 +185,21 @@ END $_$;
 
 
 --
--- Name: engram_writable_scopes(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: engraphy_writable_scopes(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.engram_writable_scopes() RETURNS SETOF text
+CREATE FUNCTION public.engraphy_writable_scopes() RETURNS SETOF text
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
   SELECT s.id FROM scopes s
-  WHERE s.space_id = current_setting('engram.space_id', true)
+  WHERE s.space_id = current_setting('engraphy.space_id', true)
     AND s.archived = false
     AND ( s.visibility = 'team-write'
-          OR s.owner_principal = current_setting('engram.principal', true)
+          OR s.owner_principal = current_setting('engraphy.principal', true)
           OR EXISTS (SELECT 1 FROM scope_grants g
                      WHERE g.space_id = s.space_id AND g.scope_id = s.id
-                       AND g.principal = current_setting('engram.principal', true)
+                       AND g.principal = current_setting('engraphy.principal', true)
                        AND g.level = 'write') )
 $$;
 
@@ -260,7 +260,7 @@ BEGIN
     RAISE EXCEPTION 'unknown node type % in space %', NEW.type, NEW.space_id USING ERRCODE = '23514';
   END IF;
 
-  errors := engram_validate_attrs(spec, NEW.attrs);
+  errors := engraphy_validate_attrs(spec, NEW.attrs);
   IF array_length(errors, 1) > 0 THEN
     RAISE EXCEPTION '%', array_to_string(errors, '; ') USING ERRCODE = '23514';
   END IF;
@@ -448,7 +448,7 @@ CREATE TABLE public.nodes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     extra_search text DEFAULT ''::text NOT NULL,
-    search tsvector GENERATED ALWAYS AS ((((setweight(to_tsvector('english'::regconfig, title), 'A'::"char") || setweight(to_tsvector('english'::regconfig, body), 'B'::"char")) || setweight(to_tsvector('english'::regconfig, extra_search), 'C'::"char")) || setweight(to_tsvector('english'::regconfig, public.engram_addenda_text(attrs)), 'D'::"char"))) STORED,
+    search tsvector GENERATED ALWAYS AS ((((setweight(to_tsvector('english'::regconfig, title), 'A'::"char") || setweight(to_tsvector('english'::regconfig, body), 'B'::"char")) || setweight(to_tsvector('english'::regconfig, extra_search), 'C'::"char")) || setweight(to_tsvector('english'::regconfig, public.engraphy_addenda_text(attrs)), 'D'::"char"))) STORED,
     CONSTRAINT nodes_body_check CHECK (((char_length(body) >= 1) AND (char_length(body) <= 8000))),
     CONSTRAINT nodes_check CHECK (((status = 'merged'::text) = (canonical_id IS NOT NULL))),
     CONSTRAINT nodes_status_check CHECK ((status = ANY (ARRAY['active'::text, 'superseded'::text, 'merged'::text, 'archived'::text]))),
@@ -1007,7 +1007,7 @@ ALTER TABLE public.dedup_log ENABLE ROW LEVEL SECURITY;
 -- Name: dedup_log dedup_log_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY dedup_log_write ON public.dedup_log FOR INSERT WITH CHECK ((space_id = current_setting('engram.space_id'::text, true)));
+CREATE POLICY dedup_log_write ON public.dedup_log FOR INSERT WITH CHECK ((space_id = current_setting('engraphy.space_id'::text, true)));
 
 
 --
@@ -1020,7 +1020,7 @@ ALTER TABLE public.edges ENABLE ROW LEVEL SECURITY;
 -- Name: edges edges_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY edges_read ON public.edges FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY edges_read ON public.edges FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.nodes n
   WHERE (n.id = edges.src_id))) AND (EXISTS ( SELECT 1
    FROM public.nodes n
@@ -1031,15 +1031,15 @@ CREATE POLICY edges_read ON public.edges FOR SELECT USING (((space_id = current_
 -- Name: edges edges_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY edges_write ON public.edges FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY edges_write ON public.edges FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.nodes n
   WHERE (n.id = edges.src_id))) AND (EXISTS ( SELECT 1
    FROM public.nodes n
   WHERE (n.id = edges.dst_id))) AND ((EXISTS ( SELECT 1
    FROM public.nodes n
-  WHERE ((n.id = edges.src_id) AND (n.scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes))))) OR (EXISTS ( SELECT 1
+  WHERE ((n.id = edges.src_id) AND (n.scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes))))) OR (EXISTS ( SELECT 1
    FROM public.nodes n
-  WHERE ((n.id = edges.dst_id) AND (n.scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes))))))));
+  WHERE ((n.id = edges.dst_id) AND (n.scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes))))))));
 
 
 --
@@ -1052,21 +1052,21 @@ ALTER TABLE public.inbox ENABLE ROW LEVEL SECURITY;
 -- Name: inbox inbox_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY inbox_read ON public.inbox FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engram_readable_scopes() AS engram_readable_scopes)))));
+CREATE POLICY inbox_read ON public.inbox FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engraphy_readable_scopes() AS engraphy_readable_scopes)))));
 
 
 --
 -- Name: inbox inbox_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY inbox_update ON public.inbox FOR UPDATE USING (((space_id = current_setting('engram.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes))))) WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes)))));
+CREATE POLICY inbox_update ON public.inbox FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes))))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes)))));
 
 
 --
 -- Name: inbox inbox_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY inbox_write ON public.inbox FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes)))));
+CREATE POLICY inbox_write ON public.inbox FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND ((scope_id IS NULL) OR (scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes)))));
 
 
 --
@@ -1079,21 +1079,21 @@ ALTER TABLE public.metrics_rollup ENABLE ROW LEVEL SECURITY;
 -- Name: metrics_rollup metrics_rollup_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY metrics_rollup_read ON public.metrics_rollup FOR SELECT USING ((space_id = current_setting('engram.space_id'::text, true)));
+CREATE POLICY metrics_rollup_read ON public.metrics_rollup FOR SELECT USING ((space_id = current_setting('engraphy.space_id'::text, true)));
 
 
 --
 -- Name: metrics_rollup metrics_rollup_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY metrics_rollup_update ON public.metrics_rollup FOR UPDATE USING (((space_id = current_setting('engram.space_id'::text, true)) AND (principal = current_setting('engram.principal'::text, true)))) WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY metrics_rollup_update ON public.metrics_rollup FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (principal = current_setting('engraphy.principal'::text, true)))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
 -- Name: metrics_rollup metrics_rollup_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY metrics_rollup_write ON public.metrics_rollup FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY metrics_rollup_write ON public.metrics_rollup FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
@@ -1106,21 +1106,21 @@ ALTER TABLE public.nodes ENABLE ROW LEVEL SECURITY;
 -- Name: nodes nodes_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY nodes_read ON public.nodes FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND (scope_id IN ( SELECT public.engram_readable_scopes() AS engram_readable_scopes))));
+CREATE POLICY nodes_read ON public.nodes FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (scope_id IN ( SELECT public.engraphy_readable_scopes() AS engraphy_readable_scopes))));
 
 
 --
 -- Name: nodes nodes_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY nodes_update ON public.nodes FOR UPDATE USING (((space_id = current_setting('engram.space_id'::text, true)) AND (scope_id IN ( SELECT public.engram_readable_scopes() AS engram_readable_scopes)))) WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes))));
+CREATE POLICY nodes_update ON public.nodes FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (scope_id IN ( SELECT public.engraphy_readable_scopes() AS engraphy_readable_scopes)))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes))));
 
 
 --
 -- Name: nodes nodes_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY nodes_write ON public.nodes FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (scope_id IN ( SELECT public.engram_writable_scopes() AS engram_writable_scopes))));
+CREATE POLICY nodes_write ON public.nodes FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (scope_id IN ( SELECT public.engraphy_writable_scopes() AS engraphy_writable_scopes))));
 
 
 --
@@ -1133,21 +1133,21 @@ ALTER TABLE public.pending_writes ENABLE ROW LEVEL SECURITY;
 -- Name: pending_writes pending_writes_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY pending_writes_delete ON public.pending_writes FOR DELETE USING (((space_id = current_setting('engram.space_id'::text, true)) AND (author_principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY pending_writes_delete ON public.pending_writes FOR DELETE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (author_principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
 -- Name: pending_writes pending_writes_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY pending_writes_read ON public.pending_writes FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND (author_principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY pending_writes_read ON public.pending_writes FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (author_principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
 -- Name: pending_writes pending_writes_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY pending_writes_write ON public.pending_writes FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (author_principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY pending_writes_write ON public.pending_writes FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (author_principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
@@ -1160,16 +1160,16 @@ ALTER TABLE public.principals ENABLE ROW LEVEL SECURITY;
 -- Name: principals principals_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY principals_read ON public.principals FOR SELECT USING ((space_id = current_setting('engram.space_id'::text, true)));
+CREATE POLICY principals_read ON public.principals FOR SELECT USING ((space_id = current_setting('engraphy.space_id'::text, true)));
 
 
 --
 -- Name: principals principals_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY principals_write ON public.principals FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY principals_write ON public.principals FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.principals a
-  WHERE ((a.space_id = current_setting('engram.space_id'::text, true)) AND (a.id = current_setting('engram.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
 
 
 --
@@ -1182,16 +1182,16 @@ ALTER TABLE public.scope_grants ENABLE ROW LEVEL SECURITY;
 -- Name: scope_grants scope_grants_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scope_grants_read ON public.scope_grants FOR SELECT USING ((space_id = current_setting('engram.space_id'::text, true)));
+CREATE POLICY scope_grants_read ON public.scope_grants FOR SELECT USING ((space_id = current_setting('engraphy.space_id'::text, true)));
 
 
 --
 -- Name: scope_grants scope_grants_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scope_grants_write ON public.scope_grants FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY scope_grants_write ON public.scope_grants FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.principals a
-  WHERE ((a.space_id = current_setting('engram.space_id'::text, true)) AND (a.id = current_setting('engram.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
 
 
 --
@@ -1204,34 +1204,34 @@ ALTER TABLE public.scopes ENABLE ROW LEVEL SECURITY;
 -- Name: scopes scopes_admin_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scopes_admin_read ON public.scopes FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY scopes_admin_read ON public.scopes FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.principals a
-  WHERE ((a.space_id = current_setting('engram.space_id'::text, true)) AND (a.id = current_setting('engram.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
 
 
 --
 -- Name: scopes scopes_admin_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scopes_admin_update ON public.scopes FOR UPDATE USING (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+CREATE POLICY scopes_admin_update ON public.scopes FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.principals a
-  WHERE ((a.space_id = current_setting('engram.space_id'::text, true)) AND (a.id = current_setting('engram.principal'::text, true)) AND (a.role = 'space_admin'::text)))))) WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (EXISTS ( SELECT 1
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text)))))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
    FROM public.principals a
-  WHERE ((a.space_id = current_setting('engram.space_id'::text, true)) AND (a.id = current_setting('engram.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
 
 
 --
 -- Name: scopes scopes_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scopes_read ON public.scopes FOR SELECT USING (((space_id = current_setting('engram.space_id'::text, true)) AND (id IN ( SELECT public.engram_readable_scopes() AS engram_readable_scopes))));
+CREATE POLICY scopes_read ON public.scopes FOR SELECT USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (id IN ( SELECT public.engraphy_readable_scopes() AS engraphy_readable_scopes))));
 
 
 --
 -- Name: scopes scopes_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY scopes_write ON public.scopes FOR INSERT WITH CHECK (((space_id = current_setting('engram.space_id'::text, true)) AND (owner_principal = current_setting('engram.principal'::text, true))));
+CREATE POLICY scopes_write ON public.scopes FOR INSERT WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (owner_principal = current_setting('engraphy.principal'::text, true))));
 
 
 --
@@ -1268,4 +1268,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0020'),
     ('0021'),
     ('0022'),
-    ('0023');
+    ('0023'),
+    ('0024');

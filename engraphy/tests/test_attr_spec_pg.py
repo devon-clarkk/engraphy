@@ -1,7 +1,7 @@
-"""engram_validate_attrs() (plpgsql) — design/implementation/attr-spec-interpreter-plan.md
+"""engraphy_validate_attrs() (plpgsql) — design/implementation/attr-spec-interpreter-plan.md
 §Test plan, row `test_attr_spec_pg.py`: every fixture case in
 fixtures/attr_spec_cases.yaml, exact ordered-array match, via raw SQL
-(`SELECT engram_validate_attrs(...)`) against a live Postgres — this is the
+(`SELECT engraphy_validate_attrs(...)`) against a live Postgres — this is the
 authority; `test_attr_spec_py.py` is the mirror. Requires
 ENGRAPHY_TEST_DATABASE_URL (defaults to the IMPLEMENTER.md scratch instance).
 """
@@ -19,7 +19,7 @@ CASES = yaml.safe_load(FIXTURES_PATH.read_text(encoding="utf-8"))
 
 DATABASE_URL = os.environ.get(
     "ENGRAPHY_TEST_DATABASE_URL",
-    "postgres://postgres:engram@localhost:5432/engram_dev?sslmode=disable",
+    "postgres://postgres:engraphy@localhost:5432/engraphy_dev?sslmode=disable",
 )
 
 
@@ -34,6 +34,6 @@ def test_fixture_case(conn, case):
     spec_json = json.dumps(case["spec"])
     attrs_json = json.dumps(case["attrs"])
     with conn.cursor() as cur:
-        cur.execute("SELECT engram_validate_attrs(%s::jsonb, %s::jsonb)", (spec_json, attrs_json))
+        cur.execute("SELECT engraphy_validate_attrs(%s::jsonb, %s::jsonb)", (spec_json, attrs_json))
         (result,) = cur.fetchone()
     assert list(result) == case["expect"]

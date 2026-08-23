@@ -3,7 +3,7 @@
 validate: JSON Schema (packs/schema.json == design/07 §Pack file schema) + cross-refs
 (edge_rules/briefing types exist; aliases bind core tools only).
 apply: expand '*' rules to concrete rows; registries written ONLY here.
-upgrade: diff -> additive | tightening (conformance scan via engram_validate_attrs;
+upgrade: diff -> additive | tightening (conformance scan via engraphy_validate_attrs;
 violators are refused by default, or applied with --allow-nonconforming -- see
 upgrade()'s docstring for why nonconformance is derived on demand rather than
 stored, per DECISIONS-DELTA.md "attrs_nonconforming is derived, not stored")
@@ -116,7 +116,7 @@ def validate_name_patterns(pack: dict) -> list[str]:
 
 def validate_reserved_names(pack: dict) -> list[str]:
     """Reject the two names design/07 s.Pack file schema reserves for the engine:
-    the node type `engram_sentinel` and the attrs key `addenda`.
+    the node type `engraphy_sentinel` and the attrs key `addenda`.
 
     The reserved node-type name(s) come from `sentinel.RESERVED_NODE_TYPES`,
     the same frozenset `dedup._validate_not_reserved_type` reads, so the
@@ -124,7 +124,7 @@ def validate_reserved_names(pack: dict) -> list[str]:
     never drift apart.
 
     Both are engine-owned surfaces a pack must not be able to collide with.
-    `engram_sentinel` is registered by `space create`, so a pack declaring it
+    `engraphy_sentinel` is registered by `space create`, so a pack declaring it
     would fail at `pack apply` on a primary-key violation and at `pack upgrade`
     would look like the operator hand-edited the registry -- a confusing DB error
     for what is really a pack authoring mistake. `addenda` is the engine-managed
@@ -428,11 +428,11 @@ def upgrade(pack: dict, space_id: str, cur, *, allow_nonconforming: bool = False
       immediately.
     - tightening (an existing node type's attr_spec changing such that one or
       more currently-active rows of that type would now fail
-      engram_validate_attrs against it): applied only after a conformance
+      engraphy_validate_attrs against it): applied only after a conformance
       scan. Classified empirically, not syntactically -- rather than
       pattern-matching "new required key / narrowed enum / closed
       false->true" against the spec JSON (fragile: it would need to
-      enumerate every tightening shape engram_validate_attrs understands,
+      enumerate every tightening shape engraphy_validate_attrs understands,
       and silently miss new ones), this runs the actual validator against
       every active row and asks whether it still passes. That is the exact
       question "tightening" exists to answer, and it can't misclassify by
@@ -440,7 +440,7 @@ def upgrade(pack: dict, space_id: str, cur, *, allow_nonconforming: bool = False
       committed) unless allow_nonconforming=True, in which case the spec is
       applied anyway and violating rows stay readable/queryable -- they are
       not flagged in a column (see doctor.py's module docstring: nonconformance
-      is derived from engram_validate_attrs on demand, not stored), and the
+      is derived from engraphy_validate_attrs on demand, not stored), and the
       existing nodes_validate_attrs trigger already refuses any UPDATE to a
       violating row that doesn't fix its attrs, for free.
     - destructive (a node type, edge type, or edge rule present in the
@@ -519,7 +519,7 @@ def upgrade(pack: dict, space_id: str, cur, *, allow_nonconforming: bool = False
         rows = cur.fetchall()
         violators = []
         for node_id, attrs in rows:
-            cur.execute("SELECT engram_validate_attrs(%s, %s)", (Jsonb(new_attr_spec), Jsonb(attrs)))
+            cur.execute("SELECT engraphy_validate_attrs(%s, %s)", (Jsonb(new_attr_spec), Jsonb(attrs)))
             (errors,) = cur.fetchone()
             if errors:
                 violators.append((node_id, errors))

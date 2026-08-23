@@ -9,7 +9,7 @@ canary that rots unnoticed until the day it is needed.
 
 Four properties, each load-bearing:
 
-- **Reserved type** `engram_sentinel`, registered by `space create` itself rather
+- **Reserved type** `engraphy_sentinel`, registered by `space create` itself rather
   than by a pack. Packs are otherwise the only writers of the registries, so this
   type is exempted everywhere that fact is assumed: `pack validate` refuses a pack
   declaring it, `doctor`'s registry-drift diff does not report it as drift, and
@@ -39,7 +39,7 @@ import math
 from engraphy.core.embedding import DIMS
 
 #: Reserved node type name. Matches node_types' `^[a-z][a-z0-9_]{1,40}$` CHECK.
-SENTINEL_NODE_TYPE = "engram_sentinel"
+SENTINEL_NODE_TYPE = "engraphy_sentinel"
 
 #: Node type names reserved for the engine, refused on BOTH the pack-authoring
 #: path (`packs.validate_reserved_names`) and the write path

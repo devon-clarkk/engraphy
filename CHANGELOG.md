@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- Engram -> Engraphy rename completed inside the database (migration 0024). The
+  identifiers COMPATIBILITY.md previously froze are all renamed: the
+  `engram_*()` SQL functions to `engraphy_*()`, the `engram.space_id` /
+  `engram.principal` session GUCs to `engraphy.*`, the `engram_app` role to
+  `engraphy_app`, and the reserved node type `engram_sentinel` to
+  `engraphy_sentinel`. New installs get a database named `engraphy`. There are
+  no `engram_` table prefixes and no `engram` SQL schema, so nothing was needed
+  there. Upgrading an existing deployment is a one-time operator sequence
+  (stop server, migrate, re-run `deploy/provision-app-role.sql`, update DSNs to
+  the new role name); see COMPATIBILITY.md. Entries below this one predate the
+  rename and name the identifiers as they were at the time.
 - Design phase complete (design/ 00–07 + implementation plans). Scaffold committed.
 - E0 schema & enforcement kernel (migrations 0001–0011): pgvector schema, attr-spec interpreter,
   visibility functions + RLS on every data table, pack validate/apply, golden fixtures + CI.

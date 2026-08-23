@@ -96,7 +96,7 @@ CREATE TABLE scope_grants (                                -- per-principal exce
 
 Effective access = max(visibility-derived level, grant level). Grants cover the real-world exceptions cheaply ("share my `health` scope with my partner only") without inventing groups. Visibility changes and grants are audited and owner-or-space-admin-only.
 
-The readable/writable sets are computed by one SQL function pair (`engram_readable_scopes()`, `engram_writable_scopes()`) reading the session GUCs — used identically by application queries and the revised RLS policies ([01](01-core-data-model.md)), so app and backstop cannot disagree.
+The readable/writable sets are computed by one SQL function pair (`engraphy_readable_scopes()`, `engraphy_writable_scopes()`) reading the session GUCs — used identically by application queries and the revised RLS policies ([01](01-core-data-model.md)), so app and backstop cannot disagree.
 
 ## Personal scopes: the "own root" answer
 
@@ -142,7 +142,7 @@ The instance-admin-is-local-CLI rule ([03](03-api-auth-and-tenancy.md)) survives
 Two E2-shipped narrowings/widenings against this table, both deliberate (Devon, 2026-07-19; revisit at E6):
 
 - **Owner self-service is deferred.** All four admin tools are `space_admin`-only as shipped — a plain member who owns a scope gets `ENGRAPHY_ROLE` from `admin_scope_visibility`/`admin_grant` on their own scope. Restrictive is the safe direction on a security gate (a functionality gap, not a leak); honoring the owner row later means branching both the tool-layer gate and migration 0016's RLS predicates on `owner_principal = caller OR space_admin`.
-- **A space_admin reads all scope *metadata*.** Postgres applies the SELECT policy to `UPDATE … RETURNING`'s row-read, so `admin_scope_visibility` could not target an unreadable private scope at all; the fix (`scopes_admin_read`, migration 0016) lets a space_admin read every scope's metadata — id, name, visibility, owner, **including the existence of members' private scopes** — which is what "space_admin: set visibility" presupposes. Node visibility is untouched: `nodes_read` gates on `engram_readable_scopes()`, not the scopes policy, so no node in a private scope becomes readable. This is a bounded, tested carve-out from "existence is information", scoped to the admin role.
+- **A space_admin reads all scope *metadata*.** Postgres applies the SELECT policy to `UPDATE … RETURNING`'s row-read, so `admin_scope_visibility` could not target an unreadable private scope at all; the fix (`scopes_admin_read`, migration 0016) lets a space_admin read every scope's metadata — id, name, visibility, owner, **including the existence of members' private scopes** — which is what "space_admin: set visibility" presupposes. Node visibility is untouched: `nodes_read` gates on `engraphy_readable_scopes()`, not the scopes policy, so no node in a private scope becomes readable. This is a bounded, tested carve-out from "existence is information", scoped to the admin role.
 
 This is the minimal set that lets a team self-operate day-to-day while the blast radius of any network-reachable credential stays inside its space. Token minting via MCP is a real widening for space admins — accepted for cloud teams, and a config flag (`space_admin_tools: false`) lets a paranoid local deployment keep the old everything-via-CLI posture.
 

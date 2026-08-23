@@ -45,7 +45,7 @@ once, `traverse` instead of many `get`s) rather than hammering single calls.
 Two names are reserved for the engine. A correct client never needs them; using
 them is rejected with `VALIDATION`.
 
-- **The node type `engram_sentinel` is engine-only.** It is a marker the engine
+- **The node type `engraphy_sentinel` is engine-only.** It is a marker the engine
   mints for its own internal bookkeeping. You may not `write`, `supersede`,
   promote, or import a node of this type — every write path refuses it. It will
   not appear as an available type in the tool surface; don't try to create it.

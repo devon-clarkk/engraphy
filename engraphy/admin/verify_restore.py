@@ -64,7 +64,7 @@ def _admin_conninfo(conninfo: str, dbname: str) -> str:
 
 
 @contextlib.contextmanager
-def _scratch_database(admin_conninfo: str, name_prefix: str = "engram_verify_restore"):
+def _scratch_database(admin_conninfo: str, name_prefix: str = "engraphy_verify_restore"):
     """Creates a uniquely-named scratch DB on the same server, yields its
     conninfo, and drops it afterward regardless of outcome. `admin_conninfo`
     must point at a DB the connecting role can already reach (postgres/template1

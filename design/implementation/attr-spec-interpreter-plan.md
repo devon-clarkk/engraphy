@@ -15,7 +15,7 @@ One logical function, two implementations:
 validate_attrs(spec: jsonb, attrs: jsonb) -> text[]   -- ordered error strings; empty = valid
 ```
 
-- plpgsql: `engram_validate_attrs(spec jsonb, attrs jsonb) RETURNS text[]` — pure, IMMUTABLE, no table access. The trigger wrapper loads the spec from `node_types` and raises `ERRCODE '23514'` with `array_to_string(errors, '; ')` when non-empty.
+- plpgsql: `engraphy_validate_attrs(spec jsonb, attrs jsonb) RETURNS text[]` — pure, IMMUTABLE, no table access. The trigger wrapper loads the spec from `node_types` and raises `ERRCODE '23514'` with `array_to_string(errors, '; ')` when non-empty.
 - Python: `validate_attrs(spec: dict, attrs: dict) -> list[str]` — byte-identical error strings.
 
 **Error strings (exact formats — these are contract, fixtures assert them verbatim):**
@@ -76,7 +76,7 @@ for key in sorted(attrs ∩ known):
 ## plpgsql skeleton (authoritative shape — implementer completes mechanically)
 
 ```sql
-CREATE OR REPLACE FUNCTION engram_validate_attrs(spec jsonb, attrs jsonb)
+CREATE OR REPLACE FUNCTION engraphy_validate_attrs(spec jsonb, attrs jsonb)
 RETURNS text[] LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE
   errors text[] := '{}';  req jsonb;  opt jsonb;  cond jsonb;  closed boolean;
@@ -154,7 +154,7 @@ Note `IMMUTABLE` is honest (no table reads) and lets Postgres cache within state
 
 | Test | Assert |
 |------|--------|
-| `test_attr_spec_pg.py` | Every fixture case via `SELECT engram_validate_attrs(...)` — exact array match |
+| `test_attr_spec_pg.py` | Every fixture case via `SELECT engraphy_validate_attrs(...)` — exact array match |
 | `test_attr_spec_py.py` | Same file, Python implementation — exact match |
 | `test_attr_spec_parity.py` | **Parity fuzz**: 2,000 generated (spec, attrs) pairs (hypothesis or seeded random covering the grammar) — plpgsql and Python outputs identical |
 | `test_trigger_wiring.py` | Trigger rejects with ERRCODE 23514 and the joined message; valid rows insert |

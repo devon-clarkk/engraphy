@@ -267,7 +267,7 @@ async def test_search_never_returns_the_sentinel_even_with_include_inactive(
 
 # --- Live Postgres: the write-path refusal (ruled 2026-07-21) ---------------
 #
-# The premise these tests defend: `space create` REGISTERS `engram_sentinel` in
+# The premise these tests defend: `space create` REGISTERS `engraphy_sentinel` in
 # node_types so the sentinel row can exist, and that registry row is exactly
 # what the `nodes.(space_id, type)` FK checks -- so before this refusal, any
 # caller who guessed the name got a valid insert. Every space below therefore

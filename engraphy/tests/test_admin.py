@@ -1,7 +1,7 @@
 """engraphy.server.tools.admin — the four space-admin MCP tool dispatchers, plus
 tool_registry's per-space registration gating (space_admin_tools).
 
-Covers, on a live RLS pool (engram_app role, NOBYPASSRLS): the space_admin gate
+Covers, on a live RLS pool (engraphy_app role, NOBYPASSRLS): the space_admin gate
 (admin passes, plain member -> ENGRAPHY_ROLE), each tool's happy path and error
 translation, the display-once token property (plaintext returned exactly once,
 only its SHA-256 at rest, never in the audit trail), the migration-0016 RLS

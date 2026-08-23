@@ -10,15 +10,16 @@ applications.
 It is built to replace the flat-JSON / stdio / single-user reference MCP memory
 server with something that survives concurrency, distance, duplicates, and years.
 
-> **Naming.** The product and the engine are both **Engraphy**. The Python package,
-> CLI, config environment variables, and MCP server name are `engraphy`
-> (`import engraphy`, `engraphy-admin`, `ENGRAPHY_DATABASE_URL`, `Server("engraphy")`).
-> A small set of **database-level identifiers keep the `engram` prefix on purpose** —
-> the database name, the `engram_app` role, the `engram_*()` SQL functions, and the
-> `engram.*` session settings — so that an existing deployment's Postgres volume
-> upgrades to Engraphy with no data migration. See `COMPATIBILITY.md`. This
-> documentation uses *Engraphy* for the product and `engraphy` when naming the code
-> you type.
+> **Naming.** The product and the engine are both **Engraphy**, and so is every
+> identifier. The Python package, CLI, config environment variables, and MCP
+> server name are `engraphy` (`import engraphy`, `engraphy-admin`,
+> `ENGRAPHY_DATABASE_URL`, `Server("engraphy")`), and so are the database-level
+> names: the `engraphy` database, the `engraphy_app` role, the `engraphy_*()` SQL
+> functions, and the `engraphy.*` session settings. Nothing is named `engram` any
+> more. A deployment provisioned before migration `0024` carries the old names and
+> is upgraded by it; see `COMPATIBILITY.md` for that one-time operator sequence.
+> This documentation uses *Engraphy* for the product and `engraphy` when naming
+> the code you type.
 
 ## What Engraphy gives you
 

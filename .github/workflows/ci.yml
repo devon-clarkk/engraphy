@@ -14,7 +14,7 @@ jobs:
     services:
       postgres:
         image: pgvector/pgvector:pg16
-        env: {POSTGRES_PASSWORD: engram, POSTGRES_DB: engram_test}
+        env: {POSTGRES_PASSWORD: engraphy, POSTGRES_DB: engraphy_test}
         ports: ['5432:5432']
         options: >-
           --health-cmd pg_isready
@@ -22,7 +22,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      ENGRAPHY_TEST_DATABASE_URL: postgres://postgres:engram@localhost:5432/engram_test?sslmode=disable
+      ENGRAPHY_TEST_DATABASE_URL: postgres://postgres:engraphy@localhost:5432/engraphy_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,7 +52,7 @@ jobs:
       - run: ruff check .
       # CI grep gates (design/implementation plans):
       - name: guard — GUCs set only in db.py
-        run: '! grep -rn "set_config.*engram\." engraphy/ --include="*.py" | grep -v "server/db.py" | grep -v tests/'
+        run: '! grep -rn "set_config.*engraphy\." engraphy/ --include="*.py" | grep -v "server/db.py" | grep -v tests/'
       - name: guard — no embed() inside transactions
         run: python scripts/check_no_embed_in_transaction.py
       # design/09: the harness may import the engine, never the reverse -- that

@@ -44,7 +44,7 @@ async def transaction(pool: AsyncConnectionPool, space_id: str, principal: str):
             # Must be the transaction's first statement (Postgres requirement).
             await conn.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             await conn.execute(
-                "SELECT set_config('engram.space_id', %s, true), set_config('engram.principal', %s, true)",
+                "SELECT set_config('engraphy.space_id', %s, true), set_config('engraphy.principal', %s, true)",
                 (space_id, principal),
             )
             yield conn

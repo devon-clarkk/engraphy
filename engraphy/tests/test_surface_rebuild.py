@@ -145,7 +145,7 @@ def test_flag_off_renders_empty_surface(conn, request):
 
 def test_inactive_rows_rebuilt_but_sentinel_excluded(space, conn):
     """All statuses are rebuilt (a superseded row too), EXCEPT the reserved
-    engram_sentinel whose embedding is a constant by contract."""
+    engraphy_sentinel whose embedding is a constant by contract."""
     superseded = _seed(conn, space, "Old", "Old fact.", {"occupation": "nurse"}, status="superseded")
     sentinel = _seed(conn, space, "Sentinel", "sentinel body here", {},
                      node_type=SENTINEL_NODE_TYPE, model=SENTINEL_EMBEDDING_MODEL,

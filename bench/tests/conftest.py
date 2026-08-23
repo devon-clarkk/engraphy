@@ -21,7 +21,7 @@ import pytest
 from engraphy.tests.conftest import DATABASE_URL
 from engraphy.tests.conftest import app_conn, conn, pool  # noqa: F401 -- fixture re-export
 
-# The session-scoped autouse fixture that creates the `engram_app` role and
+# The session-scoped autouse fixture that creates the `engraphy_app` role and
 # (re-)applies its table GRANTs. It MUST be re-exported here, not just inherited
 # in spirit: `pytest bench/tests` run on its own never collects the engine's
 # conftest, so without this the `pool` fixture connects as a role that either

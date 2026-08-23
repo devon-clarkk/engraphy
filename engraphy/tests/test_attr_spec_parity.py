@@ -1,6 +1,6 @@
 """Parity fuzzer — design/implementation/attr-spec-interpreter-plan.md §Test plan,
 row `test_attr_spec_parity.py`: 2,000 generated (spec, attrs) pairs covering the
-attr-spec grammar; plpgsql (`engram_validate_attrs`) and Python
+attr-spec grammar; plpgsql (`engraphy_validate_attrs`) and Python
 (`engraphy.core.attr_spec.validate_attrs`) outputs must be identical. Requires a
 live Postgres (ENGRAPHY_TEST_DATABASE_URL, defaults to the scratch instance).
 """
@@ -17,7 +17,7 @@ from engraphy.core.attr_spec import validate_attrs
 
 DATABASE_URL = os.environ.get(
     "ENGRAPHY_TEST_DATABASE_URL",
-    "postgres://postgres:engram@localhost:5432/engram_dev?sslmode=disable",
+    "postgres://postgres:engraphy@localhost:5432/engraphy_dev?sslmode=disable",
 )
 
 # `addenda` is in the pool deliberately: it is the one engine-reserved key
@@ -131,7 +131,7 @@ def test_parity(conn, pair):
     py_errors = validate_attrs(spec, attrs)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT engram_validate_attrs(%s::jsonb, %s::jsonb)",
+            "SELECT engraphy_validate_attrs(%s::jsonb, %s::jsonb)",
             (json.dumps(spec), json.dumps(attrs)),
         )
         (pg_errors,) = cur.fetchone()

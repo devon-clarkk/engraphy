@@ -877,7 +877,7 @@ async def test_resolve_duplicate_scope_unwritable_raises(pool, write_space, conn
     """World-change table: "Scope became unwritable for the author ->
     ENGRAPHY_SCOPE_UNKNOWN (not-found semantics)". The author is still p1 -- the
     scope itself moved out from under the parked write (archived scopes are
-    excluded by engram_writable_scopes())."""
+    excluded by engraphy_writable_scopes())."""
     _seed_node(conn, write_space, "widget", "Existing node", "Existing body.", {}, _unit_vector_at_angle(0))
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",

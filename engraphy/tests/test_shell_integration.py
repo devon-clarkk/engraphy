@@ -39,7 +39,7 @@ def scratch_db():
     """A fresh, uniquely-named DB with pgvector installed and the real
     migrations applied via a real `dbmate up` -- not the fixture-driven
     schema this suite's other tests get from the shared test DB."""
-    name = f"engram_shell_it_{uuid.uuid4().hex[:12]}"
+    name = f"engraphy_shell_it_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(DATABASE_URL, autocommit=True) as c:
         cur = c.cursor()
         cur.execute(f'CREATE DATABASE "{name}"')

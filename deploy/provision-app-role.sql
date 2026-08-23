@@ -1,4 +1,4 @@
--- Provisions the `engram_app` DB role: the non-superuser, NOBYPASSRLS role
+-- Provisions the `engraphy_app` DB role: the non-superuser, NOBYPASSRLS role
 -- the running server connects as (design/01 s.Row-level security: "The
 -- app's DB role is not BYPASSRLS"). Run ONCE per deployment, by a superuser,
 -- against the target database, AFTER `dbmate up` (or `engraphy-admin migrate`)
@@ -44,12 +44,12 @@
 -- re-runs the same buffer. Ending the statement with `\gexec` alone both
 -- suppresses that echo (\gexec executes the returned rows instead of
 -- displaying them) and runs the query exactly once.
-SELECT format('CREATE ROLE engram_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE',
+SELECT format('CREATE ROLE engraphy_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE',
               :'app_role_password')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engram_app')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engraphy_app')
 UNION ALL
-SELECT format('ALTER ROLE engram_app PASSWORD %L', :'app_role_password')
-WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engram_app')
+SELECT format('ALTER ROLE engraphy_app PASSWORD %L', :'app_role_password')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engraphy_app')
 \gexec
 
 -- GRANT ... ON DATABASE needs a literal identifier, not an expression --
@@ -58,10 +58,10 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'engram_app')
 -- no psql variable involved here, so a plain DO block is fine).
 DO $$
 BEGIN
-  EXECUTE format('GRANT CONNECT ON DATABASE %I TO engram_app', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO engraphy_app', current_database());
 END $$;
 
-GRANT USAGE ON SCHEMA public TO engram_app;
+GRANT USAGE ON SCHEMA public TO engraphy_app;
 
 -- RLS-gated tables: the app role needs SELECT/INSERT/UPDATE to reach them at
 -- all, but FORCE ROW LEVEL SECURITY (already set by the migrations) is what
@@ -70,26 +70,26 @@ GRANT USAGE ON SCHEMA public TO engram_app;
 GRANT SELECT, INSERT, UPDATE ON
   nodes, edges, scopes, scope_grants, principals, pending_writes, inbox, dedup_log,
   metrics_rollup
-  TO engram_app;
+  TO engraphy_app;
 
 -- The schema's only DELETE grant (resolve_duplicate consumes the parked row
 -- it resolves) -- see migration 0011's header comment.
-GRANT DELETE ON pending_writes TO engram_app;
+GRANT DELETE ON pending_writes TO engraphy_app;
 
 -- Read-only support tables (registries + config -- written only by
 -- engraphy-admin pack apply/upgrade, never by the running server).
-GRANT SELECT ON spaces, node_types, edge_types, edge_rules, config TO engram_app;
+GRANT SELECT ON spaces, node_types, edge_types, edge_rules, config TO engraphy_app;
 
 -- Not RLS-covered (instance-level / append-only audit).
-GRANT SELECT, INSERT, UPDATE ON api_tokens, audit_log TO engram_app;
+GRANT SELECT, INSERT, UPDATE ON api_tokens, audit_log TO engraphy_app;
 
-GRANT EXECUTE ON FUNCTION engram_readable_scopes() TO engram_app;
-GRANT EXECUTE ON FUNCTION engram_writable_scopes() TO engram_app;
-GRANT EXECUTE ON FUNCTION engram_validate_attrs(jsonb, jsonb) TO engram_app;
+GRANT EXECUTE ON FUNCTION engraphy_readable_scopes() TO engraphy_app;
+GRANT EXECUTE ON FUNCTION engraphy_writable_scopes() TO engraphy_app;
+GRANT EXECUTE ON FUNCTION engraphy_validate_attrs(jsonb, jsonb) TO engraphy_app;
 
 -- /healthz reads schema_migrations through the app-role pool
 -- (applied_schema_version) -- unconditional here, unlike conftest.py's test
 -- fixture, because a production DB always has this table by the time this
 -- script runs (dbmate/engraphy-admin migrate creates it before anything else
 -- connects).
-GRANT SELECT ON schema_migrations TO engram_app;
+GRANT SELECT ON schema_migrations TO engraphy_app;

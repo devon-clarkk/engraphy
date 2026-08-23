@@ -75,7 +75,7 @@ docker run -d --name engraphy-pg \
 Your **superuser** URL (used for migrations and admin) is then:
 
 ```
-postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable
+postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable
 ```
 
 ## 2. Install the package
@@ -95,13 +95,13 @@ python -m engraphy.admin.cli <verb> ...
 
 ## 3. Provision the application role
 
-Engraphy runs the server as a **non-superuser** role (`engram_app`) so that
+Engraphy runs the server as a **non-superuser** role (`engraphy_app`) so that
 Row-Level Security actually constrains it — the app role is deliberately **not**
 `BYPASSRLS` and cannot run migrations. Create it once, against the superuser
 connection, using the shipped script:
 
 ```bash
-psql "postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable" \
+psql "postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable" \
   -v app_role_password="devapppw" \
   -f deploy/provision-app-role.sql
 ```
@@ -109,7 +109,7 @@ psql "postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable" \
 Your **app-role** URL (used by the running server) is then:
 
 ```
-postgres://engram_app:devapppw@127.0.0.1:5432/engram?sslmode=disable
+postgres://engraphy_app:devapppw@127.0.0.1:5432/engraphy?sslmode=disable
 ```
 
 ## 4. Run the migrations
@@ -120,7 +120,7 @@ DB the pre-dump is nearly empty and there is nothing to restart yet, which is fi
 Run it against the **superuser** URL:
 
 ```bash
-ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable" \
+ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable" \
   engraphy-admin migrate --dump-dir ./backups
 ```
 
@@ -134,7 +134,7 @@ Space/principal/token administration is **local-CLI only** (there is deliberatel
 no network code path for it). Run these against the **superuser** URL:
 
 ```bash
-export ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engram?sslmode=disable"
+export ENGRAPHY_DATABASE_URL="postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable"
 
 # A space + its founding space_admin principal + that principal's personal scope:
 engraphy-admin space create --id demo --display-name "Demo space" --principal devon
@@ -157,7 +157,7 @@ be retrieved again (`token revoke` + `token create` to replace a lost one).
 The server reads the **app-role** URL and a bind address from the environment:
 
 ```bash
-ENGRAPHY_DATABASE_URL="postgres://engram_app:devapppw@127.0.0.1:5432/engram?sslmode=disable" \
+ENGRAPHY_DATABASE_URL="postgres://engraphy_app:devapppw@127.0.0.1:5432/engraphy?sslmode=disable" \
 ENGRAPHY_BIND_HOST=127.0.0.1 \
 ENGRAPHY_BIND_PORT=8000 \
   python -m engraphy.server.app

@@ -327,7 +327,7 @@ def _validate_no_reserved_attrs(attrs: dict) -> None:
 
 def _validate_not_reserved_type(node_type: str) -> None:
     """Engine-owned node types (RESERVED_NODE_TYPES -- today just
-    `engram_sentinel`) may not be written over the tool surface (ruled
+    `engraphy_sentinel`) may not be written over the tool surface (ruled
     2026-07-21; design/07 §Pack file schema, Reserved names).
 
     `space create` registers the sentinel type in `node_types` so the sentinel

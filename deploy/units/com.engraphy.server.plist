@@ -30,7 +30,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>ENGRAPHY_DATABASE_URL</key>
-        <string>postgres://engram_app:CHANGE_ME@localhost:5432/engram?sslmode=disable</string>
+        <string>postgres://engraphy_app:CHANGE_ME@localhost:5432/engraphy?sslmode=disable</string>
         <key>ENGRAPHY_BIND_HOST</key>
         <string>127.0.0.1</string>
         <key>ENGRAPHY_BIND_PORT</key>

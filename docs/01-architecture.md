@@ -199,7 +199,7 @@ now" from "commit it to structured memory".
 
 ## 7. The restore sentinel
 
-Every space gets one engine-owned, archived `engram_sentinel` node at creation. It
+Every space gets one engine-owned, archived `engraphy_sentinel` node at creation. It
 never surfaces in search, briefing, or dedup — its only job is to let
 `engraphy-admin verify-restore` prove a backup restored correctly by asserting the
 sentinel's presence. You will see it mentioned in `space create` output; you never

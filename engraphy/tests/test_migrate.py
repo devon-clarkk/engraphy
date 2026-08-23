@@ -5,7 +5,7 @@ Orchestration (run()'s step order, error propagation) is tested here with
 the four steps monkeypatched -- no real pg_dump/dbmate subprocess needed to
 prove run() does the right thing on success and stops at the first failure.
 smoke_test()'s DB-level assertions are tested for real against the live test
-DB (engram_dev already has schema_migrations from the environment's earlier
+DB (engraphy_dev already has schema_migrations from the environment's earlier
 `dbmate up`, or this test seeds an equivalent state directly).
 """
 import pathlib
@@ -122,7 +122,7 @@ def test_restart_runs_shell_command_and_raises_on_failure():
 
 
 def test_smoke_test_passes_against_live_db_with_matching_schema_migrations(tmp_path):
-    """Uses the real migrations dir shipped with this install: engram_dev (the
+    """Uses the real migrations dir shipped with this install: engraphy_dev (the
     live test DB) is expected to already be at the current version via this
     environment's own setup. If schema_migrations doesn't exist or is behind,
     this documents that gap rather than papering over it."""
@@ -130,13 +130,13 @@ def test_smoke_test_passes_against_live_db_with_matching_schema_migrations(tmp_p
     try:
         lines = migrate.smoke_test(DATABASE_URL, real_migrations_dir, healthz_url=None)
     except migrate.MigrateError as exc:
-        pytest.skip(f"engram_dev not at expected schema version (documents a gap, not a migrate.py bug): {exc}")
+        pytest.skip(f"engraphy_dev not at expected schema version (documents a gap, not a migrate.py bug): {exc}")
     assert any("schema_migrations at" in line for line in lines)
     assert any("spaces table reachable" in line for line in lines)
 
 
 def test_smoke_test_raises_on_missing_schema_migrations_table(tmp_path):
-    """engram_dev (this environment's default test DB) was never
+    """engraphy_dev (this environment's default test DB) was never
     dbmate-provisioned (conftest.py's own comment on this), so it has no
     schema_migrations table -- exactly the "migrate didn't actually run"
     case smoke_test must catch with a clear message, not a raw
@@ -155,7 +155,7 @@ def test_smoke_test_raises_on_missing_schema_migrations_table(tmp_path):
 
 def test_smoke_test_raises_on_schema_version_mismatch(tmp_path):
     """Uses a scratch table so this runs the same on a dbmate-provisioned DB
-    (CI) and a not-provisioned one (local engram_dev) alike, rather than
+    (CI) and a not-provisioned one (local engraphy_dev) alike, rather than
     depending on which kind of DB happens to be under test."""
     (tmp_path / "0001_a.sql").write_text("-- migrate:up\n", encoding="utf-8")
     (tmp_path / "0999_future.sql").write_text("-- migrate:up\n", encoding="utf-8")

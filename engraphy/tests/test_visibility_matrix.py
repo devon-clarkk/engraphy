@@ -3,7 +3,7 @@ plan row `visibility_matrix` (generated): every (visibility, grant, actor) x
 operation combination from fixtures/visibility_matrix.py's generator, tested
 against RAW SQL (psql-level truth before server truth), per the plan's build
 order step 4. One Postgres connection per case: bootstrap as the superuser
-(sees everything, sets up the scenario), then `SET ROLE engram_app` to drop
+(sees everything, sets up the scenario), then `SET ROLE engraphy_app` to drop
 to the actual non-superuser, non-BYPASSRLS role for the check itself -- a
 second connection would not see the first's uncommitted setup rows, and
 committing between them would require manual cleanup per case.
