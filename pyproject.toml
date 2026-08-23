@@ -13,6 +13,9 @@ name = "engraphy"
 # runtime, so all three can only ever agree.
 dynamic = ["version"]
 description = "A self-hosted memory engine for AI agents"
+# Carried into the distribution metadata, so a built wheel or sdist
+# describes itself with the README rather than the one-line summary alone.
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "mcp>=1.9,<2",                 # official MCP SDK (FastMCP server API). Upper bound: mcp 2.0.0
