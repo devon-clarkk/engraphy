@@ -20,7 +20,8 @@ jobs:
       - run: pip install -e . pyyaml
       - name: which CPU is this
         run: |
-          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 -E 'model name|Model|CPU part' /proc/cpuinfo || true
+          uname -m
           python -c "import onnxruntime, platform; print('ort', onnxruntime.__version__); print(platform.platform())"
       - name: micro band windows
         run: python scripts/baseline_dedup_fixtures_profile.py --profile micro --t-high 0.95 --t-low 0.90 || true
