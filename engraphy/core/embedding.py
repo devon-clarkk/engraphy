@@ -35,11 +35,25 @@ revision stays pinned regardless: the same repo serves every artifact, and a
 floating revision would change the weights under a calibrated dedup band.
 
 Vectors from `onnx-int8` are NOT interchangeable with the other two. Quantization
-contracts pairwise cosine by a systematic ~0.014, which moves near-identical pairs
-across `dedup.t_high`. That is why the int8 profile ships its own band default and
-its own fixture set, and why switching an existing store onto it wants
-`engraphy-admin reembed` rather than a bare restart. `MODEL_STAMP` records which
-pipeline produced a row so that backfill is resumable and idempotent.
+contracts pairwise cosine, which moves near-identical pairs across `dedup.t_high`.
+That is why the int8 profile ships its own band defaults and its own fixture set,
+and why switching an existing store onto it wants `engraphy-admin reembed` rather
+than a bare restart. `MODEL_STAMP` records which pipeline produced a row so that
+backfill is resumable and idempotent.
+
+`onnx-int8` is opt-in, and the reason is a measurement rather than caution.
+Quantized arithmetic varies with the host CPU, and around `dedup.t_low` that
+variation is larger than the margin int8 leaves. Two committed fixtures sit either
+side of the confirm edge; across two Linux x86-64 hosts running identical code
+they measured 0.8072 / 0.8197 on one and 0.7809 / 0.8017 on the other, so the
+viable `t_low` windows were (0.8072, 0.8197] and (0.7809, 0.8017]. Those do not
+intersect: no single shipped default reproduces the same banding on both. The fp32
+space leaves 0.040 of room at the same edge and is bit-reproducible, which is why
+it holds the default.
+
+Running int8 is supported and worthwhile where the memory matters. Calibrate
+`dedup.t_low` against the target hardware first, with
+`scripts/baseline_dedup_fixtures_profile.py`, and set it per space in `config`.
 """
 import functools
 import math
@@ -59,7 +73,7 @@ DIMS = 384
 _ONNX_FILES = {"onnx-fp32": "onnx/model.onnx", "onnx-int8": "onnx/model_quantized.onnx"}
 
 PROFILES = ("onnx-int8", "onnx-fp32", "legacy-torch")
-DEFAULT_PROFILE = "onnx-int8"
+DEFAULT_PROFILE = "onnx-fp32"
 _PROFILE_ENV = "ENGRAPHY_EMBEDDING_PROFILE"
 
 #: Profiles whose vectors are interchangeable, and therefore share a stamp.

@@ -58,9 +58,9 @@ Engraphy itself. For production postures see the
   migrate` shells out to it.
 - Postgres client tools (`psql`, and `pg_dump`/`pg_restore` if you'll take backups
   or run `verify-restore`).
-- The embedding model `nomic-ai/nomic-embed-text-v1.5` (int8 ONNX, ~131 MB) is
-  baked into the image, so first boot is offline and immediate. It is cached in
-  the `model-cache` volume and persists across rebuilds.
+- The embedding model `nomic-ai/nomic-embed-text-v1.5` is baked into the image,
+  so first boot is offline and immediate. It is cached in the `model-cache`
+  volume and persists across rebuilds.
 
 ## 1. Start Postgres + pgvector
 
@@ -186,7 +186,7 @@ Expect something like:
 
 ```json
 {"status":"ok","version":"0.1.0","schema_version":"0020",
- "spaces":1,"embedding_model":"nomic-ai/nomic-embed-text-v1.5+onnx-int8"}
+ "spaces":1,"embedding_model":"nomic-ai/nomic-embed-text-v1.5"}
 ```
 
 `schema_version` should match the highest-numbered file in

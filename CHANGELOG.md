@@ -2,11 +2,12 @@
 
 ## 0.2.0
 
-The default embedder runs nomic-embed-text-v1.5 int8-quantized on ONNX Runtime.
+The default embedder runs nomic-embed-text-v1.5 on ONNX Runtime. The default
+install carries no deep-learning framework.
 
 ### Added
 - `ENGRAPHY_EMBEDDING_PROFILE` selects the embedding backend. The values are
-  `onnx-int8` (the default), `onnx-fp32`, and `legacy-torch`. All three load the
+  `onnx-fp32` (the default), `onnx-int8`, and `legacy-torch`. All three load the
   same model at the same pinned revision and emit 384-dim unit vectors into the
   same `vector(384)` column, so no profile changes the schema. An unknown value
   stops the process and names the known profiles.
@@ -21,40 +22,45 @@ The default embedder runs nomic-embed-text-v1.5 int8-quantized on ONNX Runtime.
   for the int8 vector space. The cases and their expected bands are read from
   `dedup_cases.yaml`, so the two files hold one contract.
 - `scripts/baseline_dedup_fixtures_profile.py` baselines the fixtures for a
-  profile. Run it inside the deployment image.
+  profile on the host that will run it.
 
 ### Changed
-- The default embedding profile is `onnx-int8`. The ONNX profiles execute a
-  serialized graph and no repository Python, so the default path uses no
-  `trust_remote_code` and imports no framework. The pinned revision
-  `e9b6763023c676ca8431644204f50c2b100d9aab` is unchanged.
+- The default embedding profile is `onnx-fp32`. It reproduces the vectors of the
+  `legacy-torch` profile to float noise, measured at cosine 1.0 and a maximum
+  elementwise difference of 2.1e-07, and it retrieves identically: over 494
+  LoCoMo questions the two profiles agree on every question. The two share their
+  `nodes.embedding_model` stamp, so a store moves between them with a restart and
+  `reembed` reports no work.
+- The ONNX profiles execute a serialized graph and no repository Python, so the
+  default path uses no `trust_remote_code` and imports no framework. The pinned
+  revision `e9b6763023c676ca8431644204f50c2b100d9aab` is unchanged.
 - `nodes.embedding_model` carries a profile-qualified stamp that names the vector
-  space. `legacy-torch` and `onnx-fp32` produce interchangeable vectors and share
-  the bare model id. `onnx-int8` stamps as
-  `nomic-ai/nomic-embed-text-v1.5+onnx-int8`.
-- The `onnx-int8` profile uses `dedup.t_high` 0.94 and `dedup.t_low` 0.81. These
-  are code defaults, so a per-space `config` row and an explicit caller parameter
-  both still take precedence. The other profiles use 0.95 and 0.80. Read-time
-  near-duplicate collapse follows the active profile's merge band.
+  space. `onnx-int8` stamps as `nomic-ai/nomic-embed-text-v1.5+onnx-int8`.
 - The runtime dependencies are `onnxruntime`, `tokenizers`, and
   `huggingface-hub`. Install `engraphy[legacy-torch]` to use the `legacy-torch`
   profile, and see `requirements-cpu.txt` for the CPU torch pin.
-- The server and admin images bake the int8 graph, about 131 MB. First boot is
-  offline. Build with `--build-arg ENGRAPHY_EMBEDDING_PROFILE=<profile>` to bake
-  a different profile.
+- The server and admin images bake the embedding graph, so first boot is offline.
+  Build with `--build-arg ENGRAPHY_EMBEDDING_PROFILE=<profile>` to bake a
+  different profile.
 - `docs/05-deployment.md` documents the profiles, the vector-space table, and the
   re-embed procedure.
 
+### Notes on `onnx-int8`
+- The profile ships complete: its own calibrated dedup bands, its own fixture
+  set, and `reembed` to convert a store onto it. It is opt-in.
+- Its band calibration is host-specific. Quantized arithmetic varies with the
+  CPU, and around `dedup.t_low` that variation exceeds the margin int8 leaves.
+  Baseline `scripts/baseline_dedup_fixtures_profile.py` on the target host, then
+  set `dedup.t_low` per space in `config`.
+- Switching a store onto `onnx-int8` requires `engraphy-admin reembed`, because
+  its vectors are not interchangeable with the other two profiles.
+
 ### Upgrading
-- Set `ENGRAPHY_EMBEDDING_PROFILE=legacy-torch` to keep the previous backend, and
-  install the `legacy-torch` extra.
-- On the default profile, run `engraphy-admin reembed --space <space>` once per
-  space. Take a restore-tested backup first. Until a store is fully re-embedded,
-  the write path compares int8 vectors against vectors from the other space; a
-  near-duplicate opens a confirm round trip in that state.
-- `onnx-fp32` reproduces the `legacy-torch` vectors to float noise and shares its
-  stamp. Moving between those two profiles is a restart, and `reembed` reports no
-  work.
+- No action is required. The default profile emits the same vectors as the
+  previous release and shares its stamp, so an existing store is already correct
+  and `reembed` reports no work.
+- Set `ENGRAPHY_EMBEDDING_PROFILE=legacy-torch` and install the `legacy-torch`
+  extra to keep the previous backend.
 
 ## Unreleased
 - Engram -> Engraphy rename completed inside the database (migration 0024). The

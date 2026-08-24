@@ -183,7 +183,7 @@ an example per tool. A first-party VS Code extension lives in
 - **Python ≥ 3.12**.
 - **[dbmate](https://github.com/amacneil/dbmate)** for migrations (bundled in the
   admin container; only needed on `PATH` for the no-Docker path).
-- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim, int8 ONNX, ~131 MB,
+- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim, on ONNX Runtime,
   downloaded and cached on first boot).
 
 ## Project status

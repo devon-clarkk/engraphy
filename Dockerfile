@@ -5,7 +5,7 @@
 #                                                and dbmate for `engraphy-admin
 #                                                migrate` / `verify-restore`.
 #
-# The embedding model (nomic-embed-text-v1.5, int8 ONNX, ~131MB) is PRE-BAKED
+# The embedding model (nomic-embed-text-v1.5, on ONNX Runtime) is PRE-BAKED
 # into the image at build time (see the prebake RUN below), so first boot is
 # offline and instant -- no HuggingFace round trip. The compose `model-cache` volume is
 # seeded from that baked cache the first time it is created (Docker seeds an

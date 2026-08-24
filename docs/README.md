@@ -58,9 +58,9 @@ server with something that survives concurrency, distance, duplicates, and years
   image ships both).
 - **Python ≥ 3.12**.
 - **[dbmate](https://github.com/amacneil/dbmate)** on `PATH` for migrations.
-- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim), running
-  int8-quantized on ONNX Runtime (~131 MB) and baked into the image. Two other
-  profiles are selectable with `ENGRAPHY_EMBEDDING_PROFILE`: `onnx-fp32`, whose
-  vectors are interchangeable with int8's predecessor, and `legacy-torch`.
+- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim), running on
+  ONNX Runtime and baked into the image. Two other profiles are selectable with
+  `ENGRAPHY_EMBEDDING_PROFILE`: `onnx-int8`, which is smaller and faster, and
+  `legacy-torch`.
 
 See [Setup](02-setup.md) for the exact steps.
