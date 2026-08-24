@@ -21,7 +21,7 @@ overview and the reference for auth, scopes, and day-2 tasks.
 | `ENGRAPHY_INSECURE_TRANSPORT_OK` | server | set `true` **only** to bind a genuinely public interface without TLS on an overlay-only network. |
 | `ENGRAPHY_LAST_BACKUP_STATUS_FILE` | server | path whose contents `/healthz` reports as `last_backup_at` — your backup job writes the completion timestamp here. |
 | `ENGRAPHY_EMBEDDING_PROFILE` | server and admin CLI | which embedding backend runs (default `onnx-fp32`). See below. |
-| `ENGRAPHY_EMBEDDING_THREADS` | server | ONNX Runtime intra-op threads. Unset lets the runtime choose, which is the faster default. Set it to bound CPU where many workers share a host. |
+| `ENGRAPHY_EMBEDDING_THREADS` | server | ONNX Runtime intra-op threads (default `1`). The embed runs beside the connection pool and the database, and extra threads contend with them: measured search p50 is 76.8ms at one thread and 156ms unpinned. Raise it only where the embedder has cores to itself. |
 
 ## Embedding profiles
 

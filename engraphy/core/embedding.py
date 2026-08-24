@@ -205,14 +205,21 @@ class _OnnxBackend:
             raise _cache_not_writable(exc) from exc
 
         opts = onnxruntime.SessionOptions()
-        # Left to ONNX Runtime unless an operator pins it. Measured on a 4-core
-        # container, one query embed: 41.8ms pinned to a single intra-op thread
-        # against 21.1ms at the runtime's own default. A single short sequence
-        # does parallelise, so pinning it halves throughput for no benefit. Set
-        # ENGRAPHY_EMBEDDING_THREADS to bound it where many workers share a host.
-        threads = os.environ.get("ENGRAPHY_EMBEDDING_THREADS")
-        if threads:
-            opts.intra_op_num_threads = int(threads)
+        # One intra-op thread, and this is measured rather than assumed. In
+        # isolation more threads do win: a single query embed on a 4-core box is
+        # 41.8ms at one thread against 21.1ms at the runtime's default. In the
+        # serving path the opposite holds, because the embed does not run alone.
+        # It runs beside an async connection pool and a local Postgres, and the
+        # extra threads contend with both. Measured end to end by the benchmark
+        # at 10k nodes, search p50:
+        #
+        #     1 thread    76.8ms
+        #     2 threads  167.0ms
+        #     unpinned   156.1ms
+        #
+        # The isolated number is the misleading one. Raise this only on a host
+        # where the embedder has cores to itself.
+        opts.intra_op_num_threads = int(os.environ.get("ENGRAPHY_EMBEDDING_THREADS", "1"))
         self._sess = onnxruntime.InferenceSession(
             model_path, opts, providers=["CPUExecutionProvider"])
         self._inputs = {i.name for i in self._sess.get_inputs()}
