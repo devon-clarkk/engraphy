@@ -25,9 +25,8 @@ the seam is the only thing that varies.
 
   `onnx-int8`     ONNX Runtime over `onnx/model_quantized.onnx`.
   `onnx-fp32`     ONNX Runtime over `onnx/model.onnx`. Reproduces the torch
-                  vectors to within float noise, so it is the profile to reach
-                  for when a store must stay directly comparable to one written
-                  by `legacy-torch` with no re-embed at all.
+                  vectors to within float noise, so a store written by either is
+                  directly comparable and moving between them needs no re-embed.
   `legacy-torch`  sentence-transformers over `model.safetensors`.
 
 The ONNX profiles execute a serialized graph and no repository Python, so
@@ -60,8 +59,15 @@ DIMS = 384
 _ONNX_FILES = {"onnx-fp32": "onnx/model.onnx", "onnx-int8": "onnx/model_quantized.onnx"}
 
 PROFILES = ("onnx-int8", "onnx-fp32", "legacy-torch")
-DEFAULT_PROFILE = "legacy-torch"
+DEFAULT_PROFILE = "onnx-fp32"
 _PROFILE_ENV = "ENGRAPHY_EMBEDDING_PROFILE"
+
+#: Profiles whose vectors are interchangeable, and therefore share a stamp.
+#: `onnx-fp32` reproduces `legacy-torch` to float noise (asserted in
+#: test_embedding_profiles.py), so a row embedded by either is the same row as
+#: far as any cosine in this system is concerned. `onnx-int8` is a genuinely
+#: different space and stamps separately.
+_FP32_EQUIVALENT = ("legacy-torch", "onnx-fp32")
 
 _model = None
 
@@ -95,13 +101,16 @@ def profile() -> str:
 def model_stamp(name: str | None = None) -> str:
     """What goes in `nodes.embedding_model`.
 
-    Profile-qualified, and that is the point: `MODEL_ID` alone is the same string
-    for all three backends, so a bare model id cannot tell a row embedded by int8
-    from one embedded by torch. `engraphy-admin reembed` selects on exactly this
-    value, which is what makes the backfill resumable and idempotent.
+    It names the VECTOR SPACE, not the executor, which is the distinction that
+    makes the backfill correct. `legacy-torch` and `onnx-fp32` produce
+    interchangeable vectors and therefore share the bare `MODEL_ID`: moving a
+    store between those two profiles is a restart and nothing else, and
+    `engraphy-admin reembed` correctly finds no work to do. `onnx-int8` is a
+    different space and stamps separately, so the same command finds every row
+    that still needs rewriting and can resume mid-run.
     """
     name = name or profile()
-    return MODEL_ID if name == "legacy-torch" else f"{MODEL_ID}+{name}"
+    return MODEL_ID if name in _FP32_EQUIVALENT else f"{MODEL_ID}+{name}"
 
 
 #: Stamped into `nodes.embedding_model` on every write and re-embed. Resolved once

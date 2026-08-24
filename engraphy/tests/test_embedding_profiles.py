@@ -80,21 +80,23 @@ def test_unknown_profile_fails_loudly_rather_than_falling_back(monkeypatch):
 
 # --- The stamp --------------------------------------------------------------
 
-def test_stamp_distinguishes_every_profile():
-    """`MODEL_ID` is one string for all three backends, so the stamp is what lets
-    `engraphy-admin reembed` tell an int8 row from a torch one. If any two
-    profiles shared a stamp the backfill would skip rows it must rewrite."""
-    stamps = {name: embedding.model_stamp(name) for name in embedding.PROFILES}
-    assert len(set(stamps.values())) == len(embedding.PROFILES)
-    for name, stamp in stamps.items():
-        assert stamp.startswith(embedding.MODEL_ID)
+def test_stamp_names_the_vector_space_not_the_executor():
+    """The stamp exists so `engraphy-admin reembed` can tell which rows sit in
+    which vector space. Profiles that produce interchangeable vectors must share
+    it, or the backfill would rewrite rows that are already correct; profiles
+    that do not must differ, or it would skip rows it has to rewrite."""
+    assert embedding.model_stamp("legacy-torch") == embedding.model_stamp("onnx-fp32")
+    assert embedding.model_stamp("onnx-int8") != embedding.model_stamp("onnx-fp32")
+    for name in embedding.PROFILES:
+        assert embedding.model_stamp(name).startswith(embedding.MODEL_ID)
 
 
-def test_legacy_torch_stamp_is_the_bare_model_id():
-    """Rows written before the seam existed carry the bare id. Keeping
-    `legacy-torch` on that exact string means those rows are already correctly
-    labelled and a backfill does not have to guess at their provenance."""
+def test_fp32_profiles_carry_the_bare_model_id():
+    """Rows written before the seam existed carry the bare id. Both fp32-equivalent
+    profiles keep that exact string, so those rows stay correctly labelled and the
+    torch-to-ONNX flip is a restart with no data implication at all."""
     assert embedding.model_stamp("legacy-torch") == embedding.MODEL_ID
+    assert embedding.model_stamp("onnx-fp32") == embedding.MODEL_ID
 
 
 def test_module_stamp_matches_the_active_profile():
