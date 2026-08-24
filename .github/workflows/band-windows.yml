@@ -1,0 +1,32 @@
+name: band-windows
+# Manual only. Re-derives the dedup band windows a profile admits ON THIS RUNNER.
+#
+# Quantized arithmetic varies with the CPU, and for a narrow band that variation
+# decides whether a single shipped default can hold at all. This is the job that
+# measured it for `onnx-int8` and for `micro`: run it, read the windows, compare
+# them against the windows the calibration host reported.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: embedding profile to measure
+        required: true
+        default: micro
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - run: pip install -e '.[dev]'
+      - name: which CPU is this
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          python -c "import onnxruntime, platform; print('ort', onnxruntime.__version__); print(platform.platform())"
+      - name: band windows
+        run: |
+          python scripts/baseline_dedup_fixtures_profile.py \
+            --profile "${{ inputs.profile }}" --t-high 0.95 --t-low 0.90 || true
