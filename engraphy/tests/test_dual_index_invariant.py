@@ -297,7 +297,7 @@ async def test_dual_index_invariant_full_workload(pool, rule_space, conn):
         "embedding_model, source_client, author_principal) "
         "VALUES (%s, 'note', 'work', 'Legacy', %s, %s, %s::vector, %s, 'pytest', 'p1') RETURNING id",
         (space, legacy_body, Jsonb({"addenda": [legacy_addendum]}),
-         "[" + ",".join(str(x) for x in legacy_vec) + "]", _emb.MODEL_ID),
+         "[" + ",".join(str(x) for x in legacy_vec) + "]", _emb.MODEL_STAMP),
     )
     conn.commit()
     promote_addenda(conn, space, embed_document=_emb.embed_document)
@@ -451,7 +451,7 @@ async def test_dual_index_legacy_row_findable_only_after_surface_rebuild(pool, r
         "INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, embedding, "
         "embedding_model, source_client, author_principal, extra_search) "
         "VALUES (%s,'person','work','Old','Old contact.',%s,%s::vector,%s,'pytest','p1','') RETURNING id",
-        (space, Jsonb({"occupation": "cooper zq7xk-99"}), lit, _emb.MODEL_ID))
+        (space, Jsonb({"occupation": "cooper zq7xk-99"}), lit, _emb.MODEL_STAMP))
     nid = str(cur.fetchone()[0])
     conn.commit()
 

@@ -65,7 +65,7 @@ def _insert_node(conn, space_id, nid, node_type, scope, title, body, attrs, stat
             "embedding_model, source_client, author_principal")
     placeholders = "%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, 'pytest', 'p1'"
     params = [nid, space_id, node_type, scope, title, body,
-              Jsonb(attrs), status, lit, _emb.MODEL_ID]
+              Jsonb(attrs), status, lit, _emb.MODEL_STAMP]
     if created_days_ago is not None:
         cols += ", created_at"
         placeholders += ", now() - make_interval(days => %s)"

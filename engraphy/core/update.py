@@ -134,7 +134,7 @@ async def update(
             f"RETURNING {_ENVELOPE_COLS}",
             (
                 new_title, new_body, Jsonb(new_attrs), new_extra,
-                _vector_literal(embedding_vector), embedding.MODEL_ID, node_id,
+                _vector_literal(embedding_vector), embedding.MODEL_STAMP, node_id,
             ),
         )
         updated_row = await cur.fetchone()

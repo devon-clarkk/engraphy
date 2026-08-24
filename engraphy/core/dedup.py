@@ -665,7 +665,7 @@ async def _do_insert(cur, space_id, node_type, scope_id, principal, source_clien
         "RETURNING id, status, created_at",
         (
             space_id, node_type, scope_id, title, body, Jsonb(attrs),
-            _vector_literal(embedding_vector), embedding.MODEL_ID, source_client,
+            _vector_literal(embedding_vector), embedding.MODEL_STAMP, source_client,
             source_session, principal, extra_search,
         ),
     )

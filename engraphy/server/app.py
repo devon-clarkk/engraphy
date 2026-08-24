@@ -356,7 +356,7 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
             "version": ENGINE_VERSION,
             "schema_version": await applied_schema_version(pool),
             "spaces": space_count,
-            "embedding_model": embedding.MODEL_ID,
+            "embedding_model": embedding.MODEL_STAMP,
         }
         last_backup_at = _read_last_backup_at()
         if last_backup_at is not None:

@@ -1222,7 +1222,7 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
             # read.md is retired: the reader's instruction is now the shipped
             # skill + output contract, recorded under `reader` above.
         },
-        "embedding_model": embedding.MODEL_ID,
+        "embedding_model": embedding.MODEL_STAMP,
         "embedding_revision": embedding.MODEL_REVISION,
         "llm_extractor": {
             "retain_source_text": _LLM_RETAIN_SOURCE_TEXT,

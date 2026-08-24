@@ -82,7 +82,7 @@ def test_stranded_attr_row_is_reembedded_with_extra_search(space, conn):
     cur.execute("SELECT extra_search, embedding_model FROM nodes WHERE id = %s", (nid,))
     extra, model = cur.fetchone()
     assert extra == "occupation: glassblower"
-    assert model == _emb.MODEL_ID  # re-embedded
+    assert model == _emb.MODEL_STAMP  # re-embedded
 
 
 def test_attr_less_and_already_correct_rows_are_skipped(space, conn):
@@ -155,7 +155,7 @@ def test_inactive_rows_rebuilt_but_sentinel_excluded(space, conn):
     cur = conn.cursor()
     cur.execute("SELECT extra_search, embedding_model FROM nodes WHERE id = %s", (superseded,))
     extra, model = cur.fetchone()
-    assert extra == "occupation: nurse" and model == _emb.MODEL_ID
+    assert extra == "occupation: nurse" and model == _emb.MODEL_STAMP
     # sentinel untouched: constant vector + marker model preserved.
     cur.execute("SELECT embedding_model FROM nodes WHERE id = %s", (sentinel,))
     assert cur.fetchone()[0] == SENTINEL_EMBEDDING_MODEL

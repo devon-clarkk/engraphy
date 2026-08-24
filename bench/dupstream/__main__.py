@@ -135,7 +135,7 @@ async def main() -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "engine_git_sha": _git_sha(),
         "pack": {"name": run_space.pack_name, "version": run_space.pack_version},
-        "embedding_model": embedding.MODEL_ID,
+        "embedding_model": embedding.MODEL_STAMP,
         "embedding_revision": embedding.MODEL_REVISION,
         "confirm_policy": args.policy,
         "role_models": {"adjudicator": args.policy},

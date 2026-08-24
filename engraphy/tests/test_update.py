@@ -44,7 +44,7 @@ async def test_update_title_change_reembeds(pool, write_space, conn):
     cur = conn.cursor()
     cur.execute("SELECT embedding_model FROM nodes WHERE id = %s", (nid,))
     from engraphy.core import embedding as _emb
-    assert cur.fetchone()[0] == _emb.MODEL_ID  # re-embedded -> pinned model id stamped
+    assert cur.fetchone()[0] == _emb.MODEL_STAMP  # re-embedded -> pinned model id stamped
 
 
 async def test_update_byte_identical_repeat_skips_reembed_and_updated_at(pool, write_space, conn):
@@ -177,7 +177,7 @@ async def test_update_searchable_attr_change_reembeds(profile_space, pool, conn)
     cur = conn.cursor()
     cur.execute("SELECT embedding_model, extra_search FROM nodes WHERE id = %s", (nid,))
     model, extra = cur.fetchone()
-    assert model == _emb.MODEL_ID, "a searchable-attr change must re-embed"
+    assert model == _emb.MODEL_STAMP, "a searchable-attr change must re-embed"
     assert extra == "occupation: teacher", "extra_search tracks the new searchable attr"
 
 

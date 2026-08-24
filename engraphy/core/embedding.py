@@ -1,9 +1,9 @@
 """Embedding pipeline. Normative: design/02 (revised decision) + design/07 §Exact formulas.
 
-Default model: nomic-embed-text-v1.5, truncated to first 384 dims, then L2-RE-NORMALIZED
-(unit vectors => similarity == dot == 1 - cosine_distance). Fallback: bge-small-en-v1.5.
-Loaded ONCE at process start. embed() is pure and MUST NOT be called inside a DB
-transaction (design/implementation/dedup-write-path-plan.md, trap 3 — CI grep enforces).
+Model: nomic-embed-text-v1.5, truncated to first 384 dims, then L2-RE-NORMALIZED
+(unit vectors => similarity == dot == 1 - cosine_distance). Loaded ONCE at process
+start. embed() is pure and MUST NOT be called inside a DB transaction
+(design/implementation/dedup-write-path-plan.md, trap 3 -- CI grep enforces).
 
 Task prefixes (QUESTIONS.md "embedding-task-prefix", resolved 2026-07-16, Fable
 option b): the pinned model's card mandates a task-instruction prefix, so callers
@@ -13,20 +13,65 @@ node text (write, dedup candidates, resonance, update re-embeds, import) is
 "search_query: " + query. Prefix concatenated directly, no extra separator, as
 the card shows. Dedup and resonance compare document-vs-document, so banding stays
 symmetric; only search is asymmetric, which is the model's own retrieval design.
-Core embed() and its norm invariants are unchanged — it is the shared primitive
+Core embed() and its norm invariants are unchanged: it is the shared primitive
 the two wrappers call.
+
+## Backends
+
+One model, one revision, three ways to run it. `ENGRAPHY_EMBEDDING_PROFILE`
+selects; every profile loads the SAME weights at the SAME pinned revision and
+produces a 384-dim unit vector through the same truncate-and-renormalize tail, so
+the seam is the only thing that varies.
+
+  `onnx-int8`     ONNX Runtime over `onnx/model_quantized.onnx`.
+  `onnx-fp32`     ONNX Runtime over `onnx/model.onnx`. Reproduces the torch
+                  vectors to within float noise, so it is the profile to reach
+                  for when a store must stay directly comparable to one written
+                  by `legacy-torch` with no re-embed at all.
+  `legacy-torch`  sentence-transformers over `model.safetensors`.
+
+The ONNX profiles execute a serialized graph and no repository Python, so
+`trust_remote_code` is not used on those paths and torch is never imported. The
+revision stays pinned regardless: the same repo serves every artifact, and a
+floating revision would change the weights under a calibrated dedup band.
+
+Vectors from `onnx-int8` are NOT interchangeable with the other two. Quantization
+contracts pairwise cosine by a systematic ~0.014, which moves near-identical pairs
+across `dedup.t_high`. That is why the int8 profile ships its own band default and
+its own fixture set, and why switching an existing store onto it wants
+`engraphy-admin reembed` rather than a bare restart. `MODEL_STAMP` records which
+pipeline produced a row so that backfill is resumable and idempotent.
 """
+import functools
 import math
 import os
 import pathlib
 
 MODEL_ID = "nomic-ai/nomic-embed-text-v1.5"
-# Pinned commit, not "main" -- trust_remote_code=True executes the repo's own model code,
-# so floating on the branch head would mean an upstream push runs arbitrary code here.
+# Pinned commit, not "main". The legacy-torch profile runs the repo's own model
+# code under trust_remote_code=True, so floating on the branch head would mean an
+# upstream push executes arbitrary code here. The ONNX profiles do not execute
+# repository Python, but they stay pinned anyway: the dedup bands are calibrated
+# against these exact weights, so an upstream reupload would silently move them.
 MODEL_REVISION = "e9b6763023c676ca8431644204f50c2b100d9aab"
 DIMS = 384
 
+#: ONNX graph paths inside the model repo, per profile.
+_ONNX_FILES = {"onnx-fp32": "onnx/model.onnx", "onnx-int8": "onnx/model_quantized.onnx"}
+
+PROFILES = ("onnx-int8", "onnx-fp32", "legacy-torch")
+DEFAULT_PROFILE = "legacy-torch"
+_PROFILE_ENV = "ENGRAPHY_EMBEDDING_PROFILE"
+
 _model = None
+
+
+class UnknownEmbeddingProfile(RuntimeError):
+    """`ENGRAPHY_EMBEDDING_PROFILE` names a profile this build does not have.
+    Raised instead of silently falling back, for the same reason a malformed
+    config value fails a write loudly (design/07): an operator who typoed the
+    profile would otherwise get a store embedded by the wrong pipeline and no
+    signal until the dedup bands started behaving oddly."""
 
 
 class ModelCacheNotWritable(RuntimeError):
@@ -36,6 +81,35 @@ class ModelCacheNotWritable(RuntimeError):
     an internal blob path and gives the operator nothing actionable."""
 
 
+def profile() -> str:
+    """The active backend. Unset means DEFAULT_PROFILE; an unknown value raises."""
+    name = os.environ.get(_PROFILE_ENV) or DEFAULT_PROFILE
+    if name not in PROFILES:
+        raise UnknownEmbeddingProfile(
+            f"{_PROFILE_ENV}={name!r} is not a known embedding profile. "
+            f"Known: {', '.join(PROFILES)}."
+        )
+    return name
+
+
+def model_stamp(name: str | None = None) -> str:
+    """What goes in `nodes.embedding_model`.
+
+    Profile-qualified, and that is the point: `MODEL_ID` alone is the same string
+    for all three backends, so a bare model id cannot tell a row embedded by int8
+    from one embedded by torch. `engraphy-admin reembed` selects on exactly this
+    value, which is what makes the backfill resumable and idempotent.
+    """
+    name = name or profile()
+    return MODEL_ID if name == "legacy-torch" else f"{MODEL_ID}+{name}"
+
+
+#: Stamped into `nodes.embedding_model` on every write and re-embed. Resolved once
+#: at import: the profile is process-level configuration and a mid-process change
+#: would mean one process writing rows in two vector spaces.
+MODEL_STAMP = model_stamp()
+
+
 def _cache_dir() -> pathlib.Path:
     """Where huggingface_hub will try to write. HF_HOME is what the container
     sets; the library's own default is ~/.cache/huggingface."""
@@ -43,37 +117,113 @@ def _cache_dir() -> pathlib.Path:
     return pathlib.Path(hf_home) if hf_home else pathlib.Path.home() / ".cache" / "huggingface"
 
 
+def _cache_not_writable(exc: PermissionError) -> ModelCacheNotWritable:
+    """The cloud profile mounts a named volume at HF_HOME. If the image did not
+    create that directory first, Docker creates the mountpoint root-owned and
+    this process (uid 1000) cannot write it: the server then crash-loops before
+    serving anything, and the raw PermissionError points at a huggingface_hub
+    blob path that explains none of it. This cost ~10 minutes of misdiagnosis
+    during the first deploy walkthrough (it reads exactly like a slow model
+    download), so name the cause and the fix instead."""
+    cache = _cache_dir()
+    return ModelCacheNotWritable(
+        f"cannot write the embedding-model cache at {cache} "
+        f"(uid={os.getuid() if hasattr(os, 'getuid') else 'n/a'}): {exc}\n"
+        f"The model must be downloaded there on first boot.\n"
+        f"If this is the Docker/compose profile, the model-cache volume is "
+        f"probably root-owned because the image did not create HF_HOME "
+        f"before the volume was mounted over it. Fix the image (mkdir -p + "
+        f"chown to the runtime user before USER), or repair the existing "
+        f"volume once with:\n"
+        f"  docker run --rm -v <project>_model-cache:/cache alpine "
+        f"chown -R 1000:1000 /cache\n"
+        f"Otherwise ensure {cache} is writable by the user running engraphy."
+    )
+
+
+class _TorchBackend:
+    """sentence-transformers over the safetensors weights."""
+
+    def __init__(self):
+        from sentence_transformers import SentenceTransformer
+
+        try:
+            self._st = SentenceTransformer(
+                MODEL_ID, revision=MODEL_REVISION, trust_remote_code=True)
+        except PermissionError as exc:
+            raise _cache_not_writable(exc) from exc
+
+    def encode(self, text: str):
+        return self._st.encode(text, normalize_embeddings=False)
+
+
+class _OnnxBackend:
+    """ONNX Runtime over one of the repo's exported graphs.
+
+    Reproduces what sentence-transformers does for this model, which its
+    `modules.json` states exactly: a Transformer followed by mean Pooling, and no
+    normalization module (the tail in `embed()` supplies that). Deliberately raw
+    `onnxruntime` + `tokenizers` rather than a wrapper library: the wrapper that
+    was convenient for prototyping does not guarantee a revision pin, and pinning
+    is the whole reason MODEL_REVISION exists.
+    """
+
+    def __init__(self, graph: str):
+        import numpy as np
+        import onnxruntime
+        from huggingface_hub import hf_hub_download
+        from tokenizers import Tokenizer
+
+        self._np = np
+        try:
+            model_path = hf_hub_download(MODEL_ID, graph, revision=MODEL_REVISION)
+            tok_path = hf_hub_download(MODEL_ID, "tokenizer.json", revision=MODEL_REVISION)
+        except PermissionError as exc:
+            raise _cache_not_writable(exc) from exc
+
+        opts = onnxruntime.SessionOptions()
+        # One embed per call (see embed()); extra intra-op threads buy nothing on a
+        # single short sequence and cost a thread pool per worker process.
+        opts.intra_op_num_threads = int(os.environ.get("ENGRAPHY_EMBEDDING_THREADS", "1"))
+        self._sess = onnxruntime.InferenceSession(
+            model_path, opts, providers=["CPUExecutionProvider"])
+        self._inputs = {i.name for i in self._sess.get_inputs()}
+        self._tok = Tokenizer.from_file(tok_path)
+
+    def encode(self, text: str):
+        np = self._np
+        enc = self._tok.encode(text)
+        ids = np.asarray([enc.ids], dtype=np.int64)
+        mask = np.asarray([enc.attention_mask], dtype=np.int64)
+        feed = {"input_ids": ids, "attention_mask": mask}
+        if "token_type_ids" in self._inputs:
+            feed["token_type_ids"] = np.zeros_like(ids)
+        hidden = self._sess.run(None, {k: v for k, v in feed.items() if k in self._inputs})[0]
+        # Mean pooling over the attended tokens, matching 1_Pooling's config.
+        m = mask[..., None].astype(np.float32)
+        return ((hidden * m).sum(1) / np.clip(m.sum(1), 1e-9, None))[0]
+
+
+def _build(name: str):
+    if name == "legacy-torch":
+        return _TorchBackend()
+    return _OnnxBackend(_ONNX_FILES[name])
+
+
 def load_model() -> None:
+    """Load the active profile's backend. Idempotent; called once at process start."""
     global _model
     if _model is not None:
         return
-    from sentence_transformers import SentenceTransformer
+    _model = _build(profile())
 
-    try:
-        _model = SentenceTransformer(MODEL_ID, revision=MODEL_REVISION, trust_remote_code=True)
-    except PermissionError as exc:
-        # The cloud profile mounts a named volume at HF_HOME. If the image did
-        # not create that directory first, Docker creates the mountpoint
-        # root-owned and this process (uid 1000) cannot write it -- the server
-        # then crash-loops before serving anything, and the raw PermissionError
-        # points at a huggingface_hub blob path that explains none of it. This
-        # cost ~10 minutes of misdiagnosis during the first deploy walkthrough
-        # (it reads exactly like a slow model download), so name the cause and
-        # the fix instead.
-        cache = _cache_dir()
-        raise ModelCacheNotWritable(
-            f"cannot write the embedding-model cache at {cache} "
-            f"(uid={os.getuid() if hasattr(os, 'getuid') else 'n/a'}): {exc}\n"
-            f"The model (~523MB) must be downloaded there on first boot.\n"
-            f"If this is the Docker/compose profile, the model-cache volume is "
-            f"probably root-owned because the image did not create HF_HOME "
-            f"before the volume was mounted over it. Fix the image (mkdir -p + "
-            f"chown to the runtime user before USER), or repair the existing "
-            f"volume once with:\n"
-            f"  docker run --rm -v <project>_model-cache:/cache alpine "
-            f"chown -R 1000:1000 /cache\n"
-            f"Otherwise ensure {cache} is writable by the user running engraphy."
-        ) from exc
+
+@functools.lru_cache(maxsize=None)
+def _backend_for(name: str):
+    """A named backend, independent of the process-wide one. Exists for the
+    parity test, which must hold two backends at once to compare them; the
+    serving path always goes through load_model()."""
+    return _build(name)
 
 
 # The pinned model's task-instruction prefixes (nomic-embed-text-v1.5 card).
@@ -115,17 +265,35 @@ def searchable_text(title: str, body: str, extra: str) -> str:
     return title + "\n" + body + ("\n" + extra if extra else "")
 
 
-def embed(text: str) -> list[float]:
-    """384-dim unit-norm vector. The shared primitive; prefer embed_document /
-    embed_query, which prepend the pinned model's mandated task prefix."""
-    if _model is None:
-        load_model()
-    raw = _model.encode(text, normalize_embeddings=False)
-    truncated = raw[:DIMS].tolist()
+def _truncate_and_normalize(raw) -> list[float]:
+    """The tail every profile shares: first DIMS dims (nomic v1.5 is Matryoshka,
+    so a prefix is a valid embedding), then L2 to a unit vector."""
+    truncated = [float(x) for x in raw[:DIMS]]
     norm = math.sqrt(sum(x * x for x in truncated))
     if norm == 0:
         return truncated
     return [x / norm for x in truncated]
+
+
+def embed(text: str) -> list[float]:
+    """384-dim unit-norm vector. The shared primitive; prefer embed_document /
+    embed_query, which prepend the pinned model's mandated task prefix.
+
+    One text per call, deliberately. The int8 graph is not batch-invariant (a
+    batch pads to its longest member and quantized activations see a different
+    pad length), so a batched encode returns vectors that differ from what this
+    path produces for the same text. Anything re-embedding stored rows must go
+    through here, one row at a time, or it writes vectors the write path would
+    not have written."""
+    if _model is None:
+        load_model()
+    return _truncate_and_normalize(_model.encode(text))
+
+
+def embed_with(profile_name: str, text: str) -> list[float]:
+    """`embed` against a named profile rather than the process-wide one. For the
+    parity test and for offline comparison only; serving uses `embed`."""
+    return _truncate_and_normalize(_backend_for(profile_name).encode(text))
 
 
 def embed_document(text: str) -> list[float]:

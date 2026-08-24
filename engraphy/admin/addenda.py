@@ -238,7 +238,7 @@ def promote_addenda(
                     "RETURNING id",
                     (
                         space_id, node_type, node_scope, title, body, Jsonb(member_attrs),
-                        _vector_literal(vector), embedding.MODEL_ID,
+                        _vector_literal(vector), embedding.MODEL_STAMP,
                         addendum.get("source_client"), addendum.get("source_session"),
                         addendum.get("author_principal"), addendum.get("merged_at"), extra,
                     ),
