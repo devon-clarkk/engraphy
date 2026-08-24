@@ -205,9 +205,14 @@ class _OnnxBackend:
             raise _cache_not_writable(exc) from exc
 
         opts = onnxruntime.SessionOptions()
-        # One embed per call (see embed()); extra intra-op threads buy nothing on a
-        # single short sequence and cost a thread pool per worker process.
-        opts.intra_op_num_threads = int(os.environ.get("ENGRAPHY_EMBEDDING_THREADS", "1"))
+        # Left to ONNX Runtime unless an operator pins it. Measured on a 4-core
+        # container, one query embed: 41.8ms pinned to a single intra-op thread
+        # against 21.1ms at the runtime's own default. A single short sequence
+        # does parallelise, so pinning it halves throughput for no benefit. Set
+        # ENGRAPHY_EMBEDDING_THREADS to bound it where many workers share a host.
+        threads = os.environ.get("ENGRAPHY_EMBEDDING_THREADS")
+        if threads:
+            opts.intra_op_num_threads = int(threads)
         self._sess = onnxruntime.InferenceSession(
             model_path, opts, providers=["CPUExecutionProvider"])
         self._inputs = {i.name for i in self._sess.get_inputs()}
@@ -234,11 +239,21 @@ def _build(name: str):
 
 
 def load_model() -> None:
-    """Load the active profile's backend. Idempotent; called once at process start."""
+    """Load the active profile's backend AND put it in its serving state.
+    Idempotent; called once at process start.
+
+    The warm-up embed is not decoration. An ONNX inference session defers real
+    work to its first run: it allocates the memory arenas and finishes preparing
+    the graph. Constructing the session is therefore not the same as being ready,
+    and without this the first request a process serves pays that cost. The
+    design says the model is loaded at boot, so a served query should never see
+    it."""
     global _model
     if _model is not None:
         return
-    _model = _build(profile())
+    model = _build(profile())
+    model.encode(DOCUMENT_PREFIX + "warm the inference session")
+    _model = model
 
 
 @functools.cache
