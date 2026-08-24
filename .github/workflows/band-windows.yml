@@ -1,17 +1,9 @@
 name: band-windows
-# Manual only. Re-derives the dedup band windows a profile admits ON THIS RUNNER.
-#
-# Quantized arithmetic varies with the CPU, and for a narrow band that variation
-# decides whether a single shipped default can hold at all. This is the job that
-# measured it for `onnx-int8` and for `micro`: run it, read the windows, compare
-# them against the windows the calibration host reported.
+# Temporary measurement job. Re-derives the dedup band windows a profile admits
+# ON THIS RUNNER, which is a different CPU from any calibration host.
 on:
-  workflow_dispatch:
-    inputs:
-      profile:
-        description: embedding profile to measure
-        required: true
-        default: micro
+  push:
+    branches: ['measure/**']
 permissions:
   contents: read
 jobs:
@@ -21,12 +13,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: {python-version: '3.12'}
-      - run: pip install -e '.[dev]'
+      - run: pip install -e . pyyaml
       - name: which CPU is this
         run: |
           grep -m1 'model name' /proc/cpuinfo
           python -c "import onnxruntime, platform; print('ort', onnxruntime.__version__); print(platform.platform())"
-      - name: band windows
-        run: |
-          python scripts/baseline_dedup_fixtures_profile.py \
-            --profile "${{ inputs.profile }}" --t-high 0.95 --t-low 0.90 || true
+      - name: micro band windows
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile micro --t-high 0.95 --t-low 0.90 || true
+      - name: onnx-int8 band windows (the known cross-host reference)
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile onnx-int8 --t-high 0.94 --t-low 0.81 || true
+      - name: onnx-fp32 band windows (the bit-reproducible control)
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile onnx-fp32 --t-high 0.95 --t-low 0.80 || true
