@@ -151,7 +151,7 @@ def _seed(conn) -> str:
             "VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, 'bench', %s) RETURNING id",
             (_SPACE, _NTYPE, _SCOPE, f"Note {i}",
              f"Synthetic benchmark note number {i} about topic {i % 97}.",
-             Jsonb({}), _vec_literal(_rand_unit(rng)), embedding.MODEL_ID, _PRINCIPAL),
+             Jsonb({}), _vec_literal(_rand_unit(rng)), embedding.MODEL_STAMP, _PRINCIPAL),
         )
         ids.append(cur.fetchone()[0])
     # A simple chain so traverse(depth 4) has something to walk. The slice is

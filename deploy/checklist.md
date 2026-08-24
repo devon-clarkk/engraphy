@@ -192,10 +192,9 @@ on that refusal as your only safeguard). Install: Docker image + `compose.yaml`.
 6. **Bring up engraphy.** `docker compose up -d engraphy` (or `docker compose up -d`
    for both services at once, now that migrations are applied).
 
-   **First boot downloads the embedding model (~523MB) into the `model-cache`
-   volume before it serves anything.** On a fast connection that is roughly
-   **45 seconds**; on a slow one it can be many minutes. Watch readiness with
-   the compose healthcheck rather than guessing:
+   **The embedding model ships baked into the image**, so the container seeds
+   the `model-cache` volume from it and is ready in seconds with no network
+   fetch. Watch readiness with the compose healthcheck rather than guessing:
    ```
    docker compose ps          # engraphy: "(health: starting)" -> "(healthy)"
    docker compose logs -f engraphy

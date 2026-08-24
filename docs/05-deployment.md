@@ -20,6 +20,56 @@ overview and the reference for auth, scopes, and day-2 tasks.
 | `ENGRAPHY_BIND_PORT` | server | port (default `8000`). |
 | `ENGRAPHY_INSECURE_TRANSPORT_OK` | server | set `true` **only** to bind a genuinely public interface without TLS on an overlay-only network. |
 | `ENGRAPHY_LAST_BACKUP_STATUS_FILE` | server | path whose contents `/healthz` reports as `last_backup_at` — your backup job writes the completion timestamp here. |
+| `ENGRAPHY_EMBEDDING_PROFILE` | server and admin CLI | which embedding backend runs (default `onnx-fp32`). See below. |
+| `ENGRAPHY_EMBEDDING_THREADS` | server | ONNX Runtime intra-op threads (default `1`). One embed runs per call, so extra threads mostly cost a thread pool per worker. |
+
+## Embedding profiles
+
+One model, one pinned revision, three ways to run it. All three emit the same
+384-dim unit vectors into the same `vector(384)` column, so no profile implies a
+schema change.
+
+| Profile | Runs on | Vector space | Notes |
+|---|---|---|---|
+| `onnx-fp32` (default) | ONNX Runtime, full graph | same as `legacy-torch` | The shipped default. Reproduces the torch vectors to float noise. |
+| `onnx-int8` | ONNX Runtime, quantized graph | its own | Smaller and faster. Calibrate on the target host first, see below. |
+| `legacy-torch` | sentence-transformers | same as `onnx-fp32` | Needs `pip install '.[legacy-torch]'`; see `requirements-cpu.txt`. |
+
+**Switching between `onnx-fp32` and `legacy-torch` is a restart.** Their vectors
+are interchangeable and they share a stamp in `nodes.embedding_model`, so nothing
+in the store needs to change.
+
+**Switching onto `onnx-int8` needs a re-embed and a calibration step.**
+Quantization moves pairwise cosine, so int8 runs its own dedup bands (`t_high`
+0.94, against 0.95 elsewhere) and its vectors are not interchangeable with the
+others. Until every row is rewritten the write path compares new int8 vectors
+against older ones, which is a comparison across two vector spaces:
+
+```
+engraphy-admin reembed --space <space> --dry-run   # what would change
+engraphy-admin reembed --space <space>             # do it
+```
+
+It is resumable and idempotent, so a killed run resumes and a completed run
+finds nothing. The error direction while it is incomplete is the safe one, a
+near-duplicate opens a confirm round-trip rather than merging silently, but run
+it to completion rather than leaving a store half converted. Take a
+restore-tested backup first on a live space (design/04).
+
+**Calibrate `dedup.t_low` for int8 on the host that will run it.** Quantized
+arithmetic varies with the CPU, and at the confirm edge that variation is larger
+than the margin int8 leaves: on two Linux x86-64 hosts the same fixtures gave
+viable `t_low` windows of (0.8072, 0.8197] and (0.7809, 0.8017], which do not
+intersect. Run `scripts/baseline_dedup_fixtures_profile.py --profile onnx-int8`
+on the target host, read the window it reports, and set `dedup.t_low` for the
+space:
+
+```
+engraphy-admin config set --space <space> --key dedup.t_low --value 0.80
+```
+
+The `onnx-fp32` and `legacy-torch` profiles need none of this. They are
+bit-reproducible and leave 0.040 of room at the same edge.
 
 ## Running as a service
 
@@ -62,10 +112,10 @@ exempt and need no opt-in.
 5. Put a TLS-terminating reverse proxy (Caddy/nginx/Traefik or a load balancer) in
    front of `127.0.0.1:8000` — engraphy's own port is bound to loopback and never
    exposed directly. Caddy one-liner: `your.domain { reverse_proxy 127.0.0.1:8000 }`.
-6. `docker compose up -d engraphy`. **First boot downloads the ~523 MB embedding
-   model** into the `model-cache` volume before serving — watch `docker compose ps`
-   go `(health: starting)` → `(healthy)`. `Restarting` means a real error, not a
-   slow download; read `docker compose logs engraphy`.
+6. `docker compose up -d engraphy`. **The embedding model ships baked into the
+   image**, so the container seeds the `model-cache` volume from it and serves
+   immediately. Watch `docker compose ps` go `(health: starting)` to `(healthy)`.
+   `Restarting` means a real error; read `docker compose logs engraphy`.
 
 > The transport-security refusal classifies the *bind host* — a container bound to
 > `0.0.0.0` is classified "private" and boots without the opt-in even though a

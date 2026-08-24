@@ -37,8 +37,9 @@ from psycopg_pool import AsyncConnectionPool
 from engraphy.admin import doctor, migrate, packs, verify_restore
 from engraphy.admin.addenda import promote_addenda
 from engraphy.admin.import_ import ImportLineError, run_import
+from engraphy.admin.reembed import reembed_space
 from engraphy.admin.surface import rebuild_surface
-from engraphy.core import sentinel
+from engraphy.core import embedding, sentinel
 from engraphy.server.auth import mint_token
 
 if sys.platform == "win32":
@@ -460,6 +461,64 @@ def surface_rebuild_cmd(
     conninfo = _conninfo(database_url)
     with psycopg.connect(conninfo, autocommit=False) as conn:
         summary = rebuild_surface(conn, space, scope, dry_run=dry_run)
+    typer.echo(summary.as_line())
+
+
+@app.command("reembed")
+def reembed_cmd(
+    space: str = typer.Option(..., help="Space id to re-embed."),
+    scope: str = typer.Option(None, help="Limit to one scope id (default: all scopes)."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be re-embedded; write nothing."),
+    yes: bool = typer.Option(
+        False, "--yes", help="Skip the confirmation prompt (for scripted upgrades)."),
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Rewrite stored vectors into the active embedding profile's vector space.
+
+    Needed once, when a store moves onto a profile whose vectors are not
+    interchangeable with the ones already written: today that means moving onto
+    `onnx-int8`. Moving between `legacy-torch` and `onnx-fp32` needs nothing, and
+    this command will say so and exit, because those two produce interchangeable
+    vectors and share a stamp.
+
+    Until it completes, the write path bands new int8 vectors against fp32
+    neighbours, which compares across two vector spaces. The error direction is
+    the safe one (a near-duplicate opens a confirm round-trip rather than merging
+    silently), but it is still a partially-converted store, so run this to
+    completion rather than leaving it half done.
+
+    Resumable and idempotent: selection is `embedding_model <> ` the target stamp,
+    written in the same statement as the vector, so a killed run resumes where it
+    stopped and a completed run finds nothing. Restore-tested backup first on live
+    spaces (design/04)."""
+    conninfo = _conninfo(database_url)
+    target = embedding.MODEL_STAMP
+    typer.echo(f"active embedding profile: {embedding.profile()}")
+    typer.echo(f"target stamp: {target}")
+
+    with psycopg.connect(conninfo, autocommit=False) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT count(*) FROM nodes WHERE space_id = %s AND type <> %s "
+            "AND (%s::text IS NULL OR scope_id = %s) AND embedding_model <> %s",
+            (space, sentinel.SENTINEL_NODE_TYPE, scope, scope, target))
+        pending = cur.fetchone()[0]
+        conn.commit()
+
+        if pending == 0:
+            typer.echo("nothing to do: every row is already in this vector space.")
+            raise typer.Exit(0)
+
+        if not dry_run and not yes:
+            typer.confirm(
+                f"re-embed {pending} node(s) in space {space!r} into {target}?", abort=True)
+
+        def _progress(done, scanned):
+            typer.echo(f"  {done}/{pending} re-embedded ...")
+
+        summary = reembed_space(
+            conn, space, scope, dry_run=dry_run, progress=_progress if not dry_run else None)
     typer.echo(summary.as_line())
 
 

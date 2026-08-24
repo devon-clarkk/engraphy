@@ -93,7 +93,7 @@ printf 'POSTGRES_PASSWORD=%s\nENGRAPHY_APP_ROLE_PASSWORD=%s\n' \
   "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
 
 # 2. Bring up Postgres + migrate + provision + serve
-docker compose up -d          # first boot downloads the ~523 MB embedding model
+docker compose up -d          # the embedding model ships baked into the image
 
 # 3. Create a space, apply the starter pack, mint a client token
 docker compose --profile admin run --rm admin \
@@ -183,7 +183,7 @@ an example per tool. A first-party VS Code extension lives in
 - **Python ≥ 3.12**.
 - **[dbmate](https://github.com/amacneil/dbmate)** for migrations (bundled in the
   admin container; only needed on `PATH` for the no-Docker path).
-- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim, ~523 MB,
+- The embedding model **`nomic-ai/nomic-embed-text-v1.5`** (384-dim, on ONNX Runtime,
   downloaded and cached on first boot).
 
 ## Project status

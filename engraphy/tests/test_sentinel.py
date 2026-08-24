@@ -60,9 +60,14 @@ def test_embedding_model_marker_is_not_the_real_model_id():
     """A model migration re-embeds rows keyed on embedding_model. If the sentinel
     carried MODEL_ID it would be swept into that re-embed and its constant vector
     -- the only thing verify-restore compares -- would be overwritten."""
-    from engraphy.core.embedding import MODEL_ID
+    from engraphy.core.embedding import MODEL_ID, MODEL_STAMP, PROFILES, model_stamp
 
     assert sentinel.SENTINEL_EMBEDDING_MODEL != MODEL_ID
+    assert sentinel.SENTINEL_EMBEDDING_MODEL != MODEL_STAMP
+    # The re-embed backfill selects on the stamp, so the marker must differ from
+    # EVERY profile's stamp, not merely the active one.
+    for name in PROFILES:
+        assert model_stamp(name) != sentinel.SENTINEL_EMBEDDING_MODEL
 
 
 # --- Pure: pack validate refuses the reserved names -------------------------

@@ -89,7 +89,7 @@ def _seed(conn, space_id, node_type, scope, title, body):
         "INSERT INTO nodes (space_id, type, scope_id, title, body, attrs, embedding, "
         "embedding_model, source_client, author_principal) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, 'pytest', 'p1') RETURNING id",
-        (space_id, node_type, scope, title, body, Jsonb({}), lit, _emb.MODEL_ID),
+        (space_id, node_type, scope, title, body, Jsonb({}), lit, _emb.MODEL_STAMP),
     )
     (nid,) = cur.fetchone()
     conn.commit()

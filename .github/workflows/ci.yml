@@ -1,7 +1,7 @@
 name: ci
 # Scoped on purpose. `[push, pull_request]` ran the whole matrix twice for every
 # PR -- once for the branch push, once for the PR -- and burned a deploy-smoke
-# (~15-20 min, builds a torch image) on every push to every side branch. Pushes
+# (~15-20 min, builds an image and boots the stack) on every push to every side branch. Pushes
 # now gate `main` and release tags; everything else is covered by pull_request.
 on:
   push:
@@ -105,9 +105,9 @@ jobs:
   # missing package data, migrate's host-tool dependency, and the pack-schema
   # FileNotFoundError).
   #
-  # Slow by nature (~15-20 min): it builds a torch-bearing image and downloads
-  # the ~523MB embedding model on first boot. That is the cost of testing the
-  # real artifact; it runs in parallel with `test`.
+  # Slow by nature: it builds the real image, bakes the embedding model into it
+  # and boots the whole stack. That is the cost of testing the real artifact; it
+  # runs in parallel with `test`.
   deploy-smoke:
     runs-on: ubuntu-latest
     steps:

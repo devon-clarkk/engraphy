@@ -43,6 +43,21 @@ _MAX_LIMIT = 25     # result cap (02 "return limit (<= 25)")
 # scopes (dedup candidates are scope-filtered), or the confirm band resolved them
 # `distinct`. Deliberately conservative: at 0.95 only near-verbatim restatements
 # collapse, so a genuinely distinct fact is never dropped.
+#
+# Because it IS the merge band, it tracks the merge band across embedding
+# profiles rather than restating a literal. On int8 the write path merges at 0.94,
+# so read-time collapse must too: leaving this at 0.95 would surface as duplicates
+# exactly the pairs the write path had already decided were one fact.
+
+
+def _read_dedup_sim() -> float:
+    from engraphy.core.dedup import BandThresholds
+
+    return BandThresholds.for_profile().t_high
+
+
+#: The fp32 value, kept as a module constant for the callers and tests that state
+#: it directly. `_read_dedup_sim()` is what the query paths call.
 _READ_DEDUP_SIM = 0.95
 
 
@@ -250,13 +265,17 @@ def _collapse_by_pairs(
     return kept
 
 
-async def _near_dup_pairs(cur, space_id, ids, threshold=_READ_DEDUP_SIM):
+async def _near_dup_pairs(cur, space_id, ids, threshold=None):
     """Pairs among `ids` whose stored embeddings are >= `threshold` cosine.
     Computed in-DB via pgvector's cosine-distance operator (`<=>`); embeddings are
     unit-normalised at write time, so cosine distance = 1 - cosine similarity and
     `sim >= threshold` is `distance <= 1 - threshold`. A NULL embedding yields NULL
     distance and is excluded (never a duplicate). Runs inside the read transaction,
-    so RLS already bounds it to readable rows."""
+    so RLS already bounds it to readable rows.
+
+    `threshold` defaults to the active profile's merge band rather than a literal,
+    so read-time collapse and the write path agree on what "the same fact" means."""
+    threshold = _read_dedup_sim() if threshold is None else threshold
     if len(ids) < 2:
         return set()
     await cur.execute(
@@ -297,7 +316,7 @@ async def _declared_distinct_pairs(cur, space_id, ids):
     return {frozenset((str(src), str(dst))) for src, dst in await cur.fetchall()}
 
 
-async def _collapse_near_dupes(cur, space_id, fused, threshold=_READ_DEDUP_SIM):
+async def _collapse_near_dupes(cur, space_id, fused, threshold=None):
     """Drop read-time near-duplicates from the fused list, keeping the highest-
     ranked instance of each near-identical cluster (design/02 merge band, reused
     at read time -- see `_READ_DEDUP_SIM`). Pairs the engine or a caller declared

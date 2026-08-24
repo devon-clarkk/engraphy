@@ -93,7 +93,7 @@ def rebuild_surface(
                     cur.execute(
                         "UPDATE nodes SET extra_search = %s, embedding = %s::vector, "
                         "embedding_model = %s WHERE id = %s",
-                        (new_extra, _vector_literal(vector), embedding.MODEL_ID, nid),
+                        (new_extra, _vector_literal(vector), embedding.MODEL_STAMP, nid),
                     )
         for _nid, scope, _extra, _vec in embedded:
             summary.re_embedded += 1

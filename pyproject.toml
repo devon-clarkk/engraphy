@@ -24,8 +24,14 @@ dependencies = [
                                  # fresh build. <2 keeps the known-good 1.x line (resolves to 1.28.1).
   "psycopg[binary,pool]>=3.2",
   "pydantic>=2.7",
-  "sentence-transformers>=3.0",  # loads nomic-embed-text-v1.5 (trust_remote_code pinned in embedding.py)
-  "einops>=0.7",                 # required by nomic-embed-text-v1.5's remote modeling code
+  # The default embedder runs nomic-embed-text-v1.5 on ONNX Runtime. These three
+  # are the whole backend: the graph is fetched from the pinned revision by
+  # huggingface-hub, tokenized by the Rust tokenizers library, and executed by
+  # onnxruntime. No framework, and no repository Python executed at load, so
+  # trust_remote_code is not used on this path.
+  "onnxruntime>=1.17,<2",
+  "tokenizers>=0.15,<1",
+  "huggingface-hub>=0.23,<1",
   "pyyaml>=6.0",
   "jsonschema>=4.22",
   "typer>=0.12",                 # engraphy-admin CLI
@@ -40,12 +46,23 @@ dependencies = [
 # carry major-version caps for the same reason.
 dev = ["pytest>=8,<9", "pytest-asyncio>=0.23,<2", "hypothesis>=6.100,<7", "ruff==0.16.4",
        "pytest-cov>=5,<7",
-       "pytest-timeout>=2.3,<3"]  # a deadlocking test must fail the run, not hang it (the dedup race test contends a real advisory lock)
+       "pytest-timeout>=2.3,<3",  # a deadlocking test must fail the run, not hang it (the dedup race test contends a real advisory lock)
+       "engraphy[legacy-torch]"]  # so the cross-profile parity assertions can actually run
 # The benchmark harness (design/09). Deliberately its own extra, not a runtime
 # dependency: the engine must not grow an LLM client, and `pip install engraphy`
 # must not drag one in. `bench/core/llm.py` imports anthropic lazily so that the
 # bench test suite still collects and runs without this extra installed.
 bench = ["anthropic>=0.40"]
+# The `legacy-torch` embedding profile, which runs the same pinned weights through
+# sentence-transformers instead of ONNX Runtime. An extra rather than a runtime
+# dependency: it is the opt-out, and torch plus its transitive set is the largest
+# thing that used to sit in the default install. `dev` pulls it so the
+# cross-profile parity assertions in test_embedding_profiles.py are runnable in
+# CI, which is what keeps the opt-out from shipping untested.
+legacy-torch = [
+  "sentence-transformers>=3.0",  # loads nomic-embed-text-v1.5 (trust_remote_code pinned in embedding.py)
+  "einops>=0.7",                 # required by nomic-embed-text-v1.5's remote modeling code
+]
 
 [project.scripts]
 engraphy-admin = "engraphy.admin.cli:app"
