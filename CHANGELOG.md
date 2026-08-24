@@ -17,7 +17,8 @@ install carries no deep-learning framework.
   rows by `nodes.embedding_model`, and writes each vector and its stamp in one
   statement.
 - `ENGRAPHY_EMBEDDING_THREADS` sets the ONNX Runtime intra-op thread count. The
-  default is 1, which suits the one-embed-per-call serving path.
+  default is 1, which measures fastest end to end: the embed runs beside the
+  connection pool and the database, and extra threads contend with them.
 - `engraphy/tests/fixtures/dedup_cases_onnx_int8.yaml` pins the dedup fixtures
   for the int8 vector space. The cases and their expected bands are read from
   `dedup_cases.yaml`, so the two files hold one contract.

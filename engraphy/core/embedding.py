@@ -205,8 +205,20 @@ class _OnnxBackend:
             raise _cache_not_writable(exc) from exc
 
         opts = onnxruntime.SessionOptions()
-        # One embed per call (see embed()); extra intra-op threads buy nothing on a
-        # single short sequence and cost a thread pool per worker process.
+        # One intra-op thread, and this is measured rather than assumed. In
+        # isolation more threads do win: a single query embed on a 4-core box is
+        # 41.8ms at one thread against 21.1ms at the runtime's default. In the
+        # serving path the opposite holds, because the embed does not run alone.
+        # It runs beside an async connection pool and a local Postgres, and the
+        # extra threads contend with both. Measured end to end by the benchmark
+        # at 10k nodes, search p50:
+        #
+        #     1 thread    76.8ms
+        #     2 threads  167.0ms
+        #     unpinned   156.1ms
+        #
+        # The isolated number is the misleading one. Raise this only on a host
+        # where the embedder has cores to itself.
         opts.intra_op_num_threads = int(os.environ.get("ENGRAPHY_EMBEDDING_THREADS", "1"))
         self._sess = onnxruntime.InferenceSession(
             model_path, opts, providers=["CPUExecutionProvider"])
@@ -234,11 +246,21 @@ def _build(name: str):
 
 
 def load_model() -> None:
-    """Load the active profile's backend. Idempotent; called once at process start."""
+    """Load the active profile's backend AND put it in its serving state.
+    Idempotent; called once at process start.
+
+    The warm-up embed is not decoration. An ONNX inference session defers real
+    work to its first run: it allocates the memory arenas and finishes preparing
+    the graph. Constructing the session is therefore not the same as being ready,
+    and without this the first request a process serves pays that cost. The
+    design says the model is loaded at boot, so a served query should never see
+    it."""
     global _model
     if _model is not None:
         return
-    _model = _build(profile())
+    model = _build(profile())
+    model.encode(DOCUMENT_PREFIX + "warm the inference session")
+    _model = model
 
 
 @functools.cache

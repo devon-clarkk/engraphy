@@ -31,3 +31,8 @@ runs/
 
 # Raw retrieval envelopes sidecar (diagnostics) — large, kept out of git
 **/envelopes.jsonl
+
+# Local HuggingFace caches from containerised measurement runs (HF_HOME mounted
+# into the repo). Never committed: the graphs are hundreds of megabytes.
+.hfc/
+.hfcache-linux/
