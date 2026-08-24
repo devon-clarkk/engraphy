@@ -1,20 +1,27 @@
-# CPU-only torch pin (install-friction win #1).
+# CPU-only torch pin, for the `legacy-torch` embedding profile ONLY.
 #
-# sentence-transformers pulls torch transitively, and on Linux the DEFAULT PyPI
-# torch wheel bundles the full CUDA toolkit (~2GB) that this CPU-only embedding
-# service never uses. Installing torch FIRST from PyTorch's CPU index pins the
-# same torch VERSION with the CPU build, so the subsequent `pip install .`
-# resolves torch as already-satisfied and pulls no CUDA payload.
+# The default embedder runs on ONNX Runtime and installs no torch at all, so
+# nothing here is needed for a standard install or for the shipped images. This
+# file exists for the opt-out: `ENGRAPHY_EMBEDDING_PROFILE=legacy-torch` runs the
+# same pinned weights through sentence-transformers, and that path does pull
+# torch.
+#
+# Why the pin, when you do want that path: sentence-transformers pulls torch
+# transitively, and on Linux the DEFAULT PyPI torch wheel bundles the full CUDA
+# toolkit (~2GB) that a CPU-only embedding service never uses. Installing torch
+# FIRST from PyTorch's CPU index pins the same torch VERSION with the CPU build,
+# so the subsequent install resolves torch as already-satisfied and pulls no CUDA
+# payload.
 #
 # This is packaging only -- SAME torch version, SAME CPU compute backend, SAME
-# embeddings (byte-identical; validated against the CUDA-wheel build). Index
-# URLs cannot be expressed in pyproject's [project.dependencies], so the pin
-# lives here and is used by both the Dockerfile and the local/pip path:
+# embeddings (byte-identical; validated against the CUDA-wheel build). Index URLs
+# cannot be expressed in pyproject's dependency tables, so the pin lives here:
 #
-#   pip install -r requirements-cpu.txt   # CPU torch, from the CPU index
-#   pip install .                         # everything else, from PyPI
+#   pip install -r requirements-cpu.txt      # CPU torch, from the CPU index
+#   pip install '.[legacy-torch]'            # sentence-transformers + einops
+#   ENGRAPHY_EMBEDDING_PROFILE=legacy-torch  # select the profile at runtime
 #
-# Keep the version equal to whatever `pip install .` would otherwise resolve
+# Keep the version equal to whatever the extra would otherwise resolve
 # (currently torch 2.13.0); the ONLY difference must be the +cpu local build,
 # never the version number.
 --index-url https://download.pytorch.org/whl/cpu

@@ -22,7 +22,7 @@ printf 'POSTGRES_PASSWORD=%s\nENGRAPHY_APP_ROLE_PASSWORD=%s\n' \
   "$(openssl rand -hex 16)" "$(openssl rand -hex 16)" > .env
 
 # 2. Bring up Postgres + migrate + provision + serve
-docker compose up -d          # first boot downloads the ~523 MB embedding model
+docker compose up -d          # the embedding model ships baked into the image
 
 # 3. Create a space, apply the starter pack, mint a client token
 docker compose --profile admin run --rm admin \
@@ -58,8 +58,9 @@ Engraphy itself. For production postures see the
   migrate` shells out to it.
 - Postgres client tools (`psql`, and `pg_dump`/`pg_restore` if you'll take backups
   or run `verify-restore`).
-- On first server boot the embedding model `nomic-ai/nomic-embed-text-v1.5`
-  (~523 MB) downloads and is cached.
+- The embedding model `nomic-ai/nomic-embed-text-v1.5` (int8 ONNX, ~131 MB) is
+  baked into the image, so first boot is offline and immediate. It is cached in
+  the `model-cache` volume and persists across rebuilds.
 
 ## 1. Start Postgres + pgvector
 
@@ -185,7 +186,7 @@ Expect something like:
 
 ```json
 {"status":"ok","version":"0.1.0","schema_version":"0020",
- "spaces":1,"embedding_model":"nomic-ai/nomic-embed-text-v1.5"}
+ "spaces":1,"embedding_model":"nomic-ai/nomic-embed-text-v1.5+onnx-int8"}
 ```
 
 `schema_version` should match the highest-numbered file in

@@ -28,10 +28,10 @@ from engraphy.core import embedding
 # Short, varied, and including a near-identical pair, which is where a quantized
 # graph diverges most and where the dedup bands actually live.
 TEXTS = [
-    "Deploy failed: migration not run\nThe deploy failed because the backfill "
-    "migration was never executed before switching the mapper.",
-    "Deploy failure, migration was not run\nThe deploy failed since the backfill "
-    "migration was not executed prior to switching the mapper.",
+    ("Deploy failed: migration not run\nThe deploy failed because the backfill "
+     "migration was never executed before switching the mapper."),
+    ("Deploy failure, migration was not run\nThe deploy failed since the backfill "
+     "migration was not executed prior to switching the mapper."),
     "Dad prefers morning appointments\nBook medical appointments before 11am.",
     "Coffee maker needs descaling monthly\nDescale the office machine every month.",
     "how do I descale the coffee machine",
@@ -41,7 +41,7 @@ TEXTS = [
 def _torch_available() -> bool:
     try:
         import sentence_transformers  # noqa: F401
-    except Exception:
+    except ImportError:
         return False
     return True
 
@@ -100,9 +100,9 @@ def test_fp32_profiles_carry_the_bare_model_id():
 
 
 def test_module_stamp_matches_the_active_profile():
-    assert embedding.MODEL_STAMP == embedding.model_stamp(embedding.DEFAULT_PROFILE) or \
-        embedding.MODEL_STAMP == embedding.model_stamp(
-            os.environ.get("ENGRAPHY_EMBEDDING_PROFILE", embedding.DEFAULT_PROFILE))
+    assert embedding.model_stamp(embedding.DEFAULT_PROFILE) == embedding.MODEL_STAMP or \
+        embedding.model_stamp(
+            os.environ.get("ENGRAPHY_EMBEDDING_PROFILE", embedding.DEFAULT_PROFILE)) == embedding.MODEL_STAMP
 
 
 # --- Shared invariants hold on every profile --------------------------------
@@ -131,7 +131,8 @@ def test_onnx_does_not_import_torch():
         "embedding.embed_with('onnx-int8', 'probe');"
         "print('torch' in sys.modules, 'transformers' in sys.modules)"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, check=False)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "False False", out.stdout
 

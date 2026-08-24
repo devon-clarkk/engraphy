@@ -90,7 +90,7 @@ services:
       - model-cache:/home/engraphy/.cache/huggingface
       - backup-status:/var/lib/engraphy
     # Readiness, not just liveness: on first boot the process downloads the
-    # ~523MB embedding model BEFORE it serves anything, so "container running"
+    # baked embedding model BEFORE it serves anything, so "container running"
     # is not "server usable". Without this, `docker compose ps` reports Up
     # while the server is still downloading -- or while it is crash-looping --
     # and an operator cannot tell those two apart (exactly what masked the

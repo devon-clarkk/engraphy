@@ -5,34 +5,23 @@
 #                                                and dbmate for `engraphy-admin
 #                                                migrate` / `verify-restore`.
 #
-# The embedding model (nomic-embed-text-v1.5, ~523MB) is PRE-BAKED into the
-# image at build time (see the prebake RUN below), so first boot is offline and
-# instant -- no HuggingFace round trip. The compose `model-cache` volume is
+# The embedding model (nomic-embed-text-v1.5, int8 ONNX, ~131MB) is PRE-BAKED
+# into the image at build time (see the prebake RUN below), so first boot is
+# offline and instant -- no HuggingFace round trip. The compose `model-cache` volume is
 # seeded from that baked cache the first time it is created (Docker seeds an
 # empty named volume from the image contents at the mountpoint), so it persists
 # the model across rebuilds without ever re-downloading.
 FROM python:3.12-slim AS server
 
-# libgomp1: sentence-transformers/torch's CPU backend needs it at import time
-# on Debian slim images (not pulled in by pip wheels themselves). Still required
-# with the CPU-only torch wheel -- the CPU wheel drops the CUDA payload, not the
-# OpenMP runtime.
+# libgomp1: ONNX Runtime's CPU execution provider links against the OpenMP
+# runtime and needs it at import time on Debian slim images (pip wheels do not
+# carry it).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 engraphy
 WORKDIR /app
-
-COPY requirements-cpu.txt ./
-# Install install-friction win #1: pin torch's CPU wheel BEFORE the project.
-# sentence-transformers pulls torch transitively, and the default PyPI Linux
-# torch wheel bundles the full CUDA toolkit (~2GB) this CPU-only service never
-# touches. Installing torch first from PyTorch's CPU index pins the SAME torch
-# version with the CPU build; the following `pip install .` then sees torch
-# already satisfied and pulls no CUDA payload. Packaging only -- same version,
-# same CPU backend, byte-identical embeddings (validated). See requirements-cpu.txt.
-RUN pip install --no-cache-dir -r requirements-cpu.txt
 
 COPY pyproject.toml ./
 COPY engraphy ./engraphy
@@ -60,15 +49,19 @@ USER engraphy
 ENV HF_HOME=/home/engraphy/.cache/huggingface
 
 # Prebake the embedding model into the image's HF cache (install-friction win
-# #2). Runs the REAL load path -- embedding.embed_document() -> load_model()
-# with the pinned MODEL_REVISION and trust_remote_code -- so the cache ends up
-# holding EXACTLY what runtime fetches (weights, ST config, the pinned remote
-# modeling code), not a hand-guessed subset. Runs as USER engraphy after the
-# chown, so the baked files are engraphy-owned and the model-cache volume is
-# seeded engraphy-owned on first boot. Also fails the build fast if the CPU-torch
-# install can't actually run the model. Same model, same revision, same
-# embeddings -- behavior-neutral.
-RUN python -c "from engraphy.core import embedding; embedding.embed_document('prebake: warm the model cache')"
+# #2). Runs the REAL load path -- embedding.embed_document() -> load_model() at
+# the pinned MODEL_REVISION -- so the cache ends up holding EXACTLY what runtime
+# fetches (the ONNX graph and the tokenizer), not a hand-guessed subset. Runs as
+# USER engraphy after the chown, so the baked files are engraphy-owned and the
+# model-cache volume is seeded engraphy-owned on first boot. Also fails the build
+# fast if the runtime cannot actually execute the graph.
+#
+# Whichever profile the image defaults to is what gets baked, because this goes
+# through the same seam the server does. Building an image for a different
+# profile is a build arg away, and the bake follows it automatically.
+ARG ENGRAPHY_EMBEDDING_PROFILE
+ENV ENGRAPHY_EMBEDDING_PROFILE=${ENGRAPHY_EMBEDDING_PROFILE}
+RUN python -c "from engraphy.core import embedding; print('prebaking', embedding.profile()); embedding.embed_document('prebake: warm the model cache')"
 
 EXPOSE 8000
 

@@ -59,7 +59,7 @@ DIMS = 384
 _ONNX_FILES = {"onnx-fp32": "onnx/model.onnx", "onnx-int8": "onnx/model_quantized.onnx"}
 
 PROFILES = ("onnx-int8", "onnx-fp32", "legacy-torch")
-DEFAULT_PROFILE = "onnx-fp32"
+DEFAULT_PROFILE = "onnx-int8"
 _PROFILE_ENV = "ENGRAPHY_EMBEDDING_PROFILE"
 
 #: Profiles whose vectors are interchangeable, and therefore share a stamp.
@@ -227,7 +227,7 @@ def load_model() -> None:
     _model = _build(profile())
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _backend_for(name: str):
     """A named backend, independent of the process-wide one. Exists for the
     parity test, which must hold two backends at once to compare them; the

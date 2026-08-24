@@ -139,10 +139,55 @@ async def _resolve_canonical(cur, node_id):
     raise RuntimeError("ENGRAPHY_INTERNAL: canonical chain exceeds 10 hops")
 
 
+#: Band edges per embedding profile. int8 quantization moves pairwise cosine, so
+#: the edges move with it: 0.94 / 0.81 is the pair that reproduces every band the
+#: fp32 space selects across all 17 committed dedup fixtures.
+#:
+#: Both numbers are derived, not chosen. Baselined inside the deployment image
+#: (scripts/baseline_dedup_fixtures_profile.py), the fixtures leave these windows:
+#:
+#:     t_high  (0.8961, 0.9419]   width 0.046
+#:     t_low   (0.8072, 0.8197]   width 0.013
+#:
+#: The t_low window is narrow, and deliberately called out rather than buried. On
+#: the fp32 space the equivalent window is 0.040 wide, which is why 0.80 sits
+#: comfortably in it; on int8 the confirm edge has about a third of that room. The
+#: drift is also not one-directional the way a first reading suggests: most pairs
+#: contract, but `boundary_hunt_near_t_low_insert_side` moves UP by 0.023, and it
+#: is that pair that sets the lower bound. Anything that widens the fixture set
+#: should re-derive both numbers rather than assume these still centre their
+#: windows.
+#:
+#: Quantized arithmetic is platform-sensitive in a way fp32 is not, so these were
+#: measured on Linux, where the images run, not on a developer machine.
+#:
+#: These are CODE DEFAULTS, the lowest-precedence source. A per-space
+#: `dedup.t_high` / `dedup.t_low` config row still wins, and an explicit caller
+#: parameter still wins over that (design/07 §Config-read contract).
+_PROFILE_BANDS = {
+    "onnx-int8": (0.94, 0.81),
+}
+_DEFAULT_BANDS = (0.95, 0.80)
+
+
 @dataclass
 class BandThresholds:
     t_high: float = 0.95
     t_low: float = 0.80
+
+    @classmethod
+    def for_profile(cls, name: str | None = None) -> "BandThresholds":
+        """The calibrated code defaults for an embedding profile.
+
+        The bare constructor keeps the fp32 numbers, because those are the ones
+        every doc, fixture and design note states. This classmethod is the single
+        place a profile's calibration is applied, so a profile that needs no
+        adjustment costs nothing and one that does cannot be half-applied.
+        """
+        from engraphy.core import embedding
+
+        t_high, t_low = _PROFILE_BANDS.get(name or embedding.profile(), _DEFAULT_BANDS)
+        return cls(t_high=t_high, t_low=t_low)
 
 
 def select_band(max_similarity: float, t: BandThresholds) -> str:
@@ -232,7 +277,8 @@ async def _resolve_config(cur, space_id, thresholds, resonance_floor):
     transaction (QUESTIONS.md per-space-config, 2026-07-16, Fable): one indexed
     lookup of all three keys, NO caching -- a config change is effective on the
     next write. Precedence: explicit caller parameter > config row > code
-    default (BandThresholds' 0.95/0.80, RESONANCE_FLOOR 0.75).
+    default (BandThresholds.for_profile(), which is 0.95/0.80 on the fp32 vector
+    space and 0.94/0.80 on int8; RESONANCE_FLOOR 0.75).
 
     Space-safety is the in-query `space_id` filter, exactly as edge_rules,
     node_types and every other space-scoped reference table is read (config is
@@ -251,7 +297,7 @@ async def _resolve_config(cur, space_id, thresholds, resonance_floor):
     rows = {key: value for key, value in await cur.fetchall()}
 
     if thresholds is None:
-        defaults = BandThresholds()
+        defaults = BandThresholds.for_profile()
         bands = BandThresholds(
             t_high=_config_float(rows, "dedup.t_high", defaults.t_high),
             t_low=_config_float(rows, "dedup.t_low", defaults.t_low),

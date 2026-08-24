@@ -67,7 +67,7 @@ def test_embedding_model_marker_is_not_the_real_model_id():
     # The re-embed backfill selects on the stamp, so the marker must differ from
     # EVERY profile's stamp, not merely the active one.
     for name in PROFILES:
-        assert sentinel.SENTINEL_EMBEDDING_MODEL != model_stamp(name)
+        assert model_stamp(name) != sentinel.SENTINEL_EMBEDDING_MODEL
 
 
 # --- Pure: pack validate refuses the reserved names -------------------------
