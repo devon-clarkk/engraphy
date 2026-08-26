@@ -37,19 +37,26 @@ about 523 MB) and caches it.
 
 ## What CI checks
 
-Every push to `main` and every pull request runs [`ci.yml`](.github/workflows/ci.yml),
-and all three jobs must pass:
+Every push to `main` and every pull request runs [`ci.yml`](.github/workflows/ci.yml).
+Three jobs gate the merge and all three must pass:
 
 - **`test`** runs `ruff check .`, the migrations from an empty database, the
   pytest suite with coverage, a 100% branch-coverage floor on
-  `engraphy/core/attr_spec.py`, the repository's grep guards, and the performance
-  budgets in `engraphy/tests/bench.py`.
+  `engraphy/core/attr_spec.py`, and the repository's grep guards.
 - **`deploy-smoke`** builds the shipped images and walks
   [`deploy/checklist.md`](deploy/checklist.md) end to end: compose up, migrate and
   provision through the admin sidecar, mint a token, drive a real MCP client over
   HTTP, and run a backup and restore drill.
 - **`windows-cli`** proves the async admin verbs select an event loop psycopg can
   use on Windows.
+
+A fourth job, **`perf-budgets`**, measures the performance budgets in
+`engraphy/tests/bench.py` at 10k seeded nodes and writes the table into the run
+summary. It is advisory: it runs on every push and pull request, and it never
+gates. GitHub's shared runners contend hard enough to move every measured
+operation at once, so a breach there reports the runner rather than the code.
+Read it for the trend and treat a real regression as something to reproduce
+locally.
 
 Run `ruff check .` and `pytest -q` before you push and most surprises disappear.
 The linter version is pinned in `pyproject.toml`, so use the pinned one.
