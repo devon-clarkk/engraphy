@@ -34,12 +34,28 @@ against this repository's `main`:
 | dataset pin and loader | identical |
 | harness observability (`bench/core/ingest.py`, `retrieve.py`, `report.py`) | the run branch counts extraction failures, per-reason draft drops and traverse errors that `main` does not. Reporting only: it changes what a run tells you, not what it scores. |
 | **engine write path** | **the run branch keeps a node whose typed attribute fails validation, quarantining the bad attribute rather than refusing the write; accepts partial dates (`2026`, `2026-05`); and downgrades a cross-type supersede to a plain write. `main` does none of the three.** |
+| **schema enforcement on the pinned models** | the published run reached Claude through the CLI, where the extraction schema is enforced server-side. Reaching the same models over Anthropic's OpenAI-compatibility layer means `tool_call` mode, where the schema is advisory: that layer lists `strict` as ignored. |
 
-The last row is the one that moves the score. Those three fixes took the run's
-write-yield from 78.7% to 99.4% of extracted nodes actually stored, and LoCoMo
-supplies partial dates constantly, so a run on `main` stores fewer facts and
-answers fewer questions from them. Landing them here is separate, larger work
-than this document covers, and it is tracked as its own item.
+The last two rows both cut the same way, and they compound.
+
+The write-path row is the one that moves the score directly. Those three fixes
+took the run's write-yield from 78.7% to 99.4% of extracted nodes actually
+stored, and LoCoMo supplies partial dates constantly, so a run on `main` stores
+fewer facts and answers fewer questions from them. Landing them here is separate,
+larger work than this document covers, and it is tracked as its own item.
+
+The enforcement row makes that worse rather than sitting beside it. With the
+schema advisory, an extraction can omit an attribute the pack marks required.
+Observed live: the same window that produced clean, valid drafts under
+`json_schema` produced one draft missing a required `strength` under `tool_call`.
+On the published run's engine that draft would have been stored with the bad
+attribute quarantined. On `main` it is a refused write, so the fact is lost, and
+the loss lands on top of the write-yield gap rather than beside it.
+
+Two consequences worth acting on. If your endpoint enforces `json_schema` for the
+models you are running, prefer it. And read `ingest.jsonl`, which reports how
+many drafts became nodes, before reading the accuracy: a low write-yield explains
+a low score, and the harness tells you which one you have.
 
 So: a run from this checkout is a real, self-contained LoCoMo measurement of
 Engraphy on the models you point it at, and it is directly comparable to another

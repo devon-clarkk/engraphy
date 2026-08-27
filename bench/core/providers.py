@@ -791,12 +791,16 @@ def _setting(name: str, default: str = "") -> str:
     them. Environment wins, so a one-off override needs no file edit.
     """
     from_env = os.environ.get(name)
-    if from_env:
+    if from_env and from_env.strip():
         return from_env.strip()
     try:
-        return read_env_file(name)
+        from_file = read_env_file(name)
     except LLMError:
         return default
+    # An empty resolved value is a miss, not a setting. `_setting` feeds callers
+    # that parse what they get (`int(...)`, `float(...)`), and handing them ""
+    # turns an unset variable into a crash rather than a default.
+    return from_file.strip() or default
 
 
 class OpenAICompatClient:
@@ -1152,7 +1156,15 @@ class OpenAICompatClient:
                     ) from exc
 
         usage = payload.get("usage") or {}
-        self.last_response_model = str(payload.get("model") or "")
+        # Read into a local before it goes anywhere near the instance attribute.
+        # `phase_answer` shares ONE reader client across `--concurrency` threads,
+        # so a served id stashed on `self` and read back a line later can be
+        # another thread's by the time it is read -- the manifest would then
+        # attribute a model to the wrong answer, which is the exact failure the
+        # served-id recording exists to prevent. The attribute is kept for
+        # callers that want the last id seen; the response never depends on it.
+        served = str(payload.get("model") or "")
+        self.last_response_model = served
         return LLMResponse(
             text=text,
             input_tokens=int(usage.get("prompt_tokens") or 0),
@@ -1160,7 +1172,7 @@ class OpenAICompatClient:
             # The id the endpoint says served the request, so the manifest records
             # what ran rather than what was asked for -- the same pinning
             # guarantee `ClaudeCLIClient._resolved_model` exists to give.
-            model=self.last_response_model or self.model,
+            model=served or self.model,
             stop_reason=finish,
             data=data,
             seconds=elapsed,
