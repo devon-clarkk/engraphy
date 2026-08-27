@@ -1,9 +1,10 @@
 """The dedup fixtures, asserted against the embedding profile that is actually running.
 
-`dedup_cases.yaml` pins the fp32 vector space; `dedup_cases_onnx_int8.yaml` pins
-int8. Both carry the SAME cases and the SAME expected bands, because the band a
-pair lands in is design intent and does not change when the executor does. Only
-the measured similarity differs.
+One file per vector space. `dedup_cases.yaml` pins fp32,
+`dedup_cases_onnx_int8.yaml` pins int8, `dedup_cases_micro.yaml` pins gte-small.
+Every file carries the SAME cases and the SAME expected bands, because the band a
+pair lands in is design intent and does not change when the embedder does. Only
+the measured similarity differs, and the calibrated thresholds move with it.
 
 Two assertions, and the first is the one that matters:
 
@@ -33,7 +34,13 @@ _PROFILE_FIXTURES = {
     "legacy-torch": "dedup_cases.yaml",
     "onnx-fp32": "dedup_cases.yaml",
     "onnx-int8": "dedup_cases_onnx_int8.yaml",
+    "micro": "dedup_cases_micro.yaml",
 }
+
+#: Profiles whose similarities are pinned in their own file rather than shared
+#: with the fp32 space. These are the ones a calibration exists for, and the ones
+#: the parity and calibration assertions below iterate.
+_CALIBRATED = ("onnx-int8", "micro")
 
 
 def _cases(profile: str):
@@ -52,21 +59,22 @@ def _embed_pair(profile: str, case: dict):
     out = []
     for side in ("a", "b"):
         text = embedding.searchable_text(src[side]["title"], src[side]["body"], "")
-        out.append(embedding.embed_with(profile, embedding.DOCUMENT_PREFIX + text))
+        out.append(embedding.embed_with(
+            profile, embedding.document_prefix(profile) + text))
     return sum(x * y for x, y in zip(out[0], out[1]))
 
 
-def test_the_two_fixture_files_describe_the_same_cases():
-    """If the files ever drifted apart in content, the int8 file would silently
-    stop being a translation of the contract and start being a second, weaker one."""
+@pytest.mark.parametrize("profile", _CALIBRATED)
+def test_every_fixture_file_describes_the_same_cases(profile):
+    """If a file drifted apart in content it would silently stop being a
+    translation of the contract and start being a second, weaker one."""
     source = [c["name"] for c in _source_cases()]
-    int8 = [c["name"] for c in _cases("onnx-int8")]
-    assert source == int8
+    assert [c["name"] for c in _cases(profile)] == source
     src_bands = {c["name"]: c["expect_band"] for c in _source_cases()}
-    for case in _cases("onnx-int8"):
+    for case in _cases(profile):
         assert case["expect_band"] == src_bands[case["name"]], (
             f"{case['name']}: the expected band must be the same on every profile; "
-            f"a band is design intent, not a property of the executor")
+            f"a band is design intent, not a property of the embedder")
 
 
 @pytest.mark.parametrize("profile", list(_PROFILE_FIXTURES))
@@ -150,22 +158,45 @@ def test_live_embeddings_select_the_expected_band_int8():
             f"expected {case['expect_band']}")
 
 
-def test_int8_calibration_is_required_not_cosmetic():
-    """The int8 bands are not decoration: running int8 on the fp32 pair actually
-    mis-bands a committed fixture. Asserting that keeps the calibration from being
-    "simplified" away by someone who assumes the profiles are interchangeable."""
+@pytest.mark.parametrize("profile", _CALIBRATED)
+def test_calibration_is_required_not_cosmetic(profile):
+    """The per-profile bands are not decoration: running a calibrated profile on
+    the fp32 pair actually mis-bands committed fixtures. Asserting that keeps the
+    calibration from being "simplified" away by someone who assumes the profiles
+    are interchangeable."""
     fp32_bands = BandThresholds.for_profile("onnx-fp32")
-    wrong = [c["name"] for c in _cases("onnx-int8")
+    wrong = [c["name"] for c in _cases(profile)
              if select_band(c["similarity"], fp32_bands) != c["expect_band"]]
-    assert wrong, ("int8 similarities band identically under the fp32 thresholds; "
-                   "if that is genuinely true now, _PROFILE_BANDS can be dropped")
+    assert wrong, (f"{profile} similarities band identically under the fp32 "
+                   f"thresholds; if that is genuinely true now, its _PROFILE_BANDS "
+                   f"entry can be dropped")
 
 
-def test_int8_bands_are_not_the_fp32_bands():
-    """Guards the calibration against being quietly reverted. If someone
+@pytest.mark.parametrize("profile", _CALIBRATED)
+def test_calibrated_bands_are_not_the_fp32_bands(profile):
+    """Guards each calibration against being quietly reverted. If someone
     simplified `_PROFILE_BANDS` away, every other test here would still pass on
-    the fp32 profile and int8 would start mis-banding in production."""
+    the fp32 profile and the calibrated profiles would start mis-banding in
+    production.
+
+    The assertion is inequality, not a direction. int8 runs BELOW the fp32
+    `t_high` because quantization contracts pairwise cosine; `micro` runs ABOVE it
+    because gte-small scores every pair higher and packs them into a narrower
+    range. Asserting a direction would encode one model's behaviour as a rule."""
     fp32 = BandThresholds.for_profile("onnx-fp32")
-    int8 = BandThresholds.for_profile("onnx-int8")
-    assert (int8.t_high, int8.t_low) != (fp32.t_high, fp32.t_low)
-    assert int8.t_high < fp32.t_high
+    calibrated = BandThresholds.for_profile(profile)
+    assert (calibrated.t_high, calibrated.t_low) != (fp32.t_high, fp32.t_low)
+
+
+def test_every_profile_with_its_own_fixture_file_has_its_own_bands():
+    """A profile that pins its own similarities is by definition in its own
+    vector space, so it must also carry its own calibration. The reverse gap is
+    the dangerous one -- shipping a new profile's fixtures while it silently runs
+    the fp32 defaults -- and this is what closes it."""
+    from engraphy.core.dedup import _PROFILE_BANDS
+
+    for profile in _CALIBRATED:
+        assert profile in _PROFILE_BANDS, (
+            f"{profile} pins its own dedup fixtures but has no _PROFILE_BANDS "
+            f"entry, so it would run the fp32 thresholds against a different "
+            f"vector space")

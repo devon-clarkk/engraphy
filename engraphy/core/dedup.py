@@ -164,8 +164,38 @@ async def _resolve_canonical(cur, node_id):
 #: These are CODE DEFAULTS, the lowest-precedence source. A per-space
 #: `dedup.t_high` / `dedup.t_low` config row still wins, and an explicit caller
 #: parameter still wins over that (design/07 §Config-read contract).
+#: `micro` runs a different MODEL, not the same one quantized, so its bands are
+#: derived from scratch rather than nudged. Measured windows, from
+#: scripts/baseline_dedup_fixtures_profile.py:
+#:
+#:     t_high  (0.9392, 0.9710]   width 0.032
+#:     t_low   (0.9005, 0.9034]   width 0.0029
+#:
+#: 0.955 and 0.902 are the midpoints, chosen for maximum room on both sides
+#: rather than for proximity to any other profile's numbers, which would mean
+#: nothing across a different vector space.
+#:
+#: **The t_low window is 0.0029 wide, and that is the headline risk of this
+#: profile.** int8's equivalent window is 0.0125 and fp32's is 0.0221, so micro
+#: has roughly a quarter of int8's room and an eighth of fp32's at the confirm
+#: edge. The cause is structural rather than incidental: gte-small scores every
+#: pair higher and packs them into a narrower range, so the insert-to-pending
+#: distinction the fixtures encode survives with very little margin. The two
+#: fixtures that set the edge sit 0.0029 apart --
+#: `boundary_hunt_near_t_low_insert_side` at 0.9005 and
+#: `same_topic_different_incident_pending` at 0.9034 -- and nothing about the
+#: model suggests that gap widens on a wider fixture set.
+#:
+#: Measured on four hosts spanning two CPU vendors and two instruction sets
+#: (Intel i5-11600K on Windows and in a Linux container, AMD EPYC 9V74, and an
+#: Ampere aarch64 runner). All seventeen similarities agreed to four decimal
+#: places on every one, which is why a single default pair is shipped at all.
+#: That is evidence, not a guarantee: see docs/05-deployment.md for the
+#: calibration step, which stays the operator's responsibility on a host that
+#: matters.
 _PROFILE_BANDS = {
     "onnx-int8": (0.94, 0.81),
+    "micro": (0.955, 0.902),
 }
 _DEFAULT_BANDS = (0.95, 0.80)
 

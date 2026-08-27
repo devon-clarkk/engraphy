@@ -1,0 +1,43 @@
+name: band-windows
+# Temporary measurement job, and it does not run on `main` or on a pull request.
+# Re-derives, on a runner that is a different CPU from any calibration host:
+#   * the dedup band windows each embedding profile admits, and
+#   * the resident memory each profile costs.
+# Deleted before the branch that carries it merges.
+on:
+  push:
+    branches: ['measure/**']
+permissions:
+  contents: read
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, ubuntu-22.04]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - run: pip install -e . pyyaml
+      - name: which CPU is this
+        run: |
+          grep -m1 -E 'model name|Model|CPU part' /proc/cpuinfo || true
+          uname -m
+          python -c "import onnxruntime, platform; print('ort', onnxruntime.__version__); print(platform.platform())"
+      - name: micro band windows
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile micro --t-high 0.955 --t-low 0.902 || true
+      - name: onnx-int8 band windows (the known cross-host reference)
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile onnx-int8 --t-high 0.94 --t-low 0.81 || true
+      - name: onnx-fp32 band windows (the bit-reproducible control)
+        run: python scripts/baseline_dedup_fixtures_profile.py --profile onnx-fp32 --t-high 0.95 --t-low 0.80 || true
+      # One profile per FRESH process: the probe measures the import graph as
+      # well as the weights, and a process that has already loaded one backend
+      # cannot measure the next one honestly.
+      - name: resident memory, one profile per process
+        run: |
+          for p in onnx-fp32 onnx-int8 micro; do
+            python scripts/embedding_memprobe.py --profile "$p" || true
+            echo
+          done
