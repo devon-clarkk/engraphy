@@ -13,6 +13,7 @@ from engraphy.core.dedup import write as dedup_write
 from engraphy.server.auth import AuthContext, ToolError
 from engraphy.server.tools.write import link, resolve_duplicate, supersede, update, write
 from engraphy.tests.test_dedup import _seed_node, _unit_vector_at_angle, write_space  # noqa: F401
+from engraphy.tests import bandvalues as bv
 
 
 def _ctx(space_id, principal="p1", role="readwrite"):
@@ -126,7 +127,7 @@ async def test_resolve_duplicate_tool_distinct_happy_path(pool, write_space, con
     parked = await dedup_write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
     assert parked["outcome"] == "needs_confirmation"
 
@@ -144,7 +145,7 @@ async def test_resolve_duplicate_tool_merge_happy_path(pool, write_space, conn):
     parked = await dedup_write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Existing body.", {},  # non-novel -> the explicit merge absorbs
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
     assert parked["outcome"] == "needs_confirmation"
 

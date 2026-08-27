@@ -477,16 +477,17 @@ def reembed_cmd(
     """Rewrite stored vectors into the active embedding profile's vector space.
 
     Needed once, when a store moves onto a profile whose vectors are not
-    interchangeable with the ones already written: today that means moving onto
-    `onnx-int8`. Moving between `legacy-torch` and `onnx-fp32` needs nothing, and
-    this command will say so and exit, because those two produce interchangeable
-    vectors and share a stamp.
+    interchangeable with the ones already written: `onnx-int8` or `micro`. Moving
+    between `legacy-torch` and `onnx-fp32` needs nothing, and this command will
+    say so and exit, because those two produce interchangeable vectors and share
+    a stamp.
 
-    Until it completes, the write path bands new int8 vectors against fp32
-    neighbours, which compares across two vector spaces. The error direction is
-    the safe one (a near-duplicate opens a confirm round-trip rather than merging
-    silently), but it is still a partially-converted store, so run this to
-    completion rather than leaving it half done.
+    Until it completes the store is part converted and the write path is banding
+    across two vector spaces. On `onnx-int8` the error direction is the safe one
+    (a near-duplicate opens a confirm round-trip rather than merging silently)
+    because it is the same model quantized. On `micro` it is a different model
+    and there is no safe direction, so run that one in a quiet window. Either
+    way, run to completion rather than leaving a store half done.
 
     Resumable and idempotent: selection is `embedding_model <> ` the target stamp,
     written in the same statement as the vector, so a killed run resumes where it
