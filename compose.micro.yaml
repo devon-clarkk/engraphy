@@ -46,7 +46,18 @@ services:
     environment:
       ENGRAPHY_EMBEDDING_PROFILE: micro
 
-  # `init` runs migrations and provisions the app role. It touches no embeddings,
-  # so it is deliberately NOT overridden here: giving it the micro profile would
-  # imply the schema differs between the two, and it does not. Micro is 384-dim
-  # like every other profile, and adopting it is a re-embed with no migration.
+  # `init` runs migrations and provisions the app role and touches no embedding,
+  # so on correctness grounds it would not need this. It gets it anyway, because
+  # it builds the same `admin` target as the sidecar and compose keys an image on
+  # its build args: leaving init out would build a SECOND image, and that image
+  # would prebake the 523MB default model into a container that never embeds
+  # anything. Matching the args keeps the micro stack at two images and one
+  # 34MB download.
+  #
+  # None of this implies the schema differs between profiles. It does not. Micro
+  # is 384-dim like every other profile, and adopting it is a re-embed with no
+  # migration.
+  init:
+    build:
+      args:
+        ENGRAPHY_EMBEDDING_PROFILE: micro
