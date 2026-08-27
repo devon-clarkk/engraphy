@@ -26,7 +26,8 @@ from psycopg.types.json import Jsonb
 
 from engraphy.admin import packs as packs_mod
 from engraphy.core import embedding as _emb
-from engraphy.core.briefing import briefing
+from engraphy.core.briefing import (
+    _DEFAULT_SEMANTIC_FLOOR, briefing, semantic_floor_default)
 
 FIXDIR = pathlib.Path(__file__).parent / "fixtures" / "briefing"
 PACKS_DIR = pathlib.Path(__file__).parent / "fixtures" / "packs"
@@ -235,6 +236,22 @@ def _assert_section(exp, got, by_id, conn, label_to_id):
             assert [by_id[ln["id"]] for ln in node["linked"]] == expected_linked
 
 
+def _case_floor(case):
+    """The semantic floor this case means, on the profile that is running.
+
+    A case that pins the SHIPPED default is saying "the floor as configured out
+    of the box", not "the number 0.50". That number is an absolute cosine on a
+    scale the model owns, so the shipped default is 0.50 on the fp32 space and a
+    different value on a profile whose similarities sit elsewhere
+    (core/briefing.py `_PROFILE_SEMANTIC_FLOOR`). A case that pins some OTHER
+    value is exercising the override path and is passed through untouched.
+    """
+    floor = case.get("floor")
+    if floor is None or floor != _DEFAULT_SEMANTIC_FLOOR:
+        return floor
+    return semantic_floor_default()
+
+
 @pytest.mark.parametrize("case", SECTION_CASES, ids=[c["name"] for c in SECTION_CASES])
 async def test_briefing_section_case(pool, conn, case):
     space_id = ("br-" + case["name"].replace("_", "-"))[:60]
@@ -246,7 +263,7 @@ async def test_briefing_section_case(pool, conn, case):
     try:
         result = await briefing(
             pool, space_id, "p1", case.get("scope", "scope1"), case.get("hint"),
-            "pytest", config, semantic_floor=case.get("floor"),
+            "pytest", config, semantic_floor=_case_floor(case),
         )
 
         assert result["v"] == 1

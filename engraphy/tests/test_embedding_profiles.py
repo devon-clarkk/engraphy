@@ -87,8 +87,26 @@ def test_stamp_names_the_vector_space_not_the_executor():
     that do not must differ, or it would skip rows it has to rewrite."""
     assert embedding.model_stamp("legacy-torch") == embedding.model_stamp("onnx-fp32")
     assert embedding.model_stamp("onnx-int8") != embedding.model_stamp("onnx-fp32")
+    assert embedding.model_stamp("micro") != embedding.model_stamp("onnx-int8")
+    # The stamp leads with the MODEL, read from the profile's own spec rather
+    # than the module constant. `micro` runs a different model entirely, so a
+    # store part-way through a conversion onto it is legible at a glance and
+    # `reembed` selects exactly the rows still in the old space.
     for name in embedding.PROFILES:
-        assert embedding.model_stamp(name).startswith(embedding.MODEL_ID)
+        assert embedding.model_stamp(name).startswith(embedding.spec(name).model_id)
+
+
+def test_every_profile_stamps_a_distinct_vector_space():
+    """One stamp per SPACE, and every space distinct. Two profiles sharing a
+    stamp must produce interchangeable vectors (asserted for the fp32 pair
+    below); anything else would make `reembed` skip rows it has to rewrite."""
+    stamps = {name: embedding.model_stamp(name) for name in embedding.PROFILES}
+    shared = [n for n in embedding.PROFILES if stamps[n] == embedding.MODEL_ID]
+    assert sorted(shared) == sorted(embedding._FP32_EQUIVALENT)
+    distinct = {stamps[n] for n in embedding.PROFILES}
+    # The fp32-equivalent profiles collapse to one stamp; every other profile
+    # contributes its own.
+    assert len(distinct) == len(embedding.PROFILES) - len(embedding._FP32_EQUIVALENT) + 1
 
 
 def test_fp32_profiles_carry_the_bare_model_id():
@@ -107,28 +125,90 @@ def test_module_stamp_matches_the_active_profile():
 
 # --- Shared invariants hold on every profile --------------------------------
 
-@pytest.mark.parametrize("name", ["onnx-fp32", "onnx-int8"])
+#: Every profile that runs a serialized graph. `micro` is in here for the same
+#: reason the others are: whatever model it runs, it owes the engine a 384-dim
+#: unit vector, and that is what makes the seam a seam rather than a fork.
+_ONNX_PROFILES = ["onnx-fp32", "onnx-int8", "micro"]
+
+
+@pytest.mark.parametrize("name", _ONNX_PROFILES)
 def test_onnx_profiles_are_384_dim_unit_vectors(name):
     vec = embedding.embed_with(name, TEXTS[0])
     assert len(vec) == embedding.DIMS == 384
     assert abs(math.sqrt(sum(x * x for x in vec)) - 1.0) < 1e-6
 
 
-@pytest.mark.parametrize("name", ["onnx-fp32", "onnx-int8"])
+@pytest.mark.parametrize("name", _ONNX_PROFILES)
 def test_onnx_profiles_are_deterministic(name):
     assert embedding.embed_with(name, TEXTS[0]) == embedding.embed_with(name, TEXTS[0])
 
 
-def test_onnx_does_not_import_torch():
+def test_micro_is_a_genuinely_different_vector_space():
+    """`micro` is the only profile that changes the MODEL, so the property to
+    assert is not bounded drift (as it is for int8, below) but the opposite: the
+    pairwise similarities it reads must NOT be a small perturbation of nomic's,
+    or the whole re-embed requirement would be theatre.
+
+    Stated as pairwise cosines rather than per-vector distance, because pairwise
+    is what the dedup bands actually read, and because two unrelated models can
+    agree closely on an easy pair while disagreeing on the ones near an edge."""
+    moved = []
+    for i in range(len(TEXTS)):
+        for j in range(i + 1, len(TEXTS)):
+            base = _cos(embedding.embed_with("onnx-int8",
+                                             embedding.DOCUMENT_PREFIX + TEXTS[i]),
+                        embedding.embed_with("onnx-int8",
+                                             embedding.DOCUMENT_PREFIX + TEXTS[j]))
+            micro = _cos(embedding.embed_with("micro", TEXTS[i]),
+                         embedding.embed_with("micro", TEXTS[j]))
+            moved.append(abs(base - micro))
+    assert max(moved) > 0.05, (
+        "gte-small reads these pairs the same way nomic does, which the "
+        "calibration and the mandatory re-embed both assume it does not")
+
+
+def test_micro_takes_no_task_prefix():
+    """gte-small was trained without a task instruction. Prepending nomic's would
+    be embedding a string the model has never seen, and the band calibration was
+    derived without it, so this is a correctness pin rather than a style one."""
+    assert embedding.document_prefix("micro") == ""
+    assert embedding.query_prefix("micro") == ""
+    assert embedding.document_prefix("onnx-int8") == embedding.DOCUMENT_PREFIX
+    assert embedding.query_prefix("onnx-int8") == embedding.QUERY_PREFIX
+
+
+def test_micro_reads_a_whole_node_not_its_opening():
+    """gte-small's published tokenizer truncates at 128 tokens, which would embed
+    a long node from its first paragraph and surface nothing. The seam sets the
+    cap explicitly at the model's own 512-token limit, so this asserts that a
+    node past 128 tokens still moves the vector.
+
+    Two long texts sharing an opening and diverging only after the old cutoff:
+    if the cap were still 128 they would embed identically."""
+    # ~15 tokens per repeat, so 16 repeats clears 128 by a wide margin and
+    # stays well inside the 512 cap the seam sets.
+    opening = "The quarterly deployment review covered the migration schedule. " * 16
+    a = embedding.embed_with("micro", opening + " The rollback was executed on Tuesday.")
+    b = embedding.embed_with("micro", opening + " The database was restored from backup.")
+    assert len(embedding._backend_for("micro")._tok.encode(opening).ids) > 128
+    assert _cos(a, b) < 0.999, (
+        "two nodes that differ only past token 128 embed identically, so the "
+        "tokenizer is still truncating at the model repo's published default")
+
+
+@pytest.mark.parametrize("name", ["onnx-int8", "micro"])
+def test_onnx_does_not_import_torch(name):
     """The ONNX profiles exist partly to take torch off the default path. If an
-    import crept back the memory win would evaporate silently."""
+    import crept back the memory win would evaporate silently, and on `micro` it
+    would evaporate a claim four times its own size: torch alone puts a 462MB
+    floor under a process whose whole point is a 143MB one."""
     import subprocess
     import sys
 
     code = (
         "import sys;"
         "from engraphy.core import embedding;"
-        "embedding.embed_with('onnx-int8', 'probe');"
+        f"embedding.embed_with({name!r}, 'probe');"
         "print('torch' in sys.modules, 'transformers' in sys.modules)"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True,

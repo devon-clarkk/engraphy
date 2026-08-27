@@ -48,12 +48,65 @@ _MAX_LIMIT = 25     # result cap (02 "return limit (<= 25)")
 # profiles rather than restating a literal. On int8 the write path merges at 0.94,
 # so read-time collapse must too: leaving this at 0.95 would surface as duplicates
 # exactly the pairs the write path had already decided were one fact.
+#
+# ## Where a profile needs its own value, and why one does
+#
+# Tracking the write band is the right default and it is not always the right
+# answer, because the two decisions do not fail the same way. A write threshold
+# that is too high merges facts that were distinct, and the store is silently
+# wrong afterwards with no way to tell; that asymmetry is why every write band in
+# this system takes the MIDDLE of the window its fixtures admit, buying the most
+# room on both sides. A read threshold that is too low merely hides a result from
+# one query, which is recoverable and visible, so it can afford to sit at the
+# permissive END of that same window.
+#
+# On the fp32 and int8 spaces the distinction has never mattered enough to
+# measure: their similarities are spread widely enough that the write band and
+# the top of its window are close together, and both profiles keep the default.
+# On `micro` they are not. gte-small packs its similarities into a narrower
+# range, so at the write band of 0.955 read-time collapse starts folding together
+# turn-level facts that are genuinely different, and the cost is measurable:
+# fused recall@10 over 498 LoCoMo questions is
+#
+#     collapse at 0.955 (the write band)   0.6124
+#     collapse at 0.97                     0.6446
+#     collapse disabled entirely           0.6406
+#
+# 0.97 is not fitted to that measurement. It comes from the same labelled window
+# the write band comes from: micro's 17 dedup fixtures admit `t_high` anywhere in
+# (0.9393, 0.9710] on every host measured, so 0.97 still merges every pair the
+# fixtures call a merge and still separates every pair they call pending. The
+# benchmark's role was to show that the difference between the two ends of that
+# window is worth something at read time, and it is worth roughly 3 points of
+# recall. (0.9710, the exact top of the window, measures 0.6386, which is three
+# questions from the 0.97 figure and inside the noise of one 498-question run.
+# 0.97 is preferred for the cross-host margin, not for those three questions.)
+#
+# Whether fp32 and int8 would also gain from moving off their write bands is an
+# open question that has NOT been measured here, and they are deliberately left
+# where they are rather than moved on an argument.
+
+
+#: Profiles whose read-time collapse sits somewhere other than their write band.
+#: See the reasoning above; a profile absent from here uses `dedup.t_high`.
+_PROFILE_READ_DEDUP_SIM = {
+    "micro": 0.97,
+}
 
 
 def _read_dedup_sim() -> float:
     from engraphy.core.dedup import BandThresholds
 
-    return BandThresholds.for_profile().t_high
+    profile = _embedding_profile()
+    if profile in _PROFILE_READ_DEDUP_SIM:
+        return _PROFILE_READ_DEDUP_SIM[profile]
+    return BandThresholds.for_profile(profile).t_high
+
+
+def _embedding_profile() -> str:
+    from engraphy.core import embedding
+
+    return embedding.profile()
 
 
 #: The fp32 value, kept as a module constant for the callers and tests that state

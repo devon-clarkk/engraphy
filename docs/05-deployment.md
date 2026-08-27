@@ -25,15 +25,16 @@ overview and the reference for auth, scopes, and day-2 tasks.
 
 ## Embedding profiles
 
-One model, one pinned revision, three ways to run it. All three emit the same
-384-dim unit vectors into the same `vector(384)` column, so no profile implies a
-schema change.
+Four profiles. Every one emits 384-dim unit vectors into the same
+`vector(384)` column, so no profile implies a schema change. Three of them run
+one model at one pinned revision; the fourth runs a different, smaller model.
 
 | Profile | Runs on | Vector space | Notes |
 |---|---|---|---|
 | `onnx-fp32` (default) | ONNX Runtime, full graph | same as `legacy-torch` | The shipped default. Reproduces the torch vectors to float noise. |
 | `onnx-int8` | ONNX Runtime, quantized graph | its own | Smaller and faster. Calibrate on the target host first, see below. |
 | `legacy-torch` | sentence-transformers | same as `onnx-fp32` | Needs `pip install '.[legacy-torch]'`; see `requirements-cpu.txt`. |
+| `micro` | ONNX Runtime, gte-small int8 | its own | 143 MB steady against the default's 882 MB, for about 6% less recall than `onnx-int8`. A full re-embed is mandatory: [docs/micro-reembed.md](micro-reembed.md). |
 
 **Switching between `onnx-fp32` and `legacy-torch` is a restart.** Their vectors
 are interchangeable and they share a stamp in `nodes.embedding_model`, so nothing
@@ -70,6 +71,36 @@ engraphy-admin config set --space <space> --key dedup.t_low --value 0.80
 
 The `onnx-fp32` and `legacy-torch` profiles need none of this. They are
 bit-reproducible and leave 0.040 of room at the same edge.
+
+**`micro` moves four thresholds, not two, and ships all four calibrated.** It
+runs a different model, so every absolute cosine in the engine moves with it:
+
+| | fp32 default | `micro` |
+|---|---:|---:|
+| `dedup.t_high` | 0.95 | 0.955 |
+| `dedup.t_low` | 0.80 | 0.902 |
+| `resonance.floor` | 0.75 | 0.90 |
+| `briefing.semantic_floor` | 0.50 | 0.81 |
+
+The first three are per-space config keys and the shipped values are code
+defaults beneath them. Read-time near-duplicate collapse also moves, to 0.97, and
+it is a code default with no config key (`core/search.py`).
+
+Two scripts re-derive these on the host that will run them, and both report the
+WINDOW each threshold has rather than a single value, which is the number that
+says whether a shipped default survives your hardware:
+
+```
+python scripts/baseline_dedup_fixtures_profile.py --profile micro \
+    --t-high 0.955 --t-low 0.902
+python scripts/baseline_similarity_floors_profile.py --profile micro
+```
+
+`micro`'s `t_low` window is 0.0029 wide, against 0.0221 on the fp32 space. It
+held on four hosts across two instruction sets, which is why one default ships,
+but re-derive it if the store matters. Adopting `micro` on an existing store is a
+mandatory full re-embed and the procedure is
+[docs/micro-reembed.md](micro-reembed.md).
 
 ## Running as a service
 
