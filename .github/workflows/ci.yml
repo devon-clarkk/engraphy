@@ -207,6 +207,23 @@ jobs:
           done
           echo "engraphy never became healthy"; docker compose logs engraphy; exit 1
 
+      # The MCP Registry proves ownership of the published OCI package by
+      # reading this label off the image config (server.json names the exact
+      # tag, the registry pulls it and compares). A label that silently failed
+      # to stick would leave a release half published: images in GHCR, no
+      # registry record, and nothing red until the release job. The image is
+      # already built by the step above, so this reads the result locally, with
+      # no network and no third party in the loop. Reading the expected value
+      # out of server.json is the point: it holds the two files to one name.
+      - name: 'guard: the image carries its MCP Registry name claim'
+        run: |
+          got="$(docker inspect --format '{{index .Config.Labels "io.modelcontextprotocol.server.name"}}'                    "$(docker compose images -q engraphy)")"
+          want="$(python -c 'import json; print(json.load(open("server.json"))["name"])')"
+          echo "image label: $got"
+          echo "server.json: $want"
+          test -n "$got" && test "$got" = "$want" || {
+            echo "the image label and server.json name disagree"; exit 1; }
+
       - name: space + pack + token (step 7)
         run: |
           docker compose --profile admin run --rm admin \
