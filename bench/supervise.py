@@ -1,5 +1,11 @@
 """Auto-resume supervisor: a usage limit must PAUSE the run, never break it.
 
+**Only the `claude-cli` route needs this.** On the OpenAI-compatible route
+(`--provider openai`, see bench/RUN-LOCOMO.md) there is no usage window to sleep
+to: a rate limit that will clear is retried in place against the endpoint's own
+`Retry-After`, and an exhausted balance is already a clean resumable stop that
+the same command picks up. Run `python -m bench.core.run` directly there.
+
 Devon's key requirement (2026-07-24): the matrix run spans multiple Claude
 usage windows, and a rate limit must not end it -- it should pause until the
 limit resets and continue from the checkpoint, unattended.
