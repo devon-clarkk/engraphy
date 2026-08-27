@@ -17,7 +17,9 @@ it costs money, needs a credential, and must never run in CI. The hermetic half
 of this coverage lives in `bench/tests/test_openai_provider.py`, which asserts the
 request shape with a fake transport; this asserts that a real endpoint agrees.
 
-Nine or ten calls, all small. Exits non-zero if any role fails.
+Eleven calls, all small: one extractor, two reader, two adjudicator, and six
+for the judge, which grades two questions best-of-3 exactly as a run does.
+Exits non-zero if any role fails.
 """
 
 from __future__ import annotations
