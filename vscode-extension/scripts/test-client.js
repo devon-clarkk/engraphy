@@ -14,6 +14,9 @@ const w = require('../out-test/webviewMessages.js');
 const s = require('../out-test/statsModel.js');
 const c = require('../out-test/connection.js');
 const m = require('../out-test/tokenMigration.js');
+const cap = require('../out-test/capability.js');
+const ar = require('../out-test/agentRuntimes.js');
+const os = require('os');
 
 let passed = 0;
 function check(name, fn) {
@@ -754,6 +757,294 @@ check('planTokenMigration: a real inspect() shape is accepted as-is', () => {
 		languageIds: [],
 	};
 	assert.deepStrictEqual(m.planTokenMigration(inspectLike), { value: 'tok-g', clear: ['global'] });
+});
+
+// ---- capability model ------------------------------------------------------
+//
+// These cover the exact state that caused silent data loss: a reachable server,
+// an extension that can read it, and no agent anywhere holding the tools.
+
+check('vsCodeRegistryLive: registering is not consumption', () => {
+	// The provider registered and VS Code never asked. This is the normal state
+	// in an editor with no Copilot Chat traffic, and it used to be invisible.
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, {}), false);
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 0 }), false);
+});
+check('vsCodeRegistryLive: being asked and returning nothing is not consumption', () => {
+	// The empty-URL / malformed-URL path. VS Code asked, Engraphy withheld.
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 3, lastCount: 0 }), false);
+});
+check('vsCodeRegistryLive: asked and answered is consumption', () => {
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 1, lastCount: 1 }), true);
+});
+check('vsCodeRegistryLive: an absent API can never be live', () => {
+	assert.strictEqual(cap.vsCodeRegistryLive('missing', true, { calls: 9, lastCount: 1 }), false);
+	assert.strictEqual(cap.vsCodeRegistryLive('available', false, { calls: 9, lastCount: 1 }), false);
+});
+
+const REACHABLE = {
+	reach: 'reachable',
+	host: '127.0.0.1:8000',
+	api: 'available',
+	providerRegistered: true,
+	signal: {},
+	runtimes: [],
+};
+
+check('capability: a reachable server with no agent path is NOT connected', () => {
+	// THE INCIDENT. Server up, extension reads it fine, nothing consumed the
+	// registry, no third-party runtime registered. The old bar said "connected".
+	const vm = cap.buildCapabilityVM(REACHABLE);
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.strictEqual(vm.usable, false);
+	assert.match(vm.label, /agent cannot see memory/);
+	assert.strictEqual(vm.action.command, cap.REGISTER_COMMAND);
+	// The explanation must name the real reason, not a generic failure.
+	assert.match(vm.detail, /VS Code has never asked for it/);
+});
+
+check('capability: a detected third-party runtime is named in the gap detail', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /Claude Code/);
+	assert.match(vm.detail, /do not use the VS Code registry/);
+});
+
+check('capability: a registered third-party runtime IS ready, with no Copilot at all', () => {
+	// Devon's working machine: Claude Code holds the tools via ~/.claude.json,
+	// and VS Code has never consumed the provider. That is genuinely ready.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+	assert.strictEqual(vm.usable, true);
+	assert.match(vm.title, /Claude Code/);
+});
+
+check('capability: a consumed VS Code registry is ready on its own', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, signal: { calls: 2, lastCount: 1 } });
+	assert.strictEqual(vm.phase, 'ready');
+	assert.strictEqual(vm.usable, true);
+});
+
+check('capability: an old VS Code says so instead of failing silently', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, api: 'missing', providerRegistered: false });
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /VS Code 1\.101 or newer/);
+});
+
+check('capability: a dead server outranks the agent question', () => {
+	// Registering an agent against a server that is not answering fixes nothing,
+	// so the server problem is the one reported.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		reach: 'unauthorized',
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'server-unavailable');
+	assert.strictEqual(vm.usable, false);
+});
+
+check('capability: no server URL asks for one', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, reach: 'unconfigured' });
+	assert.strictEqual(vm.phase, 'unconfigured');
+	assert.strictEqual(vm.action.command, cap.CONNECT_COMMAND);
+});
+
+// ---- write freshness -------------------------------------------------------
+
+check('writeFreshness: an empty series says plainly that nothing was written', () => {
+	const f = cap.buildWriteFreshness([], '2026-08-30');
+	assert.strictEqual(f.lastWriteDate, undefined);
+	assert.match(f.summary, /No memory has been written/);
+});
+check('writeFreshness: zero-filled days are not writes', () => {
+	// The stats series zero-fills every day in range, so "has rows" is not
+	// "has writes". A phantom save leaves exactly this shape behind.
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-29', facts_stored: 0, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-30', facts_stored: 0, duplicates_prevented: 0, promotes: 0 },
+		],
+		'2026-08-30'
+	);
+	assert.strictEqual(f.rangeTotal, 0);
+	assert.match(f.summary, /has not reached this server/);
+});
+check('writeFreshness: counts every write-shaped outcome, not just inserts', () => {
+	// A `needs_confirmation` park counts under duplicates_prevented and is real
+	// server traffic, so it must move the freshness line even though no node
+	// was inserted yet.
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-28', facts_stored: 2, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-30', facts_stored: 0, duplicates_prevented: 1, promotes: 1 },
+		],
+		'2026-08-30'
+	);
+	assert.strictEqual(f.lastWriteDate, '2026-08-30');
+	assert.strictEqual(f.lastWriteCount, 2);
+	assert.strictEqual(f.rangeTotal, 4);
+	assert.match(f.summary, /today/);
+});
+check('writeFreshness: an out-of-order series still finds the latest day', () => {
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-30', facts_stored: 1, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-20', facts_stored: 5, duplicates_prevented: 0, promotes: 0 },
+		],
+		'2026-08-31'
+	);
+	assert.strictEqual(f.lastWriteDate, '2026-08-30');
+	assert.match(f.summary, /on 2026-08-30/);
+});
+
+// ---- agent runtime configs -------------------------------------------------
+
+check('stripJsonComments: strips comments but not a URL double slash', () => {
+	const r = ar.stripJsonComments('{"url": "http://x/mcp/"} // trailing');
+	assert.strictEqual(r.hadComments, true);
+	assert.strictEqual(JSON.parse(r.out).url, 'http://x/mcp/');
+});
+check('stripJsonComments: an escaped quote does not end the string', () => {
+	const r = ar.stripJsonComments('{"a": "he said \\" // not a comment"}');
+	assert.strictEqual(r.hadComments, false);
+	assert.strictEqual(JSON.parse(r.out).a, 'he said " // not a comment');
+});
+check('stripJsonComments: block comments go too', () => {
+	const r = ar.stripJsonComments('{/* hi */"a": 1}');
+	assert.strictEqual(r.hadComments, true);
+	assert.deepStrictEqual(JSON.parse(r.out), { a: 1 });
+});
+
+const claudeSpec = ar.RUNTIMES.find((r) => r.id === 'claude-code');
+const cursorSpec = ar.RUNTIMES.find((r) => r.id === 'cursor');
+const vscodeSpec = ar.RUNTIMES.find((r) => r.id === 'vscode-user');
+
+check('buildEntry: matches the shape Claude Code actually stores', () => {
+	assert.deepStrictEqual(ar.buildEntry(claudeSpec, 'http://127.0.0.1:8000/mcp/', 'tok'), {
+		type: 'http',
+		url: 'http://127.0.0.1:8000/mcp/',
+		headers: { Authorization: 'Bearer tok' },
+	});
+});
+check('buildEntry: an untyped runtime gets no type discriminator', () => {
+	assert.strictEqual(ar.buildEntry(cursorSpec, 'http://x/mcp/', 'tok').type, undefined);
+});
+check('buildEntry: no token means no Authorization header', () => {
+	assert.strictEqual(ar.buildEntry(claudeSpec, 'http://x/mcp/', '').headers, undefined);
+});
+check('vscode-user runtime writes the "servers" key, not "mcpServers"', () => {
+	// VS Code's own mcp.json uses a different top-level key. Getting this wrong
+	// would write a file that parses and does nothing, which is the same class
+	// of silent failure this whole change is about.
+	assert.strictEqual(vscodeSpec.mapKey, 'servers');
+	assert.strictEqual(claudeSpec.mapKey, 'mcpServers');
+});
+
+check('mergeEngraphy: preserves every unrelated key and sibling server', () => {
+	const before = {
+		projects: { a: 1 },
+		mcpServers: { other: { url: 'http://other/' } },
+	};
+	const after = ar.mergeEngraphy(before, claudeSpec, { type: 'http', url: 'http://x/mcp/' });
+	assert.deepStrictEqual(after.projects, { a: 1 });
+	assert.deepStrictEqual(after.mcpServers.other, { url: 'http://other/' });
+	assert.strictEqual(after.mcpServers.engraphy.url, 'http://x/mcp/');
+	// The input must not be mutated: the caller still holds it for the backup.
+	assert.strictEqual(before.mcpServers.engraphy, undefined);
+});
+check('mergeEngraphy: a missing or non-object map is created, not crashed on', () => {
+	assert.strictEqual(ar.mergeEngraphy(null, claudeSpec, { url: 'u' }).mcpServers.engraphy.url, 'u');
+	assert.strictEqual(
+		ar.mergeEngraphy({ mcpServers: 'nonsense' }, claudeSpec, { url: 'u' }).mcpServers.engraphy.url,
+		'u'
+	);
+});
+check('hasEngraphy / registeredUrl read what mergeEngraphy wrote', () => {
+	const merged = ar.mergeEngraphy({}, claudeSpec, { type: 'http', url: 'http://x/mcp/' });
+	assert.strictEqual(ar.hasEngraphy(merged, claudeSpec), true);
+	assert.strictEqual(ar.registeredUrl(merged, claudeSpec), 'http://x/mcp/');
+	assert.strictEqual(ar.hasEngraphy({}, claudeSpec), false);
+});
+
+// ---- registration round trip, against a real temp home ---------------------
+
+check('registerRuntime: writes, backs up, and reads back verified', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const url = 'http://127.0.0.1:8000/mcp/';
+	fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { keep: 1 } }));
+
+	const out = ar.registerRuntime(claudeSpec, url, 'tok', home);
+	assert.strictEqual(out.ok, true);
+	assert.ok(fs.existsSync(out.backup), 'a backup is taken before the write');
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, url, home), true);
+
+	const written = JSON.parse(fs.readFileSync(out.path, 'utf8'));
+	assert.deepStrictEqual(written.projects, { keep: 1 }, 'unrelated config survives');
+	assert.strictEqual(written.mcpServers.engraphy.headers.Authorization, 'Bearer tok');
+	// No temp file may be left behind: a stray one carries the token.
+	assert.strictEqual(fs.existsSync(out.path + '.engraphy-tmp'), false);
+
+	// Re-running is a no-op rather than a second write.
+	assert.strictEqual(ar.registerRuntime(claudeSpec, url, 'tok', home).unchanged, true);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: creates a missing config and its directory', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const out = ar.registerRuntime(cursorSpec, 'http://x/mcp/', '', home);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(ar.verifyRegistration(cursorSpec, 'http://x/mcp/', home), true);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: a zero-byte config is a starting point, not a failure', () => {
+	// VS Code ships an empty User/mcp.json on installs that never added a
+	// server, which is exactly the machine that needs this button.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, vscodeSpec.relPath);
+	fs.mkdirSync(path.dirname(target), { recursive: true });
+	fs.writeFileSync(target, '');
+	const out = ar.registerRuntime(vscodeSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(JSON.parse(fs.readFileSync(target, 'utf8')).servers.engraphy.url, 'http://x/mcp/');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: refuses a commented config rather than eating the comments', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, '.claude.json');
+	fs.writeFileSync(target, '// keep me\n{"projects": {}}');
+	const out = ar.registerRuntime(claudeSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, false);
+	assert.match(out.problem, /comments/);
+	assert.strictEqual(fs.readFileSync(target, 'utf8'), '// keep me\n{"projects": {}}');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: refuses an unparseable config rather than overwriting it', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, '.claude.json');
+	fs.writeFileSync(target, '{ this is not json');
+	const out = ar.registerRuntime(claudeSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, false);
+	assert.strictEqual(fs.readFileSync(target, 'utf8'), '{ this is not json');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('verifyRegistration: a stale URL does not count as registered', () => {
+	// Registration drift: the entry exists but points somewhere else, so the
+	// agent is talking to the wrong server. That is not success.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	ar.registerRuntime(claudeSpec, 'http://old/mcp/', 'tok', home);
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, 'http://new/mcp/', home), false);
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, 'http://old/mcp/', home), true);
+	fs.rmSync(home, { recursive: true, force: true });
 });
 
 console.log(`\n${passed} checks passed.`);

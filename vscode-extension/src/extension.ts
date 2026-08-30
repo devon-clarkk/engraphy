@@ -1,11 +1,15 @@
 // Engraphy for VS Code.
 //
-// Tier 1 (intact): registers the Engraphy MCP server with VS Code's native MCP
-// support (contributes.mcpServerDefinitionProviders + registerMcpServer-
-// DefinitionProvider) so Copilot / agent mode can use Engraphy's tools.
+// Tier 1: registers the Engraphy MCP server with VS Code's native MCP support
+// (contributes.mcpServerDefinitionProviders + registerMcpServerDefinition-
+// Provider) so Copilot agent mode can use Engraphy's tools, AND registers it
+// with the third-party coding agents that read their own config instead. The
+// VS Code API reaches VS Code and nothing else, so on its own it leaves a
+// Claude Code or Cursor user with no Engraphy tools at all. See
+// agentRuntimes.ts for the runtimes and capability.ts for the verdict.
 //
-// Tier 2 (this file adds): a confirm-write queue + memory explorer UI driven by
-// a typed MCP client, plus a status-bar connection indicator and Refresh.
+// Tier 2: a confirm-write queue + memory explorer UI driven by a typed MCP
+// client, plus the status-bar capability indicator and Refresh.
 //
 // API reference: https://code.visualstudio.com/api/extension-guides/ai/mcp
 
@@ -22,7 +26,21 @@ import { STARTER_NODE_TYPES, isValidServerUrl, promoteDefaults } from './webview
 import { ExplorerProvider } from './explorerView';
 import { ConfirmWebviewProvider } from './confirmWebview';
 import { StatsWebviewProvider } from './statsWebview';
-import { StatusBar } from './status';
+import { StatusBar, type AgentContext } from './status';
+import {
+	buildWriteFreshness,
+	type AgentRuntimeStatus,
+	type McpApiState,
+	type ProviderSignal,
+} from './capability';
+import {
+	RUNTIMES,
+	TOKEN_PLAINTEXT_WARNING,
+	detectRuntimes,
+	registerRuntime,
+	verifyRegistration,
+	type RuntimeSpec,
+} from './agentRuntimes';
 import { getToken, migrateTokenSetting, primeToken, setToken, watchToken } from './tokenStore';
 import { describeError, hostLabel } from './connection';
 
@@ -59,9 +77,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	context.subscriptions.push(watchToken(context));
 
 	// ---- Tier 1: MCP provider registration (best-effort; never blocks the UI) ----
+	//
+	// Registration is now INSTRUMENTED and its result is kept, because "the call
+	// did not throw" was never evidence the editor picked the server up, and the
+	// difference is invisible to a user otherwise.
 	const didChangeEmitter = new vscode.EventEmitter<void>();
 	context.subscriptions.push(didChangeEmitter);
-	registerMcpProvider(context, output, extensionVersion, didChangeEmitter);
+	const mcpApi: McpApiState =
+		typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function' ? 'available' : 'missing';
+	const providerRegistered = registerMcpProvider(
+		context,
+		output,
+		extensionVersion,
+		didChangeEmitter,
+		(count) => void recordProviderSignal(context, count)
+	);
+
+	// Runtime detection touches the filesystem, so it is cached and refreshed on
+	// demand rather than run on every status repaint.
+	let runtimes: AgentRuntimeStatus[] = [];
+	const rescanRuntimes = (): AgentRuntimeStatus[] => {
+		try {
+			runtimes = detectRuntimes();
+		} catch (e) {
+			output.appendLine(`Could not scan for coding agents: ${String(e)}`);
+			runtimes = [];
+		}
+		return runtimes;
+	};
+	rescanRuntimes();
+	const agentContext = (): AgentContext => ({
+		api: mcpApi,
+		providerRegistered,
+		signal: readProviderSignal(context),
+		runtimes,
+	});
 
 	// ---- Tier 2: client + views + status bar ----
 	const client = new EngraphyClient(connection, extensionVersion);
@@ -101,10 +151,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		vscode.window.createTreeView('engraphyExplorer', { treeDataProvider: explorerProvider })
 	);
 
-	const status = new StatusBar(client, connection);
+	const status = new StatusBar(client, connection, agentContext);
 	context.subscriptions.push(status);
 
 	const refreshAll = async (): Promise<void> => {
+		rescanRuntimes();
 		await status.refresh();
 		await confirmProvider.refresh();
 		await statsProvider.refresh();
@@ -141,7 +192,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		vscode.commands.registerCommand('engraphy.configureServer', () =>
 			runSafely(output, () => configureServer(context, client, confirmProvider, output))
 		),
-		vscode.commands.registerCommand('engraphy.cloudComingSoon', () => cloudComingSoon())
+		vscode.commands.registerCommand('engraphy.cloudComingSoon', () => cloudComingSoon()),
+		vscode.commands.registerCommand('engraphy.registerWithAgent', () =>
+			runSafely(output, async () => {
+				await registerWithAgent(output, connection());
+				rescanRuntimes();
+				await refreshAll();
+			})
+		),
+		vscode.commands.registerCommand('engraphy.verifyWrites', () =>
+			runSafely(output, () => verifyWrites(client, output))
+		)
 	);
 
 	// Re-read on settings change: reconnect the client, refresh MCP defs + UI.
@@ -164,14 +225,240 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	void migrateTokenSetting(context, output);
 
 	output.appendLine(`Engraphy extension activated (v${extensionVersion}).`);
-	// Initial paint (non-blocking).
-	void runSafely(output, refreshAll);
+	// Initial paint (non-blocking), then tell the user if nothing can reach the
+	// memory. The status bar cannot be the only channel for this: it is hideable
+	// (workbench.statusBar.visible), and the whole failure being fixed here is
+	// one nobody noticed.
+	void runSafely(output, async () => {
+		await refreshAll();
+		await warnIfNoAgentPath(context, status, output);
+	});
 	// First run: guide a cold install to a server. Only nags once (globalState)
 	// and only when a server isn't actually reachable — never on a working setup.
 	void maybeOfferFirstRunWalkthrough(context, client, output);
 }
 
 const WELCOMED_KEY = 'engraphy.welcomed.v1';
+const PROVIDER_SIGNAL_KEY = 'engraphy.mcp.providerSignal.v1';
+
+// ---- provider-consumption signal -------------------------------------------
+//
+// The record of whether VS Code has ever ASKED this extension for its MCP
+// server definitions. Kept in globalState rather than memory on purpose: the
+// question worth answering is "does anything on this machine consume the MCP
+// registry at all", and a fresh window that has not yet seen a chat message
+// would answer that wrongly from memory alone.
+
+function readProviderSignal(context: vscode.ExtensionContext): ProviderSignal {
+	return context.globalState.get<ProviderSignal>(PROVIDER_SIGNAL_KEY) ?? {};
+}
+
+async function recordProviderSignal(
+	context: vscode.ExtensionContext,
+	count: number
+): Promise<void> {
+	const prev = readProviderSignal(context);
+	await context.globalState.update(PROVIDER_SIGNAL_KEY, {
+		lastProvidedAt: new Date().toISOString(),
+		lastCount: count,
+		calls: (prev.calls ?? 0) + 1,
+	} satisfies ProviderSignal);
+}
+
+// ---- the no-agent-path warning ---------------------------------------------
+
+const AGENT_WARNED_KEY = 'engraphy.agentGapWarned.v1';
+
+/**
+ * Say out loud, once, when the memory server is reachable but nothing an agent
+ * reads points at it.
+ *
+ * This is the incident state, and it is the one that has to interrupt. A
+ * silently-unregistered MCP server plus an agent that narrates saves it never
+ * made loses data with nothing on screen disagreeing.
+ *
+ * Nagging is bounded two ways: the flag suppresses repeats, and it is CLEARED
+ * the moment an agent path goes live, so a setup that later breaks warns again
+ * rather than staying quiet because it was once fine.
+ */
+async function warnIfNoAgentPath(
+	context: vscode.ExtensionContext,
+	status: StatusBar,
+	log: vscode.OutputChannel
+): Promise<void> {
+	const vm = status.capability;
+	if (!vm) {
+		return;
+	}
+	if (vm.phase !== 'no-agent-path') {
+		if (vm.phase === 'ready' && context.globalState.get<boolean>(AGENT_WARNED_KEY)) {
+			await context.globalState.update(AGENT_WARNED_KEY, false);
+		}
+		return;
+	}
+	log.appendLine('No agent path to Engraphy: ' + (vm.detail ?? vm.title));
+	if (context.globalState.get<boolean>(AGENT_WARNED_KEY)) {
+		return;
+	}
+	await context.globalState.update(AGENT_WARNED_KEY, true);
+	const pick = await vscode.window.showWarningMessage(
+		'Engraphy: the memory server is reachable, but no coding agent on this machine is registered to use it. ' +
+			'An agent asked to save a memory right now would not reach it.',
+		'Register with your coding agent',
+		'Details'
+	);
+	if (pick === 'Register with your coding agent') {
+		await vscode.commands.executeCommand('engraphy.registerWithAgent');
+	} else if (pick === 'Details') {
+		log.show(true);
+	}
+}
+
+// ---- write confirmation ----------------------------------------------------
+
+/**
+ * Ask the SERVER when memory last actually changed.
+ *
+ * An agent can only report a save it made; it cannot report one it never made,
+ * and when it holds no Engraphy tools at all it may narrate a save that never
+ * left the model. Nothing the agent says is evidence. This command asks the
+ * server directly, so the claim becomes checkable in one click.
+ *
+ * `stats` is the right probe. Metric increments happen only at the write and
+ * search chokepoints (core/dedup.py and core/search.py call metrics.bump_safe);
+ * the stats handler in server/tools/read.py is a pure read of the rollup and
+ * bumps nothing, so this check cannot inflate the numbers the Impact & usage
+ * panel reports. Do not substitute `search`, which does record usage.
+ */
+async function verifyWrites(client: EngraphyClient, log: vscode.OutputChannel): Promise<void> {
+	const res = await client.stats(WRITE_CHECK_RANGE_DAYS, 'space');
+	// The server stamps generated_at, so the "today" comparison uses the
+	// server's calendar rather than this machine's, which is the one the day
+	// buckets were written against.
+	const today = (res.generated_at || '').slice(0, 10);
+	const freshness = buildWriteFreshness(res.series, today);
+	log.appendLine(`verifyWrites: ${freshness.summary}`);
+	if (freshness.rangeTotal === 0) {
+		void vscode.window.showWarningMessage(
+			`Engraphy: nothing has been written to this space in the last ${WRITE_CHECK_RANGE_DAYS} days. ` +
+				'If an agent told you it saved something, that write did not reach this server.',
+			'Register with your coding agent'
+		).then((pick) => {
+			if (pick) {
+				void vscode.commands.executeCommand('engraphy.registerWithAgent');
+			}
+		});
+		return;
+	}
+	void vscode.window.showInformationMessage('Engraphy: ' + freshness.summary);
+}
+
+const WRITE_CHECK_RANGE_DAYS = 7;
+
+// ---- one-click registration with a coding agent ----------------------------
+
+/**
+ * Register Engraphy with the agent the user actually runs, by writing that
+ * agent's own MCP config.
+ *
+ * This exists because `vscode.lm.registerMcpServerDefinitionProvider` reaches
+ * VS Code and nothing else. Claude Code, Cursor and every other third-party
+ * agent read their own config file, so for those users the VS Code API is a
+ * no-op and the only remedy used to be hand-editing an mcp json. This is that
+ * edit, done for them, verified afterwards by reading the file back.
+ */
+async function registerWithAgent(
+	log: vscode.OutputChannel,
+	conn: EngraphyConnection
+): Promise<void> {
+	if (!conn.serverUrl) {
+		const pick = await vscode.window.showWarningMessage(
+			'Engraphy has no server URL yet, so there is nothing to register. Set one first.',
+			'Connect to a server'
+		);
+		if (pick) {
+			await vscode.commands.executeCommand('engraphy.configureServer');
+		}
+		return;
+	}
+
+	const detected = detectRuntimes();
+	const byId = new Map(detected.map((r) => [r.id, r]));
+	const items = RUNTIMES.map((spec) => {
+		const found = byId.get(spec.id);
+		const registered = found?.registered ?? false;
+		return {
+			label: spec.label,
+			description: registered ? 'already registered' : found?.detected ? 'detected' : 'not detected',
+			detail: found?.configPath,
+			picked: !registered && (found?.detected ?? false),
+			spec,
+		};
+	});
+
+	const chosen = await vscode.window.showQuickPick(items, {
+		title: 'Engraphy: register with your coding agent',
+		placeHolder: 'Pick every agent that should be able to read and write Engraphy memory',
+		canPickMany: true,
+		ignoreFocusOut: true,
+	});
+	if (!chosen || chosen.length === 0) {
+		return;
+	}
+
+	// Writing a bearer token into a plaintext config is a real trade against the
+	// keychain storage 0.5.0 introduced, so it is never done silently.
+	if (conn.token) {
+		const ok = await vscode.window.showWarningMessage(
+			`Register Engraphy with ${chosen.map((c) => c.spec.label).join(', ')}?`,
+			{ modal: true, detail: TOKEN_PLAINTEXT_WARNING },
+			'Register'
+		);
+		if (ok !== 'Register') {
+			return;
+		}
+	}
+
+	const done: string[] = [];
+	const failed: string[] = [];
+	for (const item of chosen) {
+		const spec: RuntimeSpec = item.spec;
+		const outcome = registerRuntime(spec, conn.serverUrl, conn.token);
+		if (!outcome.ok) {
+			log.appendLine(`register ${spec.id}: ${outcome.problem ?? 'failed'} (${outcome.path})`);
+			failed.push(`${spec.label}: ${outcome.problem ?? 'write failed'}`);
+			continue;
+		}
+		// Never report a registration on the strength of the write alone. Reading
+		// it back is the whole point: this bug class is what unverified success
+		// looks like.
+		if (!verifyRegistration(spec, conn.serverUrl)) {
+			log.appendLine(`register ${spec.id}: wrote ${outcome.path} but the entry did not read back`);
+			failed.push(`${spec.label}: the entry did not read back from ${outcome.path}`);
+			continue;
+		}
+		log.appendLine(
+			`register ${spec.id}: verified in ${outcome.path}` +
+				(outcome.unchanged ? ' (already current)' : '') +
+				(outcome.backup ? `, backup at ${outcome.backup}` : '')
+		);
+		done.push(spec.label);
+	}
+
+	if (done.length > 0) {
+		const pick = await vscode.window.showInformationMessage(
+			`Engraphy registered with ${done.join(', ')}. Restart that agent so it reloads its MCP config.` +
+				(failed.length > 0 ? ` ${failed.length} could not be written.` : ''),
+			'Show details'
+		);
+		if (pick) {
+			log.show(true);
+		}
+	}
+	if (failed.length > 0 && done.length === 0) {
+		void vscode.window.showErrorMessage(`Engraphy could not register: ${failed.join('; ')}`);
+	}
+}
 
 /**
  * On the first-ever activation, if no server answers, open the setup
@@ -601,23 +888,30 @@ function registerMcpProvider(
 	context: vscode.ExtensionContext,
 	output: vscode.OutputChannel,
 	extensionVersion: string,
-	didChangeEmitter: vscode.EventEmitter<void>
-): void {
+	didChangeEmitter: vscode.EventEmitter<void>,
+	recordSignal: (count: number) => void
+): boolean {
 	if (typeof vscode.lm?.registerMcpServerDefinitionProvider !== 'function') {
 		output.appendLine(
 			'Native MCP provider API not available (needs VS Code 1.101+). ' +
 				'The memory UI still works; MCP auto-registration is skipped.'
 		);
-		return;
+		return false;
 	}
 
 	const provider: vscode.McpServerDefinitionProvider = {
 		onDidChangeMcpServerDefinitions: didChangeEmitter.event,
 
 		provideMcpServerDefinitions(_token: vscode.CancellationToken): vscode.McpServerDefinition[] {
+			// Being ASKED is the only certain evidence that something in the editor
+			// consumes the MCP registry. Record every call, including the ones that
+			// return nothing, so "VS Code never asked" stays distinguishable from
+			// "VS Code asked and Engraphy withheld a definition". Without this the
+			// two look identical from the UI, and both look like success.
 			const conn = connection();
 			if (!conn.serverUrl) {
 				output.appendLine('engraphy.serverUrl is empty, so no Engraphy MCP server was provided.');
+				recordSignal(0);
 				return [];
 			}
 			let uri: vscode.Uri;
@@ -627,6 +921,7 @@ function registerMcpProvider(
 				void vscode.window.showErrorMessage(
 					`Engraphy: engraphy.serverUrl is not a valid URL: "${conn.serverUrl}"`
 				);
+				recordSignal(0);
 				return [];
 			}
 			const headers: Record<string, string> = {};
@@ -640,6 +935,8 @@ function registerMcpProvider(
 				.digest('hex')
 				.slice(0, 12);
 			const version = `${extensionVersion}-${digest}`;
+			output.appendLine(`VS Code asked for MCP definitions; provided 1 (${label}).`);
+			recordSignal(1);
 			return [new vscode.McpHttpServerDefinition(label, uri, headers, version)];
 		},
 
@@ -651,9 +948,19 @@ function registerMcpProvider(
 		},
 	};
 
-	context.subscriptions.push(
-		vscode.lm.registerMcpServerDefinitionProvider(PROVIDER_ID, provider)
-	);
+	// A throwing registration must not read as a successful one. The return value
+	// feeds the capability verdict, which is the thing the user sees.
+	try {
+		context.subscriptions.push(
+			vscode.lm.registerMcpServerDefinitionProvider(PROVIDER_ID, provider)
+		);
+		return true;
+	} catch (e) {
+		output.appendLine(
+			`Registering the MCP provider with VS Code failed: ${e instanceof Error ? e.message : String(e)}`
+		);
+		return false;
+	}
 }
 
 function resolveComposeDir(output: vscode.OutputChannel): string | undefined {

@@ -1,6 +1,11 @@
-// Status-bar connection indicator.
+// Status-bar capability indicator.
 //
-// It runs TWO probes, and only the authenticated one can paint "connected":
+// It answers the question a user actually reads off the bar: can my agent use
+// Engraphy right now. That needs TWO independent facts, and the bar reports
+// ready only when both hold.
+//
+// AXIS 1, can this extension read the server. Two probes, and only the
+// authenticated one counts:
 //
 //   /healthz    unauthenticated (engraphy/server/app.py exempts it from the
 //               bearer middleware), so it answers 200 for a server you hold no
@@ -15,11 +20,26 @@
 // (engraphy/server/auth.py WRITE_TOOLS), so read-only tokens can call it, and
 // engraphy/core/scopes.py never imports core.metrics, so polling it cannot
 // inflate the counters the Impact & usage panel reports. Do not "simplify" this
-// to stats or search, both of which record usage.
+// to search, which records usage. (`stats` is safe: the handler in
+// engraphy/server/tools/read.py is a pure read of the rollup and bumps no
+// metric. `scope_list` stays the probe because it is cheaper and touches less.)
+//
+// AXIS 2, can an AGENT read the server. Entirely separate, and the reason this
+// module no longer paints connected off the probes above alone: they run
+// through the extension's OWN client, which proves nothing about whether the
+// coding agent in the editor holds the Engraphy tools. See capability.ts.
 
 import * as vscode from 'vscode';
 import { EngraphyClient, type HealthInfo } from './mcpClient';
 import { buildHealthVM, type HealthVM } from './connection';
+import {
+	buildCapabilityVM,
+	type AgentRuntimeStatus,
+	type CapabilityVM,
+	type McpApiState,
+	type ProviderSignal,
+	type ReachPhase,
+} from './capability';
 
 export interface StatusConnection {
 	serverUrl: string;
@@ -27,13 +47,39 @@ export interface StatusConnection {
 	space: string;
 }
 
+/** Everything the capability verdict needs that is not a server probe. */
+export interface AgentContext {
+	api: McpApiState;
+	providerRegistered: boolean;
+	signal: ProviderSignal;
+	runtimes: AgentRuntimeStatus[];
+}
+
+/** Map the server-probe phase onto the capability model's reach axis. */
+export function reachPhaseOf(health: HealthVM): ReachPhase {
+	switch (health.phase) {
+		case 'connected':
+			return 'reachable';
+		case 'unconfigured':
+			return 'unconfigured';
+		case 'unauthorized':
+			return 'unauthorized';
+		case 'unreachable':
+			return 'unreachable';
+		default:
+			return 'degraded';
+	}
+}
+
 export class StatusBar {
 	private readonly item: vscode.StatusBarItem;
 	private last: HealthVM | undefined;
+	private lastCapability: CapabilityVM | undefined;
 
 	constructor(
 		private readonly client: EngraphyClient,
-		private readonly getConnection: () => StatusConnection
+		private readonly getConnection: () => StatusConnection,
+		private readonly getAgentContext: () => AgentContext
 	) {
 		this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 		this.item.command = 'engraphy.refresh';
@@ -41,9 +87,14 @@ export class StatusBar {
 		this.item.show();
 	}
 
-	/** The state the bar is currently showing. Lets callers avoid a second probe. */
+	/** Server reachability only. Lets callers avoid a second probe. */
 	get health(): HealthVM | undefined {
 		return this.last;
+	}
+
+	/** The end-to-end verdict the bar is currently showing. */
+	get capability(): CapabilityVM | undefined {
+		return this.lastCapability;
 	}
 
 	private setChecking(): void {
@@ -64,7 +115,8 @@ export class StatusBar {
 					serverUrl: conn.serverUrl,
 					info: null,
 					authOk: false,
-				})
+				}),
+				conn
 			);
 			return;
 		}
@@ -90,23 +142,53 @@ export class StatusBar {
 				healthzError: healthRes.status === 'rejected' ? healthRes.reason : undefined,
 				authOk: authRes.status === 'fulfilled',
 				authError: authRes.status === 'rejected' ? authRes.reason : undefined,
-			})
+			}),
+			conn
 		);
 	}
 
-	private apply(vm: HealthVM): void {
-		this.last = vm;
-		this.item.text = `${iconFor(vm.phase)} ${vm.label}`;
-		this.item.tooltip = vm.detail ? `${vm.title}\n\n${vm.detail}` : vm.title;
+	/**
+	 * Paint the END-TO-END verdict, not the server probe.
+	 *
+	 * A reachable server whose tools no agent holds is the state that caused
+	 * silent data loss: the bar read connected, the agent had nothing, and
+	 * nothing on screen disagreed. It now reads "agent cannot see memory".
+	 */
+	private apply(health: HealthVM, conn: StatusConnection): void {
+		this.last = health;
+		const ctx = this.getAgentContext();
+		const vm = buildCapabilityVM({
+			reach: reachPhaseOf(health),
+			host: hostOf(conn.serverUrl),
+			reachDetail: health.detail,
+			api: ctx.api,
+			providerRegistered: ctx.providerRegistered,
+			signal: ctx.signal,
+			runtimes: ctx.runtimes,
+		});
+		this.lastCapability = vm;
+		// The space label is worth keeping on a ready bar; the other phases need
+		// their own words more than they need the label.
+		const text = vm.phase === 'ready' && conn.space ? `Engraphy (${conn.space})` : vm.label;
+		this.item.text = `${iconFor(vm.phase)} ${text}`;
+		const tip = new vscode.MarkdownString();
+		tip.appendMarkdown(`**${vm.title}**`);
+		if (vm.detail) {
+			tip.appendMarkdown(`\n\n${vm.detail}`);
+		}
+		if (health.version) {
+			tip.appendMarkdown(`\n\nServer v${health.version}.`);
+		}
+		this.item.tooltip = tip;
 		this.item.backgroundColor = vm.usable
 			? undefined
 			: new vscode.ThemeColor(
-					vm.phase === 'unconfigured'
-						? 'statusBarItem.warningBackground'
-						: vm.phase === 'unauthorized'
-							? 'statusBarItem.warningBackground'
-							: 'statusBarItem.errorBackground'
+					vm.phase === 'server-unavailable'
+						? 'statusBarItem.errorBackground'
+						: 'statusBarItem.warningBackground'
 				);
+		// Clicking a broken bar should do the thing that fixes it, not re-probe.
+		this.item.command = vm.action ? vm.action.command : 'engraphy.refresh';
 	}
 
 	dispose(): void {
@@ -114,16 +196,22 @@ export class StatusBar {
 	}
 }
 
-function iconFor(phase: HealthVM['phase']): string {
+function hostOf(serverUrl: string): string {
+	try {
+		return new URL(serverUrl).host;
+	} catch {
+		return serverUrl || 'the configured URL';
+	}
+}
+
+function iconFor(phase: CapabilityVM['phase']): string {
 	switch (phase) {
-		case 'connected':
+		case 'ready':
 			return '$(loop)';
-		case 'unauthorized':
-			return '$(key)';
-		case 'unreachable':
-			return '$(debug-disconnect)';
-		case 'degraded':
+		case 'no-agent-path':
 			return '$(warning)';
+		case 'server-unavailable':
+			return '$(debug-disconnect)';
 		case 'unconfigured':
 			return '$(plug)';
 		default:

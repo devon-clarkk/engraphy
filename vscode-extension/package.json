@@ -144,6 +144,18 @@
         "command": "engraphy.cloudComingSoon",
         "title": "Engraphy Cloud (coming soon)",
         "category": "Engraphy"
+      },
+      {
+        "command": "engraphy.registerWithAgent",
+        "title": "Register with your coding agent…",
+        "category": "Engraphy",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "engraphy.verifyWrites",
+        "title": "Check that writes are reaching the server",
+        "category": "Engraphy",
+        "icon": "$(verified)"
       }
     ],
     "menus": {
@@ -224,7 +236,7 @@
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit -p ./",
     "make-icon": "node scripts/make-icon.js",
-    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts src/connection.ts src/tokenMigration.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
+    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts src/connection.ts src/tokenMigration.ts src/capability.ts src/agentRuntimes.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"

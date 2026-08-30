@@ -1,5 +1,47 @@
 # Change Log
 
+## 0.6.0 (unreleased)
+
+### Engraphy registers with the coding agent you actually run
+
+**Engraphy: Register with your coding agent** writes the Engraphy server into
+the MCP config that your agent reads, and reads the file back to confirm the
+entry landed before reporting success. It covers Claude Code (`~/.claude.json`),
+Cursor (`~/.cursor/mcp.json`) and VS Code's own user `mcp.json`, backs the file
+up first, writes through a temp file and a rename, and leaves a config that
+carries comments or invalid JSON untouched rather than rewriting it.
+
+Copilot agent mode continues to receive the server through VS Code's MCP
+provider API. Every other agent reads its own config, so this is the path that
+puts the Engraphy tools in front of them.
+
+### The indicator reports end-to-end capability
+
+The status bar answers the question it is read for: can an agent use Engraphy
+right now. That needs both a server this extension can read and an agent that
+holds the tools, and it reports ready only when both hold. A reachable server
+with no agent registered reads **Engraphy: agent cannot see memory**, and its
+tooltip names which of the two is missing and why.
+
+The extension now records every time VS Code asks for its MCP server
+definitions. That is the evidence that something in the editor consumes the MCP
+registry, and it separates three states the UI previously showed identically:
+a VS Code too old for the provider API, a provider registered and never
+queried, and a provider queried and answered.
+
+Because the status bar can be hidden, a reachable server with no agent path
+also raises a notification with a one-click **Register with your coding agent**.
+It appears once, and arms again if a working setup later breaks.
+
+### Writes are checkable against the server
+
+**Engraphy: Check that writes are reaching the server** reports when memory
+last actually changed, read straight from the server's own counters. An agent
+can only report a save it made, so this is the answer that does not depend on
+what the agent says. It reads the metrics rollup and records no usage of its
+own, so checking never moves the numbers in the Impact & usage panel.
+
+
 ## 0.5.2
 
 Setup and onboarding content only. No code, dependency or behaviour change from
