@@ -37,6 +37,7 @@ import {
 	type AgentRuntimeStatus,
 	type CapabilityVM,
 	type McpApiState,
+	type McpPolicy,
 	type ProviderSignal,
 	type ReachPhase,
 } from './capability';
@@ -55,6 +56,8 @@ export interface AgentContext {
 	runtimes: AgentRuntimeStatus[];
 	/** Runtime ids the user has dismissed. See CapabilityInput.ignored. */
 	ignored: string[];
+	/** VS Code's own MCP gates, which an organisation can set. */
+	policy: McpPolicy;
 }
 
 /** Map the server-probe phase onto the capability model's reach axis. */
@@ -168,6 +171,7 @@ export class StatusBar {
 			signal: ctx.signal,
 			runtimes: ctx.runtimes,
 			ignored: ctx.ignored,
+			policy: ctx.policy,
 		});
 		this.lastCapability = vm;
 		// The space label is worth keeping on a ready bar; the other phases need

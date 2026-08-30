@@ -134,6 +134,60 @@ export interface CapabilityInput {
 	 * a runtime clears its entry.
 	 */
 	ignored?: string[];
+	/** VS Code's own MCP gates. See McpPolicy. */
+	policy?: McpPolicy;
+}
+
+/**
+ * The settings VS Code uses to gate MCP, any of which an organisation can set
+ * rather than the user.
+ *
+ * These matter because they produce the SAME observable state as "nothing
+ * consumes the registry": the extension registers, the provider is offered, and
+ * the server still never reaches the MCP list. On a managed machine that is a
+ * likelier explanation than an editor with no Copilot Chat traffic, so the
+ * warning copy must not assert the latter as though it were the only reading.
+ *
+ * Read from `chat.mcp.*`. Undefined means the setting was not readable, which
+ * is not the same as off.
+ */
+export interface McpPolicy {
+	/** `chat.mcp.enabled`. False disables MCP outright. */
+	enabled?: boolean;
+	/** `chat.mcp.access`. A restrictive value limits which servers load. */
+	access?: string;
+	/** `chat.mcp.allowManagedServersOnly`. True filters out every unmanaged server. */
+	allowManagedServersOnly?: boolean;
+	/** True when `chat.mcp.deniedServers` names Engraphy. */
+	denied?: boolean;
+}
+
+/**
+ * The gates known to be restricting MCP, in user-facing words. Empty when
+ * nothing readable is restricting it, which is NOT proof that nothing is.
+ */
+export function policyRestrictions(p: McpPolicy | undefined): string[] {
+	if (!p) {
+		return [];
+	}
+	const out: string[] = [];
+	if (p.enabled === false) {
+		out.push('"chat.mcp.enabled" is off, which disables MCP entirely');
+	}
+	if (p.allowManagedServersOnly === true) {
+		out.push(
+			'"chat.mcp.allowManagedServersOnly" is on, so only servers your organisation manages are loaded and Engraphy is filtered out'
+		);
+	}
+	if (p.denied === true) {
+		out.push('"chat.mcp.deniedServers" names Engraphy');
+	}
+	if (p.access === 'none') {
+		out.push('"chat.mcp.access" is set to "none", which blocks every MCP server');
+	} else if (p.access && p.access !== 'all') {
+		out.push('"chat.mcp.access" is set to "' + p.access + '"');
+	}
+	return out;
 }
 
 export const REGISTER_COMMAND = 'engraphy.registerWithAgent';
@@ -311,9 +365,22 @@ function agentGapDetail(input: CapabilityInput, runtimes: AgentRuntimeStatus[]):
 	} else if (!input.providerRegistered) {
 		lines.push('The Engraphy MCP provider did not register with VS Code in this session.');
 	} else if ((input.signal.calls ?? 0) === 0) {
-		lines.push(
-			'Engraphy is offered to VS Code, and VS Code has never asked for it. VS Code queries providers when a Copilot Chat message is submitted, so an editor without Copilot Chat traffic never picks the server up.'
-		);
+		// Say what is OBSERVED, then the candidate causes. The observation is
+		// certain; the cause is not, and asserting one cause is how a policy
+		// block gets misread as "you just have not used Copilot Chat yet".
+		lines.push('Engraphy is offered to VS Code, and VS Code has never asked for it.');
+		const restrictions = policyRestrictions(input.policy);
+		if (restrictions.length > 0) {
+			lines.push(
+				'MCP is restricted in this editor: ' +
+					restrictions.join('; ') +
+					'. On a managed machine these are often set by your organisation and shown as "Managed by organization" in Settings.'
+			);
+		} else {
+			lines.push(
+				'Two things cause this. VS Code queries providers when a Copilot Chat message is submitted, so an editor with no Copilot Chat traffic never picks the server up. An organisation policy can also gate MCP: check "chat.mcp.enabled", "chat.mcp.access", "chat.mcp.allowManagedServersOnly" and "chat.mcp.deniedServers" in Settings for a "Managed by organization" badge.'
+			);
+		}
 	} else if ((input.signal.lastCount ?? 0) === 0) {
 		lines.push(
 			'VS Code asked for the Engraphy server definition and none was returned, which happens when the server URL is empty or malformed.'

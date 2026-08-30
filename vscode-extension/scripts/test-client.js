@@ -803,6 +803,44 @@ check('capability: a reachable server with no agent path is NOT connected', () =
 	assert.match(vm.detail, /VS Code has never asked for it/);
 });
 
+check('capability: a policy block is named, not blamed on missing Copilot traffic', () => {
+	// Devon's incident was ON Copilot, so "you have no Copilot Chat traffic" is
+	// the wrong explanation to assert. A readable restriction is reported as the
+	// cause instead.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		policy: { allowManagedServersOnly: true },
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /allowManagedServersOnly/);
+	assert.match(vm.detail, /Managed by organization/);
+	assert.doesNotMatch(vm.detail, /Two things cause this/);
+});
+
+check('capability: with no readable restriction, both causes are offered', () => {
+	// The observation is certain, the cause is not. Neither reading may be
+	// asserted as the only one.
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, policy: {} });
+	assert.match(vm.detail, /VS Code has never asked for it/);
+	assert.match(vm.detail, /Two things cause this/);
+	assert.match(vm.detail, /allowManagedServersOnly/);
+});
+
+check('policyRestrictions: each gate is reported, and silence is not proof', () => {
+	assert.deepStrictEqual(cap.policyRestrictions(undefined), []);
+	// An unreadable setting is undefined, which must never read as "off".
+	assert.deepStrictEqual(cap.policyRestrictions({}), []);
+	assert.strictEqual(cap.policyRestrictions({ enabled: false }).length, 1);
+	assert.strictEqual(cap.policyRestrictions({ enabled: true }).length, 0);
+	assert.strictEqual(cap.policyRestrictions({ access: 'none' }).length, 1);
+	assert.strictEqual(cap.policyRestrictions({ access: 'all' }).length, 0);
+	assert.strictEqual(cap.policyRestrictions({ denied: true }).length, 1);
+	assert.strictEqual(
+		cap.policyRestrictions({ enabled: false, allowManagedServersOnly: true, denied: true }).length,
+		3
+	);
+});
+
 check('capability: a detected third-party runtime is named in the gap detail', () => {
 	const vm = cap.buildCapabilityVM({
 		...REACHABLE,

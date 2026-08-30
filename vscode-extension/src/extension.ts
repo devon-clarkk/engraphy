@@ -31,6 +31,7 @@ import {
 	buildWriteFreshness,
 	type AgentRuntimeStatus,
 	type McpApiState,
+	type McpPolicy,
 	type ProviderSignal,
 } from './capability';
 import {
@@ -112,6 +113,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		signal: readProviderSignal(context),
 		runtimes,
 		ignored: readIgnoredRuntimes(context),
+		policy: readMcpPolicy(),
 	});
 
 	// ---- Tier 2: client + views + status bar ----
@@ -242,6 +244,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 const WELCOMED_KEY = 'engraphy.welcomed.v1';
 const PROVIDER_SIGNAL_KEY = 'engraphy.mcp.providerSignal.v1';
 const IGNORED_RUNTIMES_KEY = 'engraphy.ignoredRuntimes.v1';
+
+/**
+ * VS Code's own MCP gates, read from `chat.mcp.*`.
+ *
+ * Any of these can be set by an organisation on a managed machine, and any of
+ * them produces the same observable state as a provider nothing ever queries:
+ * the extension registers, the server is offered, and it still never reaches
+ * the MCP list. Reading them is what lets the warning name a policy block
+ * instead of blaming the absence of Copilot Chat traffic.
+ *
+ * A value that cannot be read stays undefined, which is deliberately NOT the
+ * same as reading it as off.
+ */
+function readMcpPolicy(): McpPolicy {
+	try {
+		const cfg = vscode.workspace.getConfiguration('chat.mcp');
+		const denied = cfg.get<unknown>('deniedServers');
+		return {
+			enabled: cfg.get<boolean>('enabled'),
+			access: cfg.get<string>('access'),
+			allowManagedServersOnly: cfg.get<boolean>('allowManagedServersOnly'),
+			denied: namesEngraphy(denied),
+		};
+	} catch {
+		return {};
+	}
+}
+
+/** True when a denied-servers value (array or object map) names Engraphy. */
+function namesEngraphy(denied: unknown): boolean | undefined {
+	if (denied === undefined || denied === null) {
+		return undefined;
+	}
+	if (Array.isArray(denied)) {
+		return denied.some((d) => typeof d === 'string' && d.toLowerCase().includes('engraphy'));
+	}
+	if (typeof denied === 'object') {
+		return Object.keys(denied as object).some((k) => k.toLowerCase().includes('engraphy'));
+	}
+	return undefined;
+}
 
 /** Runtime ids the user has said they do not use. See CapabilityInput.ignored. */
 function readIgnoredRuntimes(context: vscode.ExtensionContext): string[] {
