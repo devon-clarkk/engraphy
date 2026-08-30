@@ -53,6 +53,8 @@ export interface AgentContext {
 	providerRegistered: boolean;
 	signal: ProviderSignal;
 	runtimes: AgentRuntimeStatus[];
+	/** Runtime ids the user has dismissed. See CapabilityInput.ignored. */
+	ignored: string[];
 }
 
 /** Map the server-probe phase onto the capability model's reach axis. */
@@ -165,6 +167,7 @@ export class StatusBar {
 			providerRegistered: ctx.providerRegistered,
 			signal: ctx.signal,
 			runtimes: ctx.runtimes,
+			ignored: ctx.ignored,
 		});
 		this.lastCapability = vm;
 		// The space label is worth keeping on a ready bar; the other phases need
@@ -180,13 +183,16 @@ export class StatusBar {
 			tip.appendMarkdown(`\n\nServer v${health.version}.`);
 		}
 		this.item.tooltip = tip;
-		this.item.backgroundColor = vm.usable
-			? undefined
-			: new vscode.ThemeColor(
-					vm.phase === 'server-unavailable'
-						? 'statusBarItem.errorBackground'
-						: 'statusBarItem.warningBackground'
-				);
+		// `partial` is usable and still warns: some agent can reach memory, and
+		// another installed one silently cannot.
+		this.item.backgroundColor =
+			vm.usable && vm.phase !== 'partial'
+				? undefined
+				: new vscode.ThemeColor(
+						vm.phase === 'server-unavailable'
+							? 'statusBarItem.errorBackground'
+							: 'statusBarItem.warningBackground'
+					);
 		// Clicking a broken bar should do the thing that fixes it, not re-probe.
 		this.item.command = vm.action ? vm.action.command : 'engraphy.refresh';
 	}
@@ -209,6 +215,7 @@ function iconFor(phase: CapabilityVM['phase']): string {
 		case 'ready':
 			return '$(loop)';
 		case 'no-agent-path':
+		case 'partial':
 			return '$(warning)';
 		case 'server-unavailable':
 			return '$(debug-disconnect)';

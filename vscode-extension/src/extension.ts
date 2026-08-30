@@ -111,6 +111,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		providerRegistered,
 		signal: readProviderSignal(context),
 		runtimes,
+		ignored: readIgnoredRuntimes(context),
 	});
 
 	// ---- Tier 2: client + views + status bar ----
@@ -195,7 +196,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		vscode.commands.registerCommand('engraphy.cloudComingSoon', () => cloudComingSoon()),
 		vscode.commands.registerCommand('engraphy.registerWithAgent', () =>
 			runSafely(output, async () => {
-				await registerWithAgent(output, connection());
+				await registerWithAgent(context, output, connection());
 				rescanRuntimes();
 				await refreshAll();
 			})
@@ -240,6 +241,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 const WELCOMED_KEY = 'engraphy.welcomed.v1';
 const PROVIDER_SIGNAL_KEY = 'engraphy.mcp.providerSignal.v1';
+const IGNORED_RUNTIMES_KEY = 'engraphy.ignoredRuntimes.v1';
+
+/** Runtime ids the user has said they do not use. See CapabilityInput.ignored. */
+function readIgnoredRuntimes(context: vscode.ExtensionContext): string[] {
+	return context.globalState.get<string[]>(IGNORED_RUNTIMES_KEY) ?? [];
+}
+
+async function setIgnoredRuntimes(
+	context: vscode.ExtensionContext,
+	ids: string[]
+): Promise<void> {
+	await context.globalState.update(IGNORED_RUNTIMES_KEY, [...new Set(ids)]);
+}
 
 // ---- provider-consumption signal -------------------------------------------
 //
@@ -290,25 +304,38 @@ async function warnIfNoAgentPath(
 	if (!vm) {
 		return;
 	}
-	if (vm.phase !== 'no-agent-path') {
+	if (vm.phase !== 'no-agent-path' && vm.phase !== 'partial') {
 		if (vm.phase === 'ready' && context.globalState.get<boolean>(AGENT_WARNED_KEY)) {
 			await context.globalState.update(AGENT_WARNED_KEY, false);
 		}
 		return;
 	}
-	log.appendLine('No agent path to Engraphy: ' + (vm.detail ?? vm.title));
+	log.appendLine('Agent gap: ' + (vm.detail ?? vm.title));
 	if (context.globalState.get<boolean>(AGENT_WARNED_KEY)) {
 		return;
 	}
 	await context.globalState.update(AGENT_WARNED_KEY, true);
+	const message =
+		vm.phase === 'partial'
+			? 'Engraphy: ' + vm.title + ' An agent without the tools cannot tell you it lacks them.'
+			: 'Engraphy: the memory server is reachable, but no coding agent on this machine is registered to use it. ' +
+				'An agent asked to save a memory right now would not reach it.';
 	const pick = await vscode.window.showWarningMessage(
-		'Engraphy: the memory server is reachable, but no coding agent on this machine is registered to use it. ' +
-			'An agent asked to save a memory right now would not reach it.',
+		message,
 		'Register with your coding agent',
+		'I do not use those',
 		'Details'
 	);
 	if (pick === 'Register with your coding agent') {
 		await vscode.commands.executeCommand('engraphy.registerWithAgent');
+	} else if (pick === 'I do not use those') {
+		// Dismissal is per-runtime and reversible: registering one clears it.
+		const gaps = vm.runtimes
+			.filter((r) => r.detected && !r.registered && !r.viaVsCodeRegistry)
+			.map((r) => r.id);
+		await setIgnoredRuntimes(context, [...readIgnoredRuntimes(context), ...gaps]);
+		log.appendLine('Dismissed agent runtimes: ' + gaps.join(', '));
+		await status.refresh();
 	} else if (pick === 'Details') {
 		log.show(true);
 	}
@@ -368,6 +395,7 @@ const WRITE_CHECK_RANGE_DAYS = 7;
  * edit, done for them, verified afterwards by reading the file back.
  */
 async function registerWithAgent(
+	context: vscode.ExtensionContext,
 	log: vscode.OutputChannel,
 	conn: EngraphyConnection
 ): Promise<void> {
@@ -446,6 +474,15 @@ async function registerWithAgent(
 	}
 
 	if (done.length > 0) {
+		// Registering a runtime is the clearest possible statement that the user
+		// does use it, so any earlier dismissal of it is retired.
+		const registeredIds = new Set(
+			chosen.filter((c) => done.includes(c.spec.label)).map((c) => c.spec.id)
+		);
+		await setIgnoredRuntimes(
+			context,
+			readIgnoredRuntimes(context).filter((id) => !registeredIds.has(id))
+		);
 		const pick = await vscode.window.showInformationMessage(
 			`Engraphy registered with ${done.join(', ')}. Restart that agent so it reloads its MCP config.` +
 				(failed.length > 0 ? ` ${failed.length} could not be written.` : ''),

@@ -37,7 +37,7 @@ export interface RuntimeSpec {
 	/** Config file, relative to the home directory. */
 	relPath: string;
 	/** Top-level key holding the server map. */
-	mapKey: 'mcpServers' | 'servers';
+	mapKey: 'mcpServers';
 	/** Whether the entry carries an explicit `"type": "http"` discriminator. */
 	typed: boolean;
 	/**
@@ -50,9 +50,21 @@ export interface RuntimeSpec {
 /**
  * The runtimes the extension can register with.
  *
- * `vscode-user` is the same file a user would otherwise hand-edit, which is the
- * remedy this fix replaces with a button. It is listed last because the
- * provider API is the better path when something consumes it.
+ * Both shapes below were read off a real populated config on a working machine,
+ * not inferred. That standard is the point: writing the wrong key produces a
+ * file that parses cleanly and does nothing, which is the same silent failure
+ * this module exists to end, so an unverified shape is worse than no entry.
+ *
+ *   Claude Code  ~/.claude.json      {"mcpServers": {"engraphy": {"type": "http",
+ *                                     "url": ..., "headers": {"Authorization": ...}}}}
+ *   Cursor       ~/.cursor/mcp.json  {"mcpServers": {"engraphy": {"url": ...,
+ *                                     "headers": {"Authorization": ...}}}}  (no `type`)
+ *
+ * VS Code's own user `mcp.json` is deliberately NOT here. Copilot Chat already
+ * receives the server through the provider API, so the file would be redundant
+ * for the one agent it serves, and its key could not be confirmed against a
+ * populated file on the machine this was built on. Add it once that is read off
+ * a working config.
  */
 export const RUNTIMES: RuntimeSpec[] = [
 	{
@@ -71,26 +83,7 @@ export const RUNTIMES: RuntimeSpec[] = [
 		typed: false,
 		detectPaths: ['.cursor'],
 	},
-	{
-		id: 'vscode-user',
-		label: 'VS Code user mcp.json',
-		relPath: vsCodeUserMcpRelPath(),
-		mapKey: 'servers',
-		typed: true,
-		detectPaths: [vsCodeUserMcpRelPath()],
-	},
 ];
-
-/** Per-platform location of VS Code's user-level mcp.json, relative to home. */
-function vsCodeUserMcpRelPath(): string {
-	if (process.platform === 'win32') {
-		return path.join('AppData', 'Roaming', 'Code', 'User', 'mcp.json');
-	}
-	if (process.platform === 'darwin') {
-		return path.join('Library', 'Application Support', 'Code', 'User', 'mcp.json');
-	}
-	return path.join('.config', 'Code', 'User', 'mcp.json');
-}
 
 // ---- pure config surgery ----------------------------------------------------
 
@@ -220,6 +213,16 @@ export interface LoadedConfig {
 	hadComments: boolean;
 }
 
+/** mtime plus size, or '' when absent. A cheap change detector. */
+function statFingerprint(p: string): string {
+	try {
+		const st = fs.statSync(p);
+		return `${st.mtimeMs}:${st.size}`;
+	} catch {
+		return '';
+	}
+}
+
 export function configPathFor(spec: RuntimeSpec, home = os.homedir()): string {
 	return path.join(home, spec.relPath);
 }
@@ -292,6 +295,14 @@ export interface RegisterOutcome {
  * an unparseable config, or one carrying comments that a rewrite would delete.
  * Backs up before writing, writes to a sibling temp file and renames, so a
  * crash mid-write cannot leave a truncated config behind.
+ *
+ * CONCURRENCY. `~/.claude.json` is Claude Code's own live state file and the
+ * agent rewrites it during normal operation, so this read-modify-write races
+ * with it: anything the agent wrote between the read and the rename would be
+ * lost. The file's mtime and size are re-checked immediately before the rename
+ * and the write is abandoned if either moved, which narrows the window to the
+ * rename itself. It does not close it. Registering while the agent is idle is
+ * the safe moment, and the timestamped backup is the way back if it is not.
  */
 export function registerRuntime(
 	spec: RuntimeSpec,
@@ -324,17 +335,35 @@ export function registerRuntime(
 	}
 	const merged = mergeEngraphy(current, spec, entry);
 
+	// Fingerprint taken at read time, compared again just before the rename.
+	const before = statFingerprint(loaded.path);
+
 	let backup: string | undefined;
 	try {
 		fs.mkdirSync(path.dirname(loaded.path), { recursive: true });
 		if (loaded.exists) {
-			backup = loaded.path + '.engraphy-backup';
+			// Timestamped, so a second run never overwrites the copy the first one
+			// took. A backup that a retry destroys is not a backup.
+			backup =
+				loaded.path + '.engraphy-backup-' + new Date().toISOString().replace(/[:.]/g, '-');
 			fs.copyFileSync(loaded.path, backup);
 		}
 		const tmp = loaded.path + '.engraphy-tmp';
 		// mode 0600 matters on POSIX: the file now carries a bearer token. It is
 		// a no-op on Windows, where the user profile ACL is the protection.
 		fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+		if (statFingerprint(loaded.path) !== before) {
+			// The owning agent rewrote the file underneath us. Renaming now would
+			// discard whatever it just wrote.
+			fs.rmSync(tmp, { force: true });
+			return {
+				ok: false,
+				path: loaded.path,
+				problem:
+					'That config changed while it was being updated, so nothing was written. The agent that owns it is running; close it, or try again.',
+				backup,
+			};
+		}
 		fs.renameSync(tmp, loaded.path);
 	} catch (e) {
 		return {

@@ -855,6 +855,90 @@ check('capability: no server URL asks for one', () => {
 	assert.strictEqual(vm.action.command, cap.CONNECT_COMMAND);
 });
 
+check('capability: a consumed VS Code registry does NOT excuse an unregistered agent', () => {
+	// THE REGRESSION GUARD. "At least one path is live" was the first rule here,
+	// and it re-created the original bug: the VS Code signal is sticky across
+	// sessions, so on any machine where Copilot Chat had ever submitted a
+	// message the VS Code entry counted registered forever, and an unregistered
+	// Claude Code sat beside it under a green bar.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'partial');
+	assert.match(vm.label, /Claude Code cannot see memory/);
+	assert.strictEqual(vm.action.command, cap.REGISTER_COMMAND);
+});
+
+check('capability: an UNDETECTED runtime is not a gap', () => {
+	// Not having Cursor installed is not a broken setup.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: false, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: a dismissed runtime is not a gap', () => {
+	// Detection is a heuristic: a leftover ~/.cursor means Cursor was installed
+	// once, not that anyone runs it. Dismissing must actually silence it.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: true, registered: false }],
+		ignored: ['cursor'],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: an unconsumed VS Code registry is never itself a gap', () => {
+	// An editor with no Copilot Chat traffic is not broken, it is simply not
+	// that path. Only a real third-party runtime can raise `partial`.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: {},
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: several gaps are counted, not listed, in the label', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [
+			{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false },
+			{ id: 'cursor', label: 'Cursor', detected: true, registered: false },
+		],
+	});
+	assert.strictEqual(vm.phase, 'partial');
+	assert.match(vm.label, /2 agents cannot see memory/);
+	assert.match(vm.title, /Claude Code, Cursor/);
+});
+
+check('capability: partial stays usable, because memory IS reachable', () => {
+	// The label carries the warning. Claiming memory is unusable when one agent
+	// can reach it would be its own false report.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.usable, true);
+	assert.strictEqual(vm.phase, 'partial');
+});
+
+check('capability: gaps with NO live path stay no-agent-path, not partial', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.strictEqual(vm.usable, false);
+});
+
 // ---- write freshness -------------------------------------------------------
 
 check('writeFreshness: an empty series says plainly that nothing was written', () => {
@@ -923,7 +1007,6 @@ check('stripJsonComments: block comments go too', () => {
 
 const claudeSpec = ar.RUNTIMES.find((r) => r.id === 'claude-code');
 const cursorSpec = ar.RUNTIMES.find((r) => r.id === 'cursor');
-const vscodeSpec = ar.RUNTIMES.find((r) => r.id === 'vscode-user');
 
 check('buildEntry: matches the shape Claude Code actually stores', () => {
 	assert.deepStrictEqual(ar.buildEntry(claudeSpec, 'http://127.0.0.1:8000/mcp/', 'tok'), {
@@ -938,12 +1021,19 @@ check('buildEntry: an untyped runtime gets no type discriminator', () => {
 check('buildEntry: no token means no Authorization header', () => {
 	assert.strictEqual(ar.buildEntry(claudeSpec, 'http://x/mcp/', '').headers, undefined);
 });
-check('vscode-user runtime writes the "servers" key, not "mcpServers"', () => {
-	// VS Code's own mcp.json uses a different top-level key. Getting this wrong
-	// would write a file that parses and does nothing, which is the same class
-	// of silent failure this whole change is about.
-	assert.strictEqual(vscodeSpec.mapKey, 'servers');
+check('every shipped runtime shape was read off a real config', () => {
+	// Both entries below were copied from a populated config on a working
+	// machine. An unverified shape writes a file that parses and does nothing,
+	// which is the silent failure this whole change exists to end, so no
+	// runtime ships on a guess.
+	assert.deepStrictEqual(
+		ar.RUNTIMES.map((r) => r.id),
+		['claude-code', 'cursor']
+	);
 	assert.strictEqual(claudeSpec.mapKey, 'mcpServers');
+	assert.strictEqual(claudeSpec.typed, true);
+	assert.strictEqual(cursorSpec.mapKey, 'mcpServers');
+	assert.strictEqual(cursorSpec.typed, false);
 });
 
 check('mergeEngraphy: preserves every unrelated key and sibling server', () => {
@@ -1004,15 +1094,18 @@ check('registerRuntime: creates a missing config and its directory', () => {
 });
 
 check('registerRuntime: a zero-byte config is a starting point, not a failure', () => {
-	// VS Code ships an empty User/mcp.json on installs that never added a
-	// server, which is exactly the machine that needs this button.
+	// A config file that exists but is empty must not read as unparseable, or
+	// the button refuses on exactly the machine that needs it.
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
-	const target = path.join(home, vscodeSpec.relPath);
+	const target = path.join(home, cursorSpec.relPath);
 	fs.mkdirSync(path.dirname(target), { recursive: true });
 	fs.writeFileSync(target, '');
-	const out = ar.registerRuntime(vscodeSpec, 'http://x/mcp/', 'tok', home);
+	const out = ar.registerRuntime(cursorSpec, 'http://x/mcp/', 'tok', home);
 	assert.strictEqual(out.ok, true);
-	assert.strictEqual(JSON.parse(fs.readFileSync(target, 'utf8')).servers.engraphy.url, 'http://x/mcp/');
+	assert.strictEqual(
+		JSON.parse(fs.readFileSync(target, 'utf8')).mcpServers.engraphy.url,
+		'http://x/mcp/'
+	);
 	fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -1034,6 +1127,22 @@ check('registerRuntime: refuses an unparseable config rather than overwriting it
 	const out = ar.registerRuntime(claudeSpec, 'http://x/mcp/', 'tok', home);
 	assert.strictEqual(out.ok, false);
 	assert.strictEqual(fs.readFileSync(target, 'utf8'), '{ this is not json');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: backups do not overwrite each other', () => {
+	// ~/.claude.json is Claude Code's live state file. A backup that the next
+	// run destroys is not a backup, so each one is timestamped.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: {} }));
+	const a = ar.registerRuntime(claudeSpec, 'http://one/mcp/', 'tok', home);
+	const b = ar.registerRuntime(claudeSpec, 'http://two/mcp/', 'tok', home);
+	assert.strictEqual(a.ok, true);
+	assert.strictEqual(b.ok, true);
+	assert.notStrictEqual(a.backup, b.backup);
+	assert.ok(fs.existsSync(a.backup) && fs.existsSync(b.backup));
+	// The first backup still holds the pre-Engraphy file.
+	assert.strictEqual(JSON.parse(fs.readFileSync(a.backup, 'utf8')).mcpServers, undefined);
 	fs.rmSync(home, { recursive: true, force: true });
 });
 

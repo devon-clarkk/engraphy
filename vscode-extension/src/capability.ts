@@ -81,7 +81,19 @@ export type CapabilityPhase =
 	| 'server-unavailable'
 	/** Server is fine, but no agent on this machine can see it. */
 	| 'no-agent-path'
-	/** Server is fine and at least one agent runtime holds the tools. */
+	/**
+	 * Some agent holds the tools and another installed one does not.
+	 *
+	 * This phase is not a nicety. "At least one path is live" was the first rule
+	 * tried here and it re-created the very bug this module exists to prevent:
+	 * the VS Code signal is sticky across sessions, so on any machine where
+	 * Copilot Chat had ever submitted a message the VS Code entry counted as
+	 * registered forever, and an unregistered Claude Code sat beside it under a
+	 * green bar. Aggregating the runtimes with `some` hides exactly the agent
+	 * the user is typing into.
+	 */
+	| 'partial'
+	/** Server is fine and every detected runtime holds the tools. */
 	| 'ready';
 
 export interface CapabilityVM {
@@ -114,6 +126,14 @@ export interface CapabilityInput {
 	providerRegistered: boolean;
 	signal: ProviderSignal;
 	runtimes: AgentRuntimeStatus[];
+	/**
+	 * Runtime ids the user has said they do not use. Detection is a heuristic
+	 * (a leftover `~/.cursor` means Cursor was installed once, not that anyone
+	 * runs it), so without this the `partial` phase would nag forever about an
+	 * agent nobody opens. Dismissing is per-runtime and reversible: registering
+	 * a runtime clears its entry.
+	 */
+	ignored?: string[];
 }
 
 export const REGISTER_COMMAND = 'engraphy.registerWithAgent';
@@ -218,7 +238,38 @@ export function buildCapabilityVM(input: CapabilityInput): CapabilityVM {
 		};
 	}
 
+	const ignored = new Set(input.ignored ?? []);
 	const live = runtimes.filter((r) => r.registered);
+	// A gap is a runtime that is INSTALLED, is not registered, and the user has
+	// not dismissed. The VS Code entry is never a gap on its own: an editor
+	// without Copilot Chat is not a broken setup, it is simply not that path.
+	const gaps = runtimes.filter(
+		(r) => r.detected && !r.registered && !ignored.has(r.id) && !r.viaVsCodeRegistry
+	);
+
+	if (live.length > 0 && gaps.length > 0) {
+		return {
+			phase: 'partial',
+			label:
+				gaps.length === 1
+					? gaps[0].label + ' cannot see memory'
+					: gaps.length + ' agents cannot see memory',
+			title:
+				'Engraphy is reachable and ' +
+				live.map((r) => r.label).join(', ') +
+				' can use it, but ' +
+				gaps.map((r) => r.label).join(', ') +
+				' is installed here without Engraphy registered.',
+			detail:
+				'An agent holding no Engraphy tools cannot tell you so. Asked to save a memory it may report a save that never left it, and nothing reaches the server. Register it, or dismiss it if you do not use it.',
+			// True, and deliberately so: memory IS reachable from at least one
+			// agent. The label carries the warning rather than the usable flag.
+			usable: true,
+			runtimes,
+			action: { command: REGISTER_COMMAND, title: 'Register with your coding agent' },
+		};
+	}
+
 	if (live.length > 0) {
 		return {
 			phase: 'ready',

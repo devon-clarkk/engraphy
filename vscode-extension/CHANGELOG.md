@@ -6,10 +6,13 @@
 
 **Engraphy: Register with your coding agent** writes the Engraphy server into
 the MCP config that your agent reads, and reads the file back to confirm the
-entry landed before reporting success. It covers Claude Code (`~/.claude.json`),
-Cursor (`~/.cursor/mcp.json`) and VS Code's own user `mcp.json`, backs the file
-up first, writes through a temp file and a rename, and leaves a config that
-carries comments or invalid JSON untouched rather than rewriting it.
+entry landed before reporting success. It covers Claude Code (`~/.claude.json`)
+and Cursor (`~/.cursor/mcp.json`), takes a timestamped backup first, writes
+through a temp file and a rename, abandons the write if the agent changed the
+file underneath it, and leaves a config carrying comments or invalid JSON
+untouched rather than rewriting it. Writing a token into an agent's plaintext
+config is confirmed with you before any file is touched; the keychain copy is
+unchanged.
 
 Copilot agent mode continues to receive the server through VS Code's MCP
 provider API. Every other agent reads its own config, so this is the path that
@@ -22,6 +25,11 @@ right now. That needs both a server this extension can read and an agent that
 holds the tools, and it reports ready only when both hold. A reachable server
 with no agent registered reads **Engraphy: agent cannot see memory**, and its
 tooltip names which of the two is missing and why.
+
+Each installed agent is judged on its own. An editor where Copilot Chat holds
+the tools and an installed Claude Code does not says so by name, rather than
+letting one working path stand in for the rest. An agent you do not use can be
+dismissed, and registering it later brings it back.
 
 The extension now records every time VS Code asks for its MCP server
 definitions. That is the evidence that something in the editor consumes the MCP
