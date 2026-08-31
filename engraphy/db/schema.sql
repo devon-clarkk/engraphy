@@ -561,14 +561,6 @@ ALTER TABLE ONLY public.api_tokens
 
 
 --
--- Name: api_tokens api_tokens_space_id_principal_client_name_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.api_tokens
-    ADD CONSTRAINT api_tokens_space_id_principal_client_name_key UNIQUE (space_id, principal, client_name);
-
-
---
 -- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -702,6 +694,13 @@ ALTER TABLE ONLY public.scopes
 
 ALTER TABLE ONLY public.spaces
     ADD CONSTRAINT spaces_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_tokens_live_identity_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_tokens_live_identity_key ON public.api_tokens USING btree (space_id, principal, client_name) WHERE (NOT revoked);
 
 
 --
@@ -1269,4 +1268,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0021'),
     ('0022'),
     ('0023'),
-    ('0024');
+    ('0024'),
+    ('0025');

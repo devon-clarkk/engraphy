@@ -276,9 +276,10 @@ async def test_inbox_capture_endpoint_parks_a_pending_row(pool, app_space, conn)
 
 
 def test_expected_schema_version_is_the_latest_migration_file():
-    # engraphy/db/migrations' newest file (migration 0024, the rename of every
-    # remaining `engram` database identifier to `engraphy`).
-    assert expected_schema_version() == "0024"
+    # engraphy/db/migrations' newest file (migration 0025, which makes
+    # api_tokens' identity key count live rows only, so a revoked credential can
+    # be replaced under the same client name).
+    assert expected_schema_version() == "0025"
 
 
 async def test_applied_schema_version_reads_the_migration_table(pool):
