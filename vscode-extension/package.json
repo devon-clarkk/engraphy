@@ -2,7 +2,7 @@
   "name": "engraphy",
   "displayName": "Engraphy: associative memory for AI agents",
   "description": "Associative memory for AI agents, modelled on the human mind. Registers the self-hosted Engraphy MCP server with VS Code, plus a confirm-write queue and memory explorer.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "engraphy",
   "license": "BUSL-1.1",
   "icon": "media/icon.png",
@@ -65,6 +65,18 @@
           "default": "",
           "markdownDescription": "Working directory containing the Engraphy `compose.yaml` (and its `.env`). Used by **Engraphy: Start local server**. Defaults to the first workspace folder when empty.",
           "order": 4
+        },
+        "engraphy.updateCheck.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Check once a day whether a newer Engraphy extension has been published, and say so when there is one. The check is a plain request for a public file and sends nothing about this machine or the installed version. Turning it off stops the daily check; **Engraphy: Check for updates** still runs one on demand.",
+          "order": 5
+        },
+        "engraphy.updateCheck.manifestUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where to read published version information. Leave empty to use `https://engraphy.tech/version.json`. Point it at your own copy to serve version information from your network.",
+          "order": 6
         }
       }
     },
@@ -156,6 +168,11 @@
         "title": "Check that writes are reaching the server",
         "category": "Engraphy",
         "icon": "$(verified)"
+      },
+      {
+        "command": "engraphy.checkForUpdates",
+        "title": "Check for updates",
+        "category": "Engraphy"
       }
     ],
     "menus": {
@@ -236,7 +253,7 @@
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit -p ./",
     "make-icon": "node scripts/make-icon.js",
-    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts src/connection.ts src/tokenMigration.ts src/capability.ts src/agentRuntimes.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
+    "test-client": "tsc src/toolResult.ts src/webviewMessages.ts src/statsModel.ts src/connection.ts src/tokenMigration.ts src/capability.ts src/agentRuntimes.ts src/versionCheck.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict && node scripts/test-client.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"

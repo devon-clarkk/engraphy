@@ -79,7 +79,15 @@ export function reachPhaseOf(health: HealthVM): ReachPhase {
 export class StatusBar {
 	private readonly item: vscode.StatusBarItem;
 	private last: HealthVM | undefined;
+	private lastConn: StatusConnection | undefined;
 	private lastCapability: CapabilityVM | undefined;
+	/**
+	 * One line about a published version newer than the running one, set by the
+	 * updater. It rides in the tooltip rather than the bar text because the bar
+	 * answers one question (can an agent use Engraphy right now) and an
+	 * available update is not an answer to it.
+	 */
+	private updateSummary: string | null = null;
 
 	constructor(
 		private readonly client: EngraphyClient,
@@ -100,6 +108,18 @@ export class StatusBar {
 	/** The end-to-end verdict the bar is currently showing. */
 	get capability(): CapabilityVM | undefined {
 		return this.lastCapability;
+	}
+
+	/**
+	 * Note a pending update and repaint from the state already in hand. The
+	 * check finishes long after the last refresh, and re-probing the server to
+	 * show a line of text would spend a round trip on nothing.
+	 */
+	setUpdateSummary(summary: string | null): void {
+		this.updateSummary = summary;
+		if (this.last && this.lastConn) {
+			this.apply(this.last, this.lastConn);
+		}
 	}
 
 	private setChecking(): void {
@@ -161,6 +181,7 @@ export class StatusBar {
 	 */
 	private apply(health: HealthVM, conn: StatusConnection): void {
 		this.last = health;
+		this.lastConn = conn;
 		const ctx = this.getAgentContext();
 		const vm = buildCapabilityVM({
 			reach: reachPhaseOf(health),

@@ -56,6 +56,50 @@ jobs:
                  --title "Engraphy ${GITHUB_REF_NAME}" --generate-notes --verify-tag
           gh release upload "$GITHUB_REF_NAME" dist/* --clobber
 
+  # The VS Code extension's .vsix, attached to the release.
+  #
+  # Editors whose gallery is the VS Code Marketplace install and update the
+  # extension themselves. Editors that read Open VSX (VSCodium, Cursor,
+  # Windsurf, Theia) install it from a file, and the release is where that file
+  # comes from: without it, the only way to get the extension into those editors
+  # is to build it, and the only way to update it is to build it again.
+  #
+  # The extension carries its OWN version, which is not this tag. The tag is the
+  # engine's. `vsce package` names the file from the extension manifest, so the
+  # asset records the extension version even though the release is named for the
+  # engine, and engraphy-web/build-version.py reads that filename to fill in the
+  # manifest. Nothing here needs the two numbers to agree.
+  #
+  # `needs: release` and nothing needing this: a packaging failure here leaves
+  # the release, the distributions and the images exactly as they were.
+  extension:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: write        # upload one more asset to the existing release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+
+      - name: package the extension
+        working-directory: vscode-extension
+        run: |
+          npm ci
+          npx --yes @vscode/vsce package --out engraphy.vsix
+
+      # Renamed to carry the extension's own version, because the file sits in a
+      # release named for the engine and "engraphy.vsix" would say nothing about
+      # which build it is. build-version.py matches this exact shape.
+      - name: attach it to the release
+        working-directory: vscode-extension
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          mv engraphy.vsix "engraphy-${version}.vsix"
+          gh release upload "$GITHUB_REF_NAME" "engraphy-${version}.vsix" --clobber
+
   # Both Dockerfile targets in both embedder variants, published to GHCR under
   # the repository's namespace. Authentication is the workflow's own
   # GITHUB_TOKEN plus `packages: write`; no personal access token is configured

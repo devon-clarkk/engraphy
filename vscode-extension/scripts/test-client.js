@@ -16,6 +16,7 @@ const c = require('../out-test/connection.js');
 const m = require('../out-test/tokenMigration.js');
 const cap = require('../out-test/capability.js');
 const ar = require('../out-test/agentRuntimes.js');
+const vc = require('../out-test/versionCheck.js');
 const os = require('os');
 
 let passed = 0;
@@ -1194,4 +1195,259 @@ check('verifyRegistration: a stale URL does not count as registered', () => {
 	fs.rmSync(home, { recursive: true, force: true });
 });
 
-console.log(`\n${passed} checks passed.`);
+
+// ---- update checking (versionCheck.ts) -------------------------------------
+//
+// The desktop app carries this module verbatim apart from PRODUCT_KEY, and its
+// suite runs the same checks. A behaviour change that lands in one copy and not
+// the other fails on whichever side was missed.
+//
+// The case that drives most of this: the release tag on devon-clarkk/engraphy
+// is the ENGINE version, so at v0.2.0 the desktop app is 0.1.0 and this
+// extension is 0.5.2. Every product is compared against its own key, and any
+// answer this module cannot make sense of has to come back as "no answer"
+// rather than a confident wrong one.
+
+check('compareVersions: orders the three fields', () => {
+	assert.strictEqual(vc.compareVersions('0.5.2', '0.5.2'), 0);
+	assert.ok(vc.compareVersions('0.5.1', '0.5.2') < 0);
+	assert.ok(vc.compareVersions('0.6.0', '0.5.9') > 0);
+	assert.ok(vc.compareVersions('1.0.0', '0.99.99') > 0);
+	assert.ok(vc.compareVersions('0.10.0', '0.9.0') > 0, 'numeric, not lexical');
+});
+
+check('compareVersions: a leading v and build metadata do not change the order', () => {
+	assert.strictEqual(vc.compareVersions('v0.5.2', '0.5.2'), 0);
+	assert.strictEqual(vc.compareVersions('0.5.2+abc123', '0.5.2'), 0);
+});
+
+check('compareVersions: a release outranks its own pre-release', () => {
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.6.0') < 0);
+	assert.ok(vc.compareVersions('0.6.0', '0.6.0-rc.1') > 0);
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.6.0-rc.2') < 0);
+	assert.ok(vc.compareVersions('0.6.0-alpha', '0.6.0-beta') < 0);
+	// A numeric identifier ranks below an alphanumeric one.
+	assert.ok(vc.compareVersions('0.6.0-1', '0.6.0-alpha') < 0);
+	// A pre-release of the next version still beats the current release.
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.5.2') > 0);
+});
+
+check('compareVersions: unparseable input answers null, never an order', () => {
+	// Reading a malformed value as 0.0.0 would announce an update to everyone.
+	assert.strictEqual(vc.compareVersions('latest', '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions('0.5', '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(undefined, '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(null, '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(520, '0.5.2'), null);
+});
+
+function versionManifest(overrides) {
+	return {
+		schema: 1,
+		products: {
+			'vscode-extension': Object.assign(
+				{
+					latest: '0.5.2',
+					minimumSupported: '0.5.0',
+					notes: 'https://github.com/devon-clarkk/engraphy/releases/tag/v0.2.0',
+					downloads: [],
+					registries: {
+						'vscode-marketplace':
+							'https://marketplace.visualstudio.com/items?itemName=engraphy.engraphy',
+						'open-vsx': null,
+					},
+				},
+				overrides || {}
+			),
+			desktop: { latest: '0.1.0', minimumSupported: '0.1.0', notes: null, downloads: [] },
+			engine: { latest: '0.2.0', minimumSupported: '0.1.0', notes: null, downloads: [] },
+		},
+	};
+}
+
+check('parseManifest: each product is read from its own key', () => {
+	const doc = versionManifest();
+	assert.strictEqual(vc.parseManifest(doc, 'vscode-extension').latest, '0.5.2');
+	assert.strictEqual(vc.parseManifest(doc, 'desktop').latest, '0.1.0');
+	assert.strictEqual(vc.parseManifest(doc, 'engine').latest, '0.2.0');
+	assert.strictEqual(vc.parseManifest(doc, 'nothing-by-that-name'), null);
+});
+
+check('parseManifest: an unreadable document answers null', () => {
+	assert.strictEqual(vc.parseManifest(null, 'vscode-extension'), null);
+	assert.strictEqual(vc.parseManifest('a string', 'vscode-extension'), null);
+	assert.strictEqual(vc.parseManifest({}, 'vscode-extension'), null);
+	// A schema this client does not read is a document written for another one.
+	assert.strictEqual(vc.parseManifest({ schema: 2, products: {} }, 'vscode-extension'), null);
+});
+
+check('parseManifest: a latest that is not a version reads as no answer', () => {
+	const p = vc.parseManifest(versionManifest({ latest: 'newest' }), 'vscode-extension');
+	assert.strictEqual(p.latest, null);
+	assert.strictEqual(vc.evaluate('0.5.0', p).state, 'unknown');
+});
+
+check('parseManifest: only https download URLs survive', () => {
+	// The manifest arrives over the network, so its URLs are untrusted input:
+	// a one-click download must never be pointed somewhere else.
+	const p = vc.parseManifest(
+		versionManifest({
+			downloads: [
+				{ url: 'http://example.test/x.vsix' },
+				{ url: 'file:///C:/x.vsix' },
+				{ url: 'javascript:alert(1)' },
+				{ url: 'https://github.com/devon-clarkk/engraphy/releases/download/v0.2.0/e.vsix' },
+			],
+		}),
+		'vscode-extension'
+	);
+	assert.strictEqual(p.downloads.length, 1);
+	assert.ok(p.downloads[0].url.startsWith('https://'));
+});
+
+check('parseManifest: a registry that does not carry it stays null', () => {
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	assert.strictEqual(p.registries['open-vsx'], null);
+	assert.ok(p.registries['vscode-marketplace'].startsWith('https://'));
+});
+
+check('evaluate: current, update, and below the supported floor', () => {
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	assert.strictEqual(vc.evaluate('0.5.2', p).state, 'current');
+	assert.strictEqual(vc.evaluate('0.5.1', p).state, 'update');
+	assert.strictEqual(vc.evaluate('0.5.0', p).state, 'update');
+	// Below minimumSupported is a firmer message than "something newer exists".
+	assert.strictEqual(vc.evaluate('0.4.0', p).state, 'unsupported');
+});
+
+check('evaluate: a build ahead of the published version is never out of date', () => {
+	// During a release cycle the running version routinely exceeds the published
+	// one. A client that prompted then would be wrong every day.
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	const v = vc.evaluate('0.6.0', p);
+	assert.strictEqual(v.state, 'ahead');
+	assert.strictEqual(v.latest, '0.5.2');
+});
+
+check('evaluate: no manifest and no published version both read as unknown', () => {
+	assert.strictEqual(vc.evaluate('0.5.2', null).state, 'unknown');
+	const p = vc.parseManifest(versionManifest({ latest: null }), 'vscode-extension');
+	assert.strictEqual(vc.evaluate('0.5.2', p).state, 'unknown');
+});
+
+check('evaluate: comparing against the engine tag is what the product keys prevent', () => {
+	// The release is tagged v0.2.0 because that is the ENGINE version. An
+	// extension at 0.5.2 read against the tag would look like a downgrade, and a
+	// desktop app at 0.1.0 would be told to update to a version that is not it.
+	const doc = versionManifest();
+	assert.strictEqual(
+		vc.evaluate('0.5.2', vc.parseManifest(doc, 'vscode-extension')).state,
+		'current'
+	);
+	assert.strictEqual(vc.evaluate('0.1.0', vc.parseManifest(doc, 'desktop')).state, 'current');
+});
+
+check('pickDownload: the entry for this machine, and never one for another', () => {
+	const win = { url: 'https://x.test/a.exe', platform: 'win32', arch: 'x64' };
+	const mac = { url: 'https://x.test/a.dmg', platform: 'darwin', arch: 'arm64' };
+	const any = { url: 'https://x.test/a.vsix' };
+	assert.strictEqual(vc.pickDownload([win, mac], 'win32', 'x64'), win);
+	assert.strictEqual(vc.pickDownload([win, mac], 'darwin', 'arm64'), mac);
+	// A platform-independent artifact is a fallback; another platform's is not.
+	assert.strictEqual(vc.pickDownload([win, any], 'darwin', 'arm64'), any);
+	assert.strictEqual(vc.pickDownload([win], 'darwin', 'arm64'), null);
+	assert.strictEqual(vc.pickDownload([], 'win32', 'x64'), null);
+});
+
+check('shouldCheck: at most once an interval, and a moved clock does not park it', () => {
+	const day = 24 * 60 * 60 * 1000;
+	const now = 1800000000000;
+	assert.strictEqual(vc.shouldCheck(undefined, now, day), true);
+	assert.strictEqual(vc.shouldCheck(now - 1000, now, day), false);
+	assert.strictEqual(vc.shouldCheck(now - day, now, day), true);
+	// A clock that moved backwards would otherwise defer the next check forever.
+	assert.strictEqual(vc.shouldCheck(now + day * 400, now, day), true);
+	assert.strictEqual(vc.shouldCheck('yesterday', now, day), true);
+});
+
+check('isDismissed: per version, and it is not a permanent off switch', () => {
+	assert.strictEqual(vc.isDismissed('0.5.2', '0.5.2'), true);
+	// Saying "not now" to 0.5.2 says nothing about 0.6.0.
+	assert.strictEqual(vc.isDismissed('0.5.2', '0.6.0'), false);
+	// Dismissing 0.6.0 still covers 0.5.2 arriving late from a stale cache.
+	assert.strictEqual(vc.isDismissed('0.6.0', '0.5.2'), true);
+	assert.strictEqual(vc.isDismissed(undefined, '0.5.2'), false);
+});
+
+async function versionCheckAsyncChecks() {
+	// The fetch is injected, so offline, a 404, and a body that is not JSON can
+	// all be exercised without a network. Every one of them must come back as
+	// "no answer": an update check that surfaces its own failures would be
+	// noise on every flight and every train.
+	const ok = async () => ({
+		ok: true,
+		status: 200,
+		json: async () => versionManifest(),
+	});
+	const notFound = async () => ({
+		ok: false,
+		status: 404,
+		json: async () => ({}),
+	});
+	const offline = async () => {
+		throw new Error('getaddrinfo ENOTFOUND engraphy.tech');
+	};
+	const garbage = async () => ({
+		ok: true,
+		status: 200,
+		json: async () => {
+			throw new Error('Unexpected token < in JSON');
+		},
+	});
+
+	let v = await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, ok, 'vscode-extension');
+	assert.strictEqual(v.state, 'update');
+	assert.strictEqual(v.latest, '0.5.2');
+
+	for (const [name, fetcher] of [
+		['a 404', notFound],
+		['being offline', offline],
+		['a body that is not JSON', garbage],
+	]) {
+		v = await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, fetcher, 'vscode-extension');
+		assert.strictEqual(v.state, 'unknown', name + ' must read as no answer');
+		assert.strictEqual(v.latest, null, name + ' must claim no version');
+	}
+
+	// A non-https manifest URL is refused before any request is made.
+	let called = false;
+	const spy = async () => {
+		called = true;
+		return ok();
+	};
+	v = await vc.checkForUpdate('0.5.0', 'http://engraphy.tech/version.json', spy, 'vscode-extension');
+	assert.strictEqual(called, false, 'a plaintext manifest URL must not be fetched');
+	assert.strictEqual(v.state, 'unknown');
+
+	// The URL is the bare static path: nothing about this install may ride along.
+	let seen = null;
+	const capture = async (url) => {
+		seen = url;
+		return ok();
+	};
+	await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, capture, 'vscode-extension');
+	assert.strictEqual(seen, vc.DEFAULT_MANIFEST_URL);
+	assert.ok(!seen.includes('?'), 'no query string, so the check is not version telemetry');
+	assert.ok(!seen.includes('0.5.0'), 'the running version never appears in the URL');
+
+	passed += 5;
+	console.log('  ok - checkForUpdate: offline, 404 and malformed all read as no answer');
+	console.log('  ok - checkForUpdate: a plaintext manifest URL is never fetched');
+	console.log('  ok - checkForUpdate: the request carries no version telemetry');
+	console.log('  ok - checkForUpdate: a good manifest yields the update verdict');
+	console.log('  ok - checkForUpdate: every failure path is silent');
+}
+
+versionCheckAsyncChecks().then(() => {
+	console.log(`\n${passed} checks passed.`);
+});

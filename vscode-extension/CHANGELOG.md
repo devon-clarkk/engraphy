@@ -31,6 +31,28 @@ Because the status bar can be hidden, these states also raise a notification
 with a one-click next step. It appears once, and arms again if a working setup
 later breaks.
 
+### Engraphy tells you when a newer version is published
+
+Once a day, Engraphy checks whether a newer version of the extension has been
+published and says so, naming the version you are running and the one that is
+available. The prompt offers the update, the release notes, and a dismissal
+that covers that version and no other, so a version you pass on stays passed on
+and the next one still reaches you.
+
+The update action takes you as far as your editor allows. In an editor whose
+gallery carries Engraphy, it installs and offers to reload. In an editor that
+installs extensions from a file, it opens the extension's page, and then the
+`.vsix` attached to the release, which now ships as a release asset.
+
+Where the editor applies extension updates on its own, the prompt agrees with
+it, and where `extensions.autoUpdate` is turned off, it says so.
+
+The check is a plain request for a public file at `engraphy.tech/version.json`.
+It sends nothing about your machine or your installed version, and it stays
+silent when it cannot reach the network. `engraphy.updateCheck.enabled` stops
+the daily check, **Engraphy: Check for updates** runs one on demand, and
+`engraphy.updateCheck.manifestUrl` points it at your own copy.
+
 ### Writes are checkable against the server
 
 **Engraphy: Check that writes are reaching the server** reports when memory

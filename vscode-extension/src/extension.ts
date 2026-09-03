@@ -43,6 +43,7 @@ import {
 	type RuntimeSpec,
 } from './agentRuntimes';
 import { getToken, migrateTokenSetting, primeToken, setToken, watchToken } from './tokenStore';
+import { Updater } from './updater';
 import { describeError, hostLabel } from './connection';
 
 const execAsync = promisify(cp.exec);
@@ -157,6 +158,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const status = new StatusBar(client, connection, agentContext);
 	context.subscriptions.push(status);
 
+	// Update checking. Constructed before the commands so the palette entry has
+	// something to call, started after activation so nothing waits on it.
+	const updater = new Updater(context, extensionVersion, output, () =>
+		status.setUpdateSummary(updater.summary)
+	);
+	context.subscriptions.push(updater);
+
 	const refreshAll = async (): Promise<void> => {
 		rescanRuntimes();
 		await status.refresh();
@@ -205,6 +213,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		),
 		vscode.commands.registerCommand('engraphy.verifyWrites', () =>
 			runSafely(output, () => verifyWrites(client, output))
+		),
+		vscode.commands.registerCommand('engraphy.checkForUpdates', () =>
+			runSafely(output, () => updater.run(true))
 		)
 	);
 
@@ -239,6 +250,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	// First run: guide a cold install to a server. Only nags once (globalState)
 	// and only when a server isn't actually reachable — never on a working setup.
 	void maybeOfferFirstRunWalkthrough(context, client, output);
+	// Look for a newer published version, once a day at most and never before
+	// the editor has settled. Silent offline and silent when already current.
+	updater.start();
 }
 
 const WELCOMED_KEY = 'engraphy.welcomed.v1';
