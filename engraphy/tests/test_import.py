@@ -13,7 +13,8 @@ unit vector, so re-importing the same file yields the same vectors and therefore
 the same >= 0.95 self-hits that make re-import a no-op. Distinct texts map to
 near-orthogonal vectors (random high-dim unit vectors have expected cosine ~0,
 std ~1/sqrt(384) ~ 0.05), so unrelated items all INSERT. Controlled-similarity
-pairs are built by Gram-Schmidt so a review-queue item sits at exactly 0.85.
+pairs are built by Gram-Schmidt so a review-queue item sits at exactly the
+active profile's confirm-band similarity (engraphy/tests/bandvalues.py).
 """
 
 import json
@@ -34,6 +35,7 @@ from engraphy.core.dedup import ValidationError
 # Reuse test_dedup's live-Postgres scaffolding verbatim -- importing a fixture
 # into a test module registers it for use here (pytest resolves by name).
 from engraphy.tests.test_dedup import _seed_node, write_space  # noqa: F401
+from engraphy.tests import bandvalues as bv
 
 _DIMS = 384
 
@@ -157,14 +159,14 @@ async def test_import_rerun_is_idempotent(pool, write_space, conn, tmp_path):
 
 
 async def test_import_review_queue_routing(pool, write_space, conn, tmp_path):
-    """A 0.85-similarity item lands in the CSV, not the DB (02 acceptance; test
+    """A confirm-band item lands in the CSV, not the DB (02 acceptance; test
     matrix 'Import review queue')."""
     base_text = "Anchor\nThe original memory body."
     base_vec = _unit_from_text(base_text)
     anchor_id = _seed_node(conn, write_space, "widget", "Anchor", "The original memory body.", {}, base_vec)
 
     dup_text = "Near duplicate\nA reworded near-duplicate body."
-    dup_vec = _controlled_vector(base_vec, 0.85, seed="dup")
+    dup_vec = _controlled_vector(base_vec, bv.PENDING, seed="dup")
 
     path = _write_jsonl(
         tmp_path / "in.jsonl",
@@ -191,7 +193,7 @@ async def test_import_review_queue_routing(pool, write_space, conn, tmp_path):
     row = lines[1].split(",")
     assert row[0] == "Near duplicate"
     assert row[2] == str(anchor_id)
-    assert row[5] == "0.85"
+    assert row[5] == f"{bv.PENDING}"
 
 
 async def test_import_scope_must_be_writable_by_principal(pool, write_space, tmp_path):
@@ -216,7 +218,7 @@ async def test_import_scope_must_be_writable_by_principal(pool, write_space, tmp
 async def test_thousand_item_backfill_idempotent_with_review_queue(pool, write_space, conn, tmp_path):
     """design/02 acceptance criterion, end to end: a 1,000-item synthetic backfill
     imports idempotently AND produces a correct review queue. The file is 1,000
-    distinct items (all INSERT) plus a handful of deliberate 0.85 near-duplicates
+    distinct items (all INSERT) plus a handful of deliberate confirm-band near-duplicates
     of some of them (all -> review queue, never the DB)."""
     n_base = 1000
     n_review = 5
@@ -225,14 +227,14 @@ async def test_thousand_item_backfill_idempotent_with_review_queue(pool, write_s
         {"type": "widget", "title": f"Backfill {i}", "body": f"Synthetic backfill body {i}."}
         for i in range(n_base)
     ]
-    # Near-duplicates of the first few base items, at exactly 0.85.
+    # Near-duplicates of the first few base items, in the confirm band.
     overrides = {}
     review_items = []
     for j in range(n_review):
         base = base_items[j]
         base_vec = _unit_from_text(base["title"] + "\n" + base["body"])
         title, body = f"Dup of {j}", f"A reworded duplicate of backfill {j}."
-        overrides[f"{title}\n{body}"] = _controlled_vector(base_vec, 0.85, seed=f"dup-{j}")
+        overrides[f"{title}\n{body}"] = _controlled_vector(base_vec, bv.PENDING, seed=f"dup-{j}")
         review_items.append({"type": "widget", "title": title, "body": body})
 
     path = _write_jsonl(tmp_path / "backfill.jsonl", base_items + review_items)
@@ -248,7 +250,7 @@ async def test_thousand_item_backfill_idempotent_with_review_queue(pool, write_s
     # correct review queue: header + one row per near-duplicate.
     lines = first.review_queue_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1 + n_review
-    assert all(r.rsplit(",", 1)[1] == "0.85" for r in lines[1:])
+    assert all(r.rsplit(",", 1)[1] == f"{bv.PENDING}" for r in lines[1:])
 
     # idempotent re-run: the 1,000 originals now self-hit and merge silently; the
     # near-duplicates stay at 0.85 and re-queue. Zero new nodes either way.
