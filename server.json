@@ -1,0 +1,63 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.devon-clarkk/engraphy",
+  "title": "Engraphy",
+  "description": "Self-hosted MCP memory server: a typed knowledge graph on Postgres 16 and pgvector.",
+  "version": "0.2.0",
+  "repository": {
+    "url": "https://github.com/devon-clarkk/engraphy",
+    "source": "github",
+    "id": "1342519094"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/devon-clarkk/engraphy:0.2.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:8000/mcp/",
+        "headers": [
+          {
+            "name": "Authorization",
+            "description": "Bearer <token>, where the token is issued by `engraphy-admin token create` against the space the client is entitled to. Every request to /mcp/ carries it; an unauthenticated call is refused with HTTP 401.",
+            "isRequired": true,
+            "isSecret": true
+          }
+        ]
+      },
+      "environmentVariables": [
+        {
+          "name": "ENGRAPHY_DATABASE_URL",
+          "description": "libpq connection string for a Postgres 16 database with the pgvector extension, reached as the non-superuser `engraphy_app` role. Required: the server refuses to start without it, and refuses to start if the schema is behind (run `engraphy-admin migrate` first).",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "ENGRAPHY_BIND_HOST",
+          "description": "Interface the server binds. Containers reach their own loopback only, so a published container sets 0.0.0.0 and puts the boundary at the port publication and the reverse proxy.",
+          "default": "127.0.0.1",
+          "isRequired": false
+        },
+        {
+          "name": "ENGRAPHY_BIND_PORT",
+          "description": "Port the server binds inside the container, matching the port in the transport URL.",
+          "default": "8000",
+          "format": "number",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "tech.engraphy": {
+        "website": "https://engraphy.tech",
+        "license": "BSL-1.1, converting to Apache-2.0 on 2030-08-22",
+        "deploymentGuide": "https://github.com/devon-clarkk/engraphy/blob/main/docs/05-deployment.md",
+        "toolReference": "https://github.com/devon-clarkk/engraphy/blob/main/docs/04-tools-reference.md",
+        "requires": "Postgres 16 with pgvector, and a bearer token issued by engraphy-admin",
+        "adminImage": "ghcr.io/devon-clarkk/engraphy-admin"
+      }
+    }
+  }
+}

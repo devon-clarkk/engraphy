@@ -63,6 +63,14 @@ ARG ENGRAPHY_EMBEDDING_PROFILE
 ENV ENGRAPHY_EMBEDDING_PROFILE=${ENGRAPHY_EMBEDDING_PROFILE}
 RUN python -c "from engraphy.core import embedding; print('prebaking', embedding.profile()); embedding.embed_document('prebake: warm the model cache')"
 
+# The image's own claim to the name it is published under in the official MCP
+# Registry (registry.modelcontextprotocol.io). Ownership of an OCI package is
+# proved by this label: the registry pulls the image config for the exact tag
+# named in server.json's `packages[].identifier` and requires the value here to
+# equal server.json's `name`. The two move together, so a rename is a change to
+# both or it does not publish.
+LABEL io.modelcontextprotocol.server.name="io.github.devon-clarkk/engraphy"
+
 EXPOSE 8000
 
 # ENGRAPHY_DATABASE_URL is required (no default -- fail fast if unset).
@@ -147,6 +155,14 @@ RUN mkdir -p /backups && chown engraphy:engraphy /backups
 # package data -- so the installed package finds its own assets and this image
 # exercises the same artifact a `pip install` operator gets, rather than
 # masking a packaging gap with a path override.
+
+# The admin sidecar inherits every LABEL from the `server` stage, including the
+# MCP Registry name claim. It is a Postgres-client and migration toolbox rather
+# than the MCP server, so it gives that claim up here: the published
+# ghcr.io/devon-clarkk/engraphy-admin image carries an empty value, and
+# ghcr.io/devon-clarkk/engraphy is the only image that answers to the registry
+# name.
+LABEL io.modelcontextprotocol.server.name=""
 
 USER engraphy
 CMD ["engraphy-admin", "--help"]
