@@ -7,7 +7,6 @@
 [![License: BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 [![Postgres 16 + pgvector](https://img.shields.io/badge/postgres-16%20%2B%20pgvector-336791)](https://github.com/pgvector/pgvector)
-[![M8ven Score](https://m8ven.ai/badge/mcp/devon-clarkk-engraphy-1iiqtv)](https://m8ven.ai/mcp/devon-clarkk-engraphy-1iiqtv)
 
 [Quickstart](#quickstart) · [Documentation](docs/) · [Tool reference](docs/04-tools-reference.md) · [Design set](design/README.md) · [Contributing](CONTRIBUTING.md)
 
