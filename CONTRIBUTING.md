@@ -35,6 +35,11 @@ mocked database would test the mock rather than the thing that ships.
 The first run downloads the embedding model (`nomic-ai/nomic-embed-text-v1.5`,
 about 523 MB) and caches it.
 
+To run the LoCoMo benchmark rather than the test suite, follow
+[`bench/RUN-LOCOMO.md`](bench/RUN-LOCOMO.md). It needs an OpenAI-compatible base
+URL and key on top of the database above, and `python -m bench.smoke_openai`
+checks the endpoint before you commit to a full run.
+
 ## What CI checks
 
 Every push to `main` and every pull request runs [`ci.yml`](.github/workflows/ci.yml).

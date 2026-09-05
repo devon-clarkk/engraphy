@@ -1,6 +1,15 @@
-"""Free-tier providers behind the `LLMClient` protocol (design/09 §Module layout).
+"""Providers behind the `LLMClient` protocol (design/09 §Module layout).
 
-Engraphy is not funded for API spend, so the harness runs on two free routes:
+Three routes, and which one a run uses is the difference between an internal
+measurement and a reproducible one.
+
+**`OpenAICompatClient` is the route for anyone reproducing a published number.**
+It speaks `POST /chat/completions` to any OpenAI-shaped endpoint, so a full
+LoCoMo run needs a base URL and an API key and nothing else: no subscription, no
+vendor CLI, no free-tier daily cap to schedule around. `bench/RUN-LOCOMO.md` is
+the walkthrough, and `--provider openai` on `bench.core.run` is the switch.
+
+The other two are free routes for the operator's own machine:
 
 * **Claude via the CLI in print mode** — extractor and reader. Routes through the
   operator's existing subscription, not API credits. The extractor decides what
@@ -13,7 +22,7 @@ objection that it graded its own homework. Grading Engraphy's answers with a
 different vendor's model removes that objection outright, and it is worth
 keeping even if funding later appears. Recorded as such in design/09.
 
-## Two rules this module exists to enforce
+## Two rules the Claude CLI route exists to enforce
 
 **Never introduce ANTHROPIC_API_KEY.** Setting it — even transiently in the
 process environment — would make Claude Code itself bill to API credits rather
@@ -46,8 +55,13 @@ __all__ = [
     "GEMINI_DEFAULT_MODEL",
     "GEMINI_FREE_RPD",
     "GEMINI_FREE_RPM",
+    "OPENAI_DEFAULT_BASE_URL",
+    "OPENAI_DEFAULT_STRUCTURED",
+    "OPENAI_STRUCTURED_MODES",
+    "OPENAI_TOOL_NAME",
     "ClaudeCLIClient",
     "GeminiClient",
+    "OpenAICompatClient",
     "QuotaExhausted",
     "TransientCLIError",
     "TransientRunStop",
@@ -710,3 +724,496 @@ def _to_gemini_schema(schema: dict) -> dict:
         else:
             out[key] = value
     return out
+
+
+# --------------------------------------------------------------- OpenAI-compatible
+# The third-party reproduction route (bench/RUN-LOCOMO.md).
+#
+# The two clients above are free-tier routes built for one machine: one needs a
+# Claude subscription and the `claude` binary, the other a Gemini key whose free
+# allowance is measured in hundreds of calls a day. Neither is something a
+# reviewer can supply, and a result nobody else can re-run is a self-reported
+# result whatever the documentation says.
+#
+# `OpenAICompatClient` is the route that closes that: one `POST /chat/completions`
+# against any endpoint speaking the OpenAI shape -- OpenAI itself, Anthropic's
+# OpenAI-compatibility layer, Google's, a gateway such as OpenRouter or LiteLLM,
+# or a local vLLM. Every role can route through it, so a full LoCoMo run needs a
+# base URL and a key and nothing else.
+#
+# stdlib `urllib`, for the same reason `GeminiClient` uses it: one HTTP call with
+# a JSON body does not justify a dependency, and the `bench` extra stays a single
+# package so `bench/tests` keeps running in CI with nothing extra installed.
+
+OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+# How a schema-constrained call asks for structured output. Three mechanisms,
+# because endpoints implement different ones and picking the wrong one is silent:
+#
+# * `json_schema` -- `response_format: {"type": "json_schema", ...}`. What OpenAI
+#   itself implements and what most gateways pass through. The default.
+# * `tool_call` -- a single forced function call whose `parameters` carry the
+#   schema; the arguments are read back as the payload. Required for
+#   **Anthropic's OpenAI-compatibility layer, which ignores `response_format`**
+#   (its published support table lists the field as ignored, while
+#   `tools[n].function.parameters` and `tool_calls` are fully supported). An
+#   endpoint that ignores the field does not error: it returns prose, and the
+#   role that needed JSON records a failure. So this is a setting an operator
+#   chooses from the table in bench/RUN-LOCOMO.md, not something to guess at.
+# * `json_object` -- `response_format: {"type": "json_object"}` plus the schema
+#   appended to the system prompt. The lowest common denominator, for shims that
+#   implement neither of the above. Weaker on purpose: the shape is asked for
+#   rather than enforced, so a run using it says so in the manifest.
+OPENAI_STRUCTURED_MODES = ("json_schema", "tool_call", "json_object")
+OPENAI_DEFAULT_STRUCTURED = "json_schema"
+
+# The function name used by `tool_call` mode. Fixed rather than generated so a
+# request is reproducible byte for byte.
+OPENAI_TOOL_NAME = "emit_result"
+
+# `strict: true` is NOT set on the json_schema mode, and that is deliberate.
+# OpenAI's strict mode requires every key in `properties` to appear in
+# `required`, and the harness's extraction schema deliberately leaves `attrs`,
+# `supersedes_title` and `source_turn_ids` optional -- a memory carrying no typed
+# attributes is a legitimate extraction. Turning strict on would force all three
+# onto every memory, which changes what the extractor produces and therefore what
+# the run measures. Conformance is checked where it already was:
+# `validate_against_pack`, and the engine's own attr-spec interpreter behind it.
+OPENAI_STRICT_SCHEMA = False
+
+
+def _setting(name: str, default: str = "") -> str:
+    """One harness setting, from the environment first and the repo `.env` second.
+
+    Both, unlike `read_env_file`, which is file-only. Someone running this from a
+    CI job or a container has no `.env` and should not be made to write one; the
+    operator who already keeps credentials in `.env` should not be made to export
+    them. Environment wins, so a one-off override needs no file edit.
+    """
+    from_env = os.environ.get(name)
+    if from_env and from_env.strip():
+        return from_env.strip()
+    try:
+        from_file = read_env_file(name)
+    except LLMError:
+        return default
+    # An empty resolved value is a miss, not a setting. `_setting` feeds callers
+    # that parse what they get (`int(...)`, `float(...)`), and handing them ""
+    # turns an unset variable into a crash rather than a default.
+    return from_file.strip() or default
+
+
+class OpenAICompatClient:
+    """Any OpenAI-shaped `/chat/completions` endpoint, behind the `LLMClient` seam.
+
+    Configuration is per role and read from the environment (or `.env`), so a run
+    can put the reader on one endpoint and the judge on another. That separation
+    is the point: design/09's cross-vendor judge rule is what keeps a published
+    number off a harness that graded its own vendor's answers, and collapsing
+    both roles onto one variable would make the neutral posture unreachable.
+
+        ENGRAPHY_BENCH_OPENAI_BASE_URL       reader / extractor / adjudicator
+        ENGRAPHY_BENCH_OPENAI_API_KEY
+        ENGRAPHY_BENCH_OPENAI_STRUCTURED     json_schema | tool_call | json_object
+
+        ENGRAPHY_BENCH_JUDGE_BASE_URL        the judge; falls back to the above
+        ENGRAPHY_BENCH_JUDGE_API_KEY
+        ENGRAPHY_BENCH_JUDGE_STRUCTURED
+
+    Model ids are pinned in `bench.core.llm.OPENAI_ROLE_MODELS` and overridable
+    per role from there, not here, so the manifest keeps one authority for what
+    ran.
+
+    ## Three request-shape facts this client is built around
+
+    **No `temperature` unless asked for.** Reasoning-tier models on several
+    endpoints reject any value but the default, and the harness does not assume
+    determinism anywhere (see the `bench/core/llm.py` module docstring) -- judge
+    stability is measured on every run instead. Set
+    `ENGRAPHY_BENCH_OPENAI_TEMPERATURE` to send one.
+
+    **`max_tokens` first, `max_completion_tokens` on demand.** The former is what
+    every shim accepts; the latter is what OpenAI's newer models require. A 400
+    naming both is unambiguous and fixed by renaming one key, so the client
+    retries on the other field and remembers the answer for the rest of the run.
+
+    **Token counts are not offered.** `count_tokens` raises, matching
+    `ClaudeCLIClient`. The retrieval-envelope metric is reported in bytes exactly
+    because no tokenizer available here measures the model that reads the
+    payload, and a client that started returning numbers would quietly contradict
+    the manifest's `token_counter_note`.
+    """
+
+    provider = "openai-compat"
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str = "",
+        api_key: str = "",
+        structured: str = "",
+        timeout: int = 300,
+        max_retries: int = 4,
+        temperature: str = "",
+        rpm: int = 0,
+        role: str = "",
+        opener=None,
+    ) -> None:
+        self.model = model
+        self.role = role
+        self.base_url = (base_url or OPENAI_DEFAULT_BASE_URL).rstrip("/")
+        self.api_key = api_key
+        self.structured = structured or OPENAI_DEFAULT_STRUCTURED
+        if self.structured not in OPENAI_STRUCTURED_MODES:
+            raise LLMError(
+                f"{self.structured!r} is not a structured-output mode; choose one of "
+                f"{list(OPENAI_STRUCTURED_MODES)}. bench/RUN-LOCOMO.md lists which one "
+                "each endpoint needs."
+            )
+        if not self.api_key:
+            raise LLMError(
+                f"no API key for the {role or 'openai-compat'} route. Set "
+                "ENGRAPHY_BENCH_OPENAI_API_KEY (or ENGRAPHY_BENCH_JUDGE_API_KEY for the "
+                "judge) in the environment or the repo's gitignored .env."
+            )
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.temperature = temperature
+        self.rpm = rpm
+        # Injected by tests so the whole request and response path runs with no
+        # network. Production leaves it None and uses urllib.
+        self._opener = opener
+        self._minute_window: list[float] = []
+        # Which output-cap field this endpoint accepts, learned on first refusal.
+        self._max_tokens_field = "max_tokens"
+        self.last_response_model = ""
+
+    @classmethod
+    def for_role(cls, role: str, model: str, **kwargs) -> OpenAICompatClient:
+        """Build the client for one role from the environment.
+
+        The judge reads its own three variables and falls back to the shared ones
+        when they are unset. `run.py` records which of those happened, so a run
+        whose judge shares an endpoint with its reader states that in the
+        manifest rather than leaving a reader to infer it from two matching
+        hostnames.
+        """
+        prefix = "ENGRAPHY_BENCH_JUDGE_" if role == "judge" else "ENGRAPHY_BENCH_OPENAI_"
+        base_url = _setting(prefix + "BASE_URL") or _setting("ENGRAPHY_BENCH_OPENAI_BASE_URL")
+        api_key = _setting(prefix + "API_KEY") or _setting("ENGRAPHY_BENCH_OPENAI_API_KEY")
+        structured = (_setting(prefix + "STRUCTURED")
+                      or _setting("ENGRAPHY_BENCH_OPENAI_STRUCTURED"))
+        rpm_raw = _setting("ENGRAPHY_BENCH_OPENAI_RPM", "0")
+        try:
+            rpm = int(rpm_raw)
+        except ValueError:
+            raise LLMError(
+                f"ENGRAPHY_BENCH_OPENAI_RPM must be an integer, got {rpm_raw!r}"
+            ) from None
+        return cls(
+            model,
+            base_url=base_url,
+            api_key=api_key,
+            structured=structured,
+            temperature=_setting("ENGRAPHY_BENCH_OPENAI_TEMPERATURE"),
+            rpm=rpm,
+            role=role,
+            **kwargs,
+        )
+
+    # -- config surface, for the manifest ---------------------------------
+    def describe(self) -> dict:
+        """What this client is, for the run manifest.
+
+        The host, never the key. A reviewer needs to know which vendor graded the
+        answers; nobody needs the credential.
+        """
+        from urllib.parse import urlparse
+
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "base_url_host": urlparse(self.base_url).netloc or self.base_url,
+            "structured_output": self.structured,
+            "temperature": self.temperature or "endpoint default (unset)",
+        }
+
+    # -- rate limiting ----------------------------------------------------
+    def _throttle(self) -> None:
+        """Client-side requests-per-minute guard, off unless configured.
+
+        Unlike Gemini's free tier, the ceiling here belongs to the operator's own
+        account and the harness cannot know it. `ENGRAPHY_BENCH_OPENAI_RPM` lets a
+        low-tier key pace itself rather than discover the limit as a wall of 429s
+        partway through a 500-question run.
+        """
+        if self.rpm <= 0:
+            return
+        now = time.monotonic()
+        self._minute_window = [t for t in self._minute_window if now - t < 60.0]
+        if len(self._minute_window) >= self.rpm:
+            wait = 60.0 - (now - self._minute_window[0]) + 0.25
+            if wait > 0:
+                time.sleep(wait)
+            now = time.monotonic()
+            self._minute_window = [t for t in self._minute_window if now - t < 60.0]
+        self._minute_window.append(now)
+
+    # -- transport --------------------------------------------------------
+    def _open(self, req, timeout):
+        if self._opener is not None:
+            return self._opener(req, timeout)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    def _post(self, body: dict) -> dict:
+        url = self.base_url + "/chat/completions"
+        delay = 2.0
+        for attempt in range(self.max_retries):
+            self._throttle()
+            payload = json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + self.api_key,
+                },
+                method="POST",
+            )
+            try:
+                with self._open(req, self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                # Classify on the WHOLE body before truncating for display -- the
+                # lesson `GeminiClient._post` already carries: the field that
+                # separates "wait a moment" from "this run is over" sits hundreds
+                # of bytes into the response.
+                raw = exc.read().decode("utf-8", "replace")
+                detail = raw[:300]
+                if exc.code == 400 and self._switch_max_tokens_field(raw, body):
+                    # Deterministic and fixable, so it does not consume a retry.
+                    continue
+                if exc.code in (401, 403):
+                    raise LLMError(
+                        f"the {self.role or 'openai-compat'} endpoint rejected the "
+                        f"credential (HTTP {exc.code}): {detail}"
+                    ) from exc
+                if exc.code == 429:
+                    if _looks_like_hard_quota(raw):
+                        raise QuotaExhausted(
+                            f"{self.role or 'openai-compat'} quota exhausted on "
+                            f"{self.model}: {detail}"
+                        ) from exc
+                    if attempt == self.max_retries - 1:
+                        raise LLMError(
+                            f"rate limited after {self.max_retries} attempts: {detail}"
+                        ) from exc
+                    time.sleep(_retry_after(exc.headers, delay))
+                    delay *= 2
+                    continue
+                if exc.code >= 500 and attempt < self.max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                raise LLMError(f"HTTP {exc.code} from {self.base_url}: {detail}") from exc
+            except urllib.error.URLError as exc:
+                if attempt == self.max_retries - 1:
+                    raise LLMError(f"connection to {self.base_url} failed: {exc}") from exc
+                time.sleep(delay)
+                delay *= 2
+        raise LLMError(f"request to {self.base_url} failed after {self.max_retries} attempts")
+
+    def _switch_max_tokens_field(self, raw: str, body: dict) -> bool:
+        """Move the output cap to the other field name, once, in place.
+
+        OpenAI's newer models refuse `max_tokens` and name `max_completion_tokens`
+        in the refusal; several self-hosted shims do the exact reverse. Both are
+        unambiguous, both are fixed by renaming one key, and neither is worth a
+        flag the operator has to discover from a failed run. Returns True when it
+        rewrote `body`, so the caller retries without spending an attempt.
+        """
+        lowered = raw.lower()
+        current = self._max_tokens_field
+        other = "max_completion_tokens" if current == "max_tokens" else "max_tokens"
+        if other not in lowered or current not in body:
+            return False
+        body[other] = body.pop(current)
+        self._max_tokens_field = other
+        return True
+
+    # -- protocol ---------------------------------------------------------
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        schema: dict | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        effort: str = "high",
+    ) -> LLMResponse:
+        # `effort` is accepted and not sent. It is an Anthropic-native concept
+        # with no OpenAI-shaped equivalent every endpoint honours, and a field
+        # silently dropped by the server is worse than one never sent: the
+        # manifest would name a setting that did nothing.
+        body: dict = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+            self._max_tokens_field: max_tokens,
+        }
+        if self.temperature:
+            body["temperature"] = float(self.temperature)
+
+        if schema is not None:
+            if self.structured == "json_schema":
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "engraphy_bench_result",
+                        "schema": schema,
+                        "strict": OPENAI_STRICT_SCHEMA,
+                    },
+                }
+            elif self.structured == "tool_call":
+                body["tools"] = [{
+                    "type": "function",
+                    "function": {
+                        "name": OPENAI_TOOL_NAME,
+                        "description": "Return the result as the arguments of this call.",
+                        "parameters": schema,
+                    },
+                }]
+                body["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": OPENAI_TOOL_NAME},
+                }
+            else:  # json_object
+                body["response_format"] = {"type": "json_object"}
+                # The shape is only asked for in this mode, so it has to reach
+                # the model in the prompt or there is nothing to conform to.
+                body["messages"][0]["content"] = (
+                    system + "\n\nReply with JSON matching this schema, and nothing "
+                    "else:\n" + json.dumps(schema)
+                )
+
+        started = time.perf_counter()
+        payload = self._post(body)
+        elapsed = time.perf_counter() - started
+        return self._parse(payload, schema, max_tokens, elapsed)
+
+    def _parse(self, payload: dict, schema: dict | None,
+               max_tokens: int, elapsed: float) -> LLMResponse:
+        choices = payload.get("choices") or []
+        if not choices:
+            raise LLMError(f"no choices in the response: {json.dumps(payload)[:300]}")
+        choice = choices[0]
+        message = choice.get("message") or {}
+        finish = choice.get("finish_reason") or ""
+
+        if finish == "length":
+            # Never accepted silently, for the reason `AnthropicClient` gives: a
+            # truncated extraction is indistinguishable from a conversation that
+            # held few facts, and would understate the store with nothing in the
+            # result to show for it.
+            raise LLMError(
+                f"the response hit the output cap ({max_tokens}) and is truncated; "
+                "raise max_tokens rather than accepting a partial result"
+            )
+        if finish == "content_filter":
+            raise LLMError("the endpoint's content filter stopped the response")
+        if message.get("refusal"):
+            raise LLMError(f"the model declined the request: {str(message['refusal'])[:200]}")
+
+        text = message.get("content") or ""
+        data = None
+        if schema is not None:
+            if self.structured == "tool_call":
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    raise LLMError(
+                        "structured output was requested in tool_call mode and the "
+                        "endpoint returned no tool call. An endpoint that honours "
+                        "response_format should run in json_schema mode instead."
+                    )
+                arguments = (calls[0].get("function") or {}).get("arguments") or ""
+                try:
+                    data = json.loads(arguments)
+                except json.JSONDecodeError as exc:
+                    raise LLMError(
+                        f"the tool call's arguments were not valid JSON: {arguments[:200]!r}"
+                    ) from exc
+                text = arguments
+            else:
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise LLMError(
+                        "structured output was requested and the reply was not valid "
+                        f"JSON: {text[:200]!r}. An endpoint that ignores response_format "
+                        "returns prose here -- Anthropic's compatibility layer does, and "
+                        "wants the tool_call mode."
+                    ) from exc
+
+        usage = payload.get("usage") or {}
+        # Read into a local before it goes anywhere near the instance attribute.
+        # `phase_answer` shares ONE reader client across `--concurrency` threads,
+        # so a served id stashed on `self` and read back a line later can be
+        # another thread's by the time it is read -- the manifest would then
+        # attribute a model to the wrong answer, which is the exact failure the
+        # served-id recording exists to prevent. The attribute is kept for
+        # callers that want the last id seen; the response never depends on it.
+        served = str(payload.get("model") or "")
+        self.last_response_model = served
+        return LLMResponse(
+            text=text,
+            input_tokens=int(usage.get("prompt_tokens") or 0),
+            output_tokens=int(usage.get("completion_tokens") or 0),
+            # The id the endpoint says served the request, so the manifest records
+            # what ran rather than what was asked for -- the same pinning
+            # guarantee `ClaudeCLIClient._resolved_model` exists to give.
+            model=served or self.model,
+            stop_reason=finish,
+            data=data,
+            seconds=elapsed,
+        )
+
+    def count_tokens(self, text: str) -> int:
+        raise LLMError(
+            "this client does not count tokens. The retrieval envelope is reported in "
+            "bytes because no tokenizer available to the harness measures the model "
+            "that reads the payload -- see the manifest's token_counter_note."
+        )
+
+
+def _retry_after(headers, fallback: float) -> float:
+    """Seconds to wait, taken from the response's own `Retry-After` where it gives one.
+
+    An endpoint that states its backoff knows better than an exponential guess,
+    and honouring it is the difference between clearing a rate limit and walking
+    into it four more times. Capped so a malformed or punitive value cannot
+    stall a run for an hour.
+    """
+    value = headers.get("Retry-After") if headers is not None else None
+    if not value:
+        return fallback
+    try:
+        return max(0.0, min(float(value), 300.0))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _looks_like_hard_quota(body: str) -> bool:
+    """Is this 429 a spent allowance rather than a burst that will clear?
+
+    The distinction decides whether the run stops cleanly with every checkpoint
+    intact or burns its retries against a wall. Matched on the phrases endpoints
+    actually use for an exhausted balance or a daily cap; a plain
+    `rate_limit_exceeded` is deliberately NOT matched, because that one does clear
+    by waiting.
+    """
+    t = (body or "").lower()
+    return any(s in t for s in (
+        "insufficient_quota", "exceeded your current quota", "billing",
+        "per day", "perday", "daily limit", "credit balance", "out of credits",
+    ))
