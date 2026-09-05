@@ -11,12 +11,14 @@ meaningless, and band behavior is most of what is under test.
 
 from __future__ import annotations
 
+import math
 import psycopg
 import pytest
 
 from engraphy.core import dedup
 
 from bench.core.corpus import Haystack, Session, Turn
+from engraphy.tests import bandvalues as bv
 from bench.core.extract import ExtractResult, NodeDraft, VerbatimExtractor, window_sessions
 from bench.core.ingest import (
     AlwaysDistinct,
@@ -237,8 +239,11 @@ async def test_ingest_uses_the_real_bands_and_records_the_confirm_rate(pool, ben
         if "orthogonal" in text:
             vec[1] = 1.0
         elif "near duplicate" in text:
-            # ~0.87 cosine to the base vector: squarely inside [0.80, 0.95).
-            vec[0], vec[2] = 0.87, 0.493
+            # Squarely inside the active profile's confirm band, so the harness
+            # branch under test is the one a real near-duplicate would take. The
+            # second component is whatever makes the vector a unit vector.
+            vec[0] = bv.PENDING
+            vec[2] = math.sqrt(1.0 - bv.PENDING ** 2)
         else:
             vec[0] = 1.0
         return vec

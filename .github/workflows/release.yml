@@ -2,7 +2,8 @@ name: release
 
 # Cutting a release is `git tag vX.Y.Z && git push --tags`. Everything below
 # follows from the tag: the distributions are built and attached to a GitHub
-# release, and the two container targets are published to GHCR.
+# release, and the two container targets are published to GHCR in both embedder
+# variants.
 #
 # ci.yml also triggers on `v*` tags, so the full test matrix runs against the
 # tagged commit alongside this workflow.
@@ -55,10 +56,18 @@ jobs:
                  --title "Engraphy ${GITHUB_REF_NAME}" --generate-notes --verify-tag
           gh release upload "$GITHUB_REF_NAME" dist/* --clobber
 
-  # Both Dockerfile targets, published to GHCR under the repository's namespace.
-  # Authentication is the workflow's own GITHUB_TOKEN plus `packages: write`; no
-  # personal access token is configured or needed for a push to this repo's own
-  # package namespace.
+  # Both Dockerfile targets in both embedder variants, published to GHCR under
+  # the repository's namespace. Authentication is the workflow's own
+  # GITHUB_TOKEN plus `packages: write`; no personal access token is configured
+  # or needed for a push to this repo's own package namespace.
+  #
+  # The variant axis carries no version of its own and no separate trigger. It
+  # is a second value in this matrix, so a tag publishes the micro images by the
+  # same mechanism and in the same run as the default ones, and cutting a
+  # release stays `git tag && git push --tags` with nothing to remember. A
+  # variant that needed its own workflow, its own tag or its own manual step
+  # would drift out of step with the default images the first time someone was
+  # in a hurry.
   image:
     runs-on: ubuntu-latest
     needs: release
@@ -69,6 +78,14 @@ jobs:
       fail-fast: false
       matrix:
         target: [server, admin]
+        # `profile` is the ENGRAPHY_EMBEDDING_PROFILE baked into the image, and
+        # `suffix` is what that variant appends to the version tag. The default
+        # variant passes an empty profile so the Dockerfile's build arg stays
+        # unset and the image runs embedding.DEFAULT_PROFILE, which is where the
+        # default belongs: here it would be a second place to update.
+        variant:
+          - {profile: '', suffix: ''}
+          - {profile: micro, suffix: '-micro'}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
@@ -82,23 +99,41 @@ jobs:
       # `docker pull ghcr.io/<owner>/engraphy` gets the server, and
       # `<owner>/engraphy-admin` gets the sidecar, each with its own `latest`.
       # Tags are the exact version and the X.Y line.
+      #
+      # The variant is a TAG SUFFIX on those same two packages, not a third and
+      # fourth package: `engraphy:0.2.0-micro` sits beside `engraphy:0.2.0`, so
+      # an operator moving to micro changes a tag rather than an image name, and
+      # the two variants of one release stay visibly one release. The suffix is
+      # applied per pattern rather than through `flavor:` so that `latest` keeps
+      # pointing at the default variant without a further rule.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}${{ matrix.target == 'admin' && '-admin' || '' }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},suffix=${{ matrix.variant.suffix }}
+            type=semver,pattern={{major}}.{{minor}},suffix=${{ matrix.variant.suffix }}
 
+      # ENGRAPHY_EMBEDDING_PROFILE is read twice from this one value, and that is
+      # the property that keeps the variant maintenance-free. The Dockerfile
+      # turns the build arg into a persisted ENV, so the profile that gets
+      # prebaked into the image's model cache is also the profile the container
+      # runs, and the two cannot drift apart. Passing an empty string leaves the
+      # arg unset, which is the default variant.
       - uses: docker/build-push-action@v6
         with:
           context: .
           target: ${{ matrix.target }}
           push: true
+          build-args: |
+            ENGRAPHY_EMBEDDING_PROFILE=${{ matrix.variant.profile }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per (target, variant). One shared gha scope would have the
+          # four builds evicting each other's layers on every release, since
+          # they diverge at the prebake step and each would rewrite the cache.
+          cache-from: type=gha,scope=${{ matrix.target }}${{ matrix.variant.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}${{ matrix.variant.suffix }}
 
   # Publish the server record to the official MCP Registry
   # (registry.modelcontextprotocol.io), so an MCP client can discover Engraphy
