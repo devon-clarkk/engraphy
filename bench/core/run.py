@@ -73,11 +73,13 @@ from bench.core.corpus import Corpus, Question, dataset_digest
 from bench.core.extract import LLM_RETAIN_SOURCE_TEXT as _LLM_RETAIN_SOURCE_TEXT
 from bench.core.extract import LLMExtractor, VerbatimExtractor
 from bench.core.ingest import AlwaysDistinct, LLMAdjudicate, ingest_haystack
-from bench.core.judge import Judge, self_consistency
-from bench.core.llm import ROLE_MODELS, prompt_hash
+from bench.core.judge import JUDGE_PASSES, Judge, self_consistency
+from bench.core.llm import (
+    LLMError, ROLE_MODELS, openai_model_for, openai_role_manifest, prompt_hash)
 from bench.core.meter import Meter
 from bench.core.providers import (
-    ClaudeCLIClient, GeminiClient, QuotaExhausted, TransientRunStop, stop_class)
+    ClaudeCLIClient, GeminiClient, OpenAICompatClient, QuotaExhausted,
+    TransientRunStop, stop_class)
 from bench.core.report import aggregate, load_rows, render_failures, render_report
 from bench.core.retrieve import STRATEGIES, probe_search
 from bench.core.score import LLMJudgeScorer
@@ -148,7 +150,16 @@ APP_DB = DB.replace("postgres:engraphy@", "engraphy_app:engraphy_app_test_only@"
 LOADERS = {"locomo": LoCoMoLoader}
 EXTRACTORS = ("verbatim", "llm")
 POLICIES = ("always_distinct", "llm_adjudicate")
-JUDGE_PROVIDERS = ("gemini", "claude")
+JUDGE_PROVIDERS = ("gemini", "claude", "openai")
+
+# Which route the non-judge roles (extractor, reader, adjudicator) run on.
+#
+# `claude-cli` is the operator's free route and needs a Claude subscription plus
+# the `claude` binary on PATH. `openai` is the route anyone can run: an
+# OpenAI-shaped endpoint reached with a base URL and a key. A published figure is
+# only checkable by a third party on the second one, so that is what
+# bench/RUN-LOCOMO.md documents.
+PROVIDERS = ("claude-cli", "openai")
 
 # The judge model when it routes through Claude. Pinned to Sonnet, deliberately
 # a lighter model than the Opus extractor/reader (Devon, 2026-07-22): binary
@@ -300,7 +311,8 @@ class Checkpoint:
 
 # ------------------------------------------------------------------------- ingest
 async def phase_ingest(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
-                       pack_spaces: dict, principal: str) -> None:
+                       pack_spaces: dict, principal: str,
+                       *, provider: str = "claude-cli") -> None:
     """Ingest each (haystack, extractor, pack) triple exactly once.
 
     Retrieval strategy plays no part here: `search_only` and
@@ -329,9 +341,10 @@ async def phase_ingest(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
         if cleared:
             print(f"  [reset] {scope} — dropped {cleared} rows from an incomplete ingest")
 
-        extractor = _build_extractor(extractor_name, pack_dict)
+        extractor = _build_extractor(extractor_name, pack_dict, provider)
         policy = _build_policy(next(a.policy for a in arms
-                                    if a.extractor == extractor_name and a.pack == pack_name))
+                                    if a.extractor == extractor_name and a.pack == pack_name),
+                               provider)
         haystack = next(h for h in corpus.haystacks if h.haystack_id == haystack_id)
         print(f"  [ingest] {haystack_id} / {extractor_name} / {pack_name} → {scope} "
               f"({len(haystack.sessions)} sessions, {haystack.turn_count} turns)", flush=True)
@@ -348,30 +361,76 @@ async def phase_ingest(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
               f"{row['total_seconds']:.0f}s", flush=True)
 
 
-def _build_extractor(name: str, pack: dict):
+def _client_for(role: str, provider: str):
+    """One role's LLM client, on the requested route.
+
+    Every client here satisfies the same `LLMClient` seam, so nothing downstream
+    of this function knows which route a run took -- which is what makes the
+    OpenAI-compatible route a configuration change rather than a second harness.
+    """
+    if provider == "openai":
+        return OpenAICompatClient.for_role(role, openai_model_for(role))
+    return ClaudeCLIClient(model=ROLE_MODELS[role]["model"])
+
+
+def _build_extractor(name: str, pack: dict, provider: str = "claude-cli"):
     if name == "verbatim":
         return VerbatimExtractor()
-    return LLMExtractor(ClaudeCLIClient(model=ROLE_MODELS["extractor"]["model"]), pack)
+    return LLMExtractor(_client_for("extractor", provider), pack)
 
 
-def _build_policy(name: str):
+def _build_policy(name: str, provider: str = "claude-cli"):
     if name == "llm_adjudicate":
-        return LLMAdjudicate(ClaudeCLIClient(model=ROLE_MODELS["adjudicator"]["model"]))
+        return LLMAdjudicate(_client_for("adjudicator", provider))
     return AlwaysDistinct()
 
 
 def _build_judge(provider: str) -> Judge:
     """The judge, on the requested provider.
 
-    Both satisfy the same `LLMClient` seam, so the Judge class is unchanged. A
-    Claude usage cap surfaces as `QuotaExhausted` (providers.py), which
-    `phase_judge` already treats as a clean resumable stop -- so the Max plan's
-    headroom becomes the binding constraint in exactly the shape the Gemini
-    daily cap had.
+    All three satisfy the same `LLMClient` seam, so the Judge class is unchanged,
+    and best-of-3 majority grading (`judge.JUDGE_PASSES`) applies identically on
+    every route. A Claude usage cap, a Gemini daily cap and an exhausted API
+    balance all surface as `QuotaExhausted` (providers.py), which `phase_judge`
+    already treats as a clean resumable stop.
     """
     if provider == "claude":
         return Judge(ClaudeCLIClient(model=CLAUDE_JUDGE_MODEL))
+    if provider == "openai":
+        return Judge(OpenAICompatClient.for_role("judge", openai_model_for("judge")))
     return Judge(GeminiClient(model=ROLE_MODELS["judge"]["model"]))
+
+
+def _judge_route_manifest(judge_provider: str) -> dict:
+    """Whether the judge and the reader ran on the same endpoint, said plainly.
+
+    design/09 §Neutrality: a same-vendor judge is a deviation from the
+    recommended posture and the manifest must SAY so rather than let a reader
+    discover it by comparing two hostnames. On the OpenAI-compatible route the
+    judge has its own base URL, so this is a real question with a real answer
+    rather than a property of the route.
+    """
+    if judge_provider != "openai":
+        return {}
+    from bench.core.providers import _setting
+
+    own = bool(_setting("ENGRAPHY_BENCH_JUDGE_BASE_URL"))
+    return {
+        "judge_endpoint_is_separate": own,
+        "judge_endpoint_note": (
+            "The judge ran on its own endpoint (ENGRAPHY_BENCH_JUDGE_BASE_URL), "
+            "separate from the reader's. design/09's cross-vendor posture is "
+            "satisfied if that endpoint is a different vendor."
+            if own else
+            "The judge ran on the SAME endpoint as the reader and extractor, "
+            "because ENGRAPHY_BENCH_JUDGE_BASE_URL was unset. Whether that is "
+            "same-vendor judging depends on the endpoint: a multi-vendor gateway "
+            "can serve a judge from a different vendor than the reader, a "
+            "single-vendor endpoint cannot. State which, alongside any published "
+            "number. Setting ENGRAPHY_BENCH_JUDGE_BASE_URL makes the split "
+            "explicit and is what bench/RUN-LOCOMO.md recommends."
+        ),
+    }
 
 
 def _clear_scope(space_id: str, scope_id: str) -> int:
@@ -434,7 +493,8 @@ async def _retrieve_with_retry(strategy, pool, arm_space, q, meter, *, tries: in
 # ------------------------------------------------------------------------- answer
 async def phase_answer(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
                        pack_spaces: dict, principal: str, *, concurrency: int,
-                       stance: str = "grounded") -> None:
+                       stance: str = "grounded",
+                       provider: str = "claude-cli") -> None:
     """Retrieve and read, checkpointing each answer the moment it returns.
 
     Retrieval is sequential (it is database work and fast); the reader is a CLI
@@ -442,7 +502,7 @@ async def phase_answer(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
     number run concurrently. Each result is appended as it completes rather than
     per batch: a kill between two answers costs at most the one in flight.
     """
-    reader = Reader(ClaudeCLIClient(model=ROLE_MODELS["reader"]["model"]), stance=stance)
+    reader = Reader(_client_for("reader", provider), stance=stance)
     have = ck.keys("answers.jsonl", "arm", "question_id")
 
     for arm in arms:
@@ -804,7 +864,8 @@ FULL_SUITE = {"conversations": 10, "sessions": 272, "turns": 5882, "questions": 
 
 
 def _extrapolate(ck: Checkpoint, corpus: Corpus, arms: list[Arm],
-                 judge_provider: str = "gemini") -> str:
+                 judge_provider: str = "gemini",
+                 provider: str = "claude-cli") -> str:
     """Project the full-suite cost from this run's *measured* rates.
 
     Measured, not assumed: every rate below is divided out of what this run
@@ -899,6 +960,19 @@ def _extrapolate(ck: Checkpoint, corpus: Corpus, arms: list[Arm],
           f"`gemini-flash-latest`), a {full_judge}-call full suite is "
           f"**{-(-full_judge // 500)} days** of budget. The checkpointing exists "
           "for exactly that route — designed to be stopped by quota and resumed.")
+    elif judge_provider == "openai":
+        seq_h = judge_mean * full_judge / 3600
+        A(f"**The judge ran over an OpenAI-compatible endpoint, so the constraint is "
+          f"the account behind it rather than a free-tier allowance.** A full-suite "
+          f"pass of these {len(arms)} arms needs {full_judge} judge calls, each "
+          f"best-of-{JUDGE_PASSES}, plus calibration. At the "
+          f"{judge_mean:.1f}s per graded question measured here that is "
+          f"**{seq_h:.1f} h** sequential, and grading parallelises: raise "
+          f"`--judge-concurrency` as far as the endpoint's rate limit allows. "
+          f"Whether that many calls fits a budget or a tier is a question about "
+          f"the endpoint, and this harness does not guess at it: the per-call "
+          f"usage it recorded is in `results.jsonl`, and the endpoint's own "
+          f"pricing is the other half.")
     else:
         rpd = 500
         A(f"**The binding constraint is the judge's daily quota, and it is measured "
@@ -910,18 +984,26 @@ def _extrapolate(ck: Checkpoint, corpus: Corpus, arms: list[Arm],
           f"free-tier budget at {rpd}/day. That is the schedule, and it is why the "
           "checkpointing is load-bearing rather than a nicety.")
     A("")
-    A("**Financial cost: nil.** Every role runs on the operator's existing "
-      "subscriptions — extraction/reading/adjudication on the Claude CLI, and "
-      "judging on either the Claude Max plan (this run) or the Gemini free tier "
-      "(the cross-vendor default). No run of this harness in any configuration "
-      f"spends API credit.{concurrency_note}")
+    if "openai" in (judge_provider, provider):
+        A("**Financial cost: whatever this endpoint charges.** This run reached at "
+          "least one role over an OpenAI-compatible endpoint, so it spends against "
+          "the account behind that base URL. The harness records the calls and the "
+          "per-call token usage it was told about; it does not hold anybody's "
+          f"price list, so it states neither a total nor an estimate.{concurrency_note}")
+    else:
+        A("**Financial cost: nil.** Every role runs on the operator's existing "
+          "subscriptions: extraction, reading and adjudication on the Claude CLI, "
+          "and judging on either the Claude Max plan or the Gemini free tier (the "
+          "cross-vendor default). No run in this configuration spends API "
+          f"credit.{concurrency_note}")
     A("")
     A("Two caveats on the projection, both pointing the same way. The measured "
       "conversations are the smaller ones (63 of the suite's 272 sessions across "
       "3 of 10 conversations, so ~23% of ingest for 30% of the conversations), so "
-      "a full run is somewhat worse than ×10 of what is shown. And reader latency "
-      "here is dominated by CLI subprocess spawn, which a deployed agent would not "
-      "pay — it inflates the wall-clock projection but not the cost.")
+      "a full run is somewhat worse than ×10 of what is shown. And on the CLI "
+      "route reader latency is dominated by subprocess spawn, which a deployed "
+      "agent would not pay: it inflates the wall-clock projection but not the "
+      "cost.")
     return "\n".join(L)
 
 
@@ -1204,16 +1286,15 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
         "haystacks": [h.haystack_id for h in corpus.haystacks],
         "corpus": corpus.stats(),
         "arms": [a.as_dict() for a in arms],
-        "role_models": {
-            **ROLE_MODELS,
-            "judge": ({"provider": "claude-cli", "model": CLAUDE_JUDGE_MODEL,
-                       "same_vendor": True}
-                      if args.judge == "claude" else ROLE_MODELS["judge"]),
-        },
+        "provider": args.provider,
+        "role_models": _role_models_manifest(args),
+        # Endpoint hosts and structured-output mode for every distinct client the
+        # run built, so a reproduction is checkable down to how JSON was asked
+        # for. Keys, never. Empty on the CLI route, which has no endpoint.
+        "provider_config": _provider_config_manifest(args),
         "judge_provider": args.judge,
-        "judge_neutrality": (CLAUDE_JUDGE_NEUTRALITY if args.judge == "claude"
-                             else "Cross-vendor (Gemini) — the design/09 recommended "
-                                  "posture; no deviation to note."),
+        "judge_neutrality": _judge_neutrality(args.judge),
+        **_judge_route_manifest(args.judge),
         "resolved_models": {},
         "prompt_hashes": {
             "extract.md": prompt_hash("extract.md"),
@@ -1258,6 +1339,93 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
     }
 
 
+def _role_models_manifest(args) -> dict:
+    """Which model performed which role, verbatim, whichever routes ran.
+
+    `--provider` and `--judge` are independent, so the judge's entry is built
+    from `--judge` alone rather than inherited from the route the other roles
+    took. A free CLI reader with a paid neutral judge is a reasonable thing to
+    want, and it was the combination that made an earlier version of this
+    function name Gemini as the grading vendor for a run graded elsewhere. A
+    manifest that misnames who graded the answers defeats the whole point of
+    having one.
+    """
+    non_judge = (openai_role_manifest() if args.provider == "openai"
+                 else dict(ROLE_MODELS))
+    table = {role: entry for role, entry in non_judge.items() if role != "judge"}
+    table["judge"] = _judge_model_manifest(args.judge)
+    return table
+
+
+def _judge_model_manifest(judge_provider: str) -> dict:
+    """The judge's row, from `--judge` and nothing else."""
+    if judge_provider == "claude":
+        return {"provider": "claude-cli", "model": CLAUDE_JUDGE_MODEL, "same_vendor": True}
+    if judge_provider == "openai":
+        return openai_role_manifest()["judge"]
+    return dict(ROLE_MODELS["judge"])
+
+
+def _provider_config_manifest(args) -> dict:
+    """Endpoint host and structured-output mode per role, for the manifest.
+
+    Built by constructing each client and asking it to describe itself, so the
+    manifest cannot drift from what the run actually used. A missing credential
+    is recorded rather than raised: this runs during `--phases report`, which a
+    reviewer may invoke over finished artifacts with no key present, and losing a
+    report to a manifest field would be a poor trade.
+    """
+    out: dict = {}
+    roles = []
+    if args.provider == "openai":
+        roles += ["extractor", "reader", "adjudicator"]
+    if args.judge == "openai":
+        roles.append("judge")
+    for role in roles:
+        try:
+            out[role] = OpenAICompatClient.for_role(role, openai_model_for(role)).describe()
+        except LLMError as exc:
+            out[role] = {"error": str(exc)[:200]}
+    return out
+
+
+def _judge_banner(judge_provider: str) -> str:
+    """The one-line description of the judge printed as the run starts.
+
+    Short on purpose -- the manifest carries the full statement. This exists so
+    that an operator watching a run sees the neutrality posture without having to
+    open a file, which is when a wrong `--judge` is still cheap to fix.
+    """
+    if judge_provider == "claude":
+        return "SAME-VENDOR, see the manifest's judge_neutrality"
+    if judge_provider == "openai":
+        from bench.core.providers import _setting
+
+        return ("own endpoint" if _setting("ENGRAPHY_BENCH_JUDGE_BASE_URL")
+                else "SAME ENDPOINT as the reader, see the manifest's judge_neutrality")
+    return "cross-vendor"
+
+
+def _judge_neutrality(judge_provider: str) -> str:
+    if judge_provider == "claude":
+        return CLAUDE_JUDGE_NEUTRALITY
+    if judge_provider == "openai":
+        return (
+            "The judge ran over an OpenAI-compatible endpoint. Whether that is "
+            "cross-vendor is a property of the endpoint and the model id, not of the "
+            "route, so read `role_models.judge` and `provider_config.judge` together "
+            "with `judge_endpoint_is_separate` below. design/09's recommended posture "
+            "for a PUBLISHED number is a judge from a different vendor than the system "
+            "under test, which on this route means pointing "
+            "ENGRAPHY_BENCH_JUDGE_BASE_URL at a different vendor from "
+            "ENGRAPHY_BENCH_OPENAI_BASE_URL. Best-of-3 majority grading applies here "
+            "exactly as on every other route, and judge instability is measured on "
+            "this run regardless of vendor."
+        )
+    return ("Cross-vendor (Gemini): the design/09 recommended posture; no "
+            "deviation to note.")
+
+
 def _branch() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO,
@@ -1280,8 +1448,8 @@ async def main() -> int:
     ap.add_argument("--concurrency", type=int, default=3,
                     help="concurrent reader calls; retrieval stays sequential")
     ap.add_argument("--judge-concurrency", type=int, default=4,
-                    help="concurrent judge calls (claude only; gemini is forced to 1 "
-                         "because its client shares a per-minute rate limiter)")
+                    help="concurrent judge calls (claude and openai; gemini is forced "
+                         "to 1 because its client shares a per-minute rate limiter)")
     ap.add_argument("--reader-stance", default="grounded", choices=sorted(READER_STANCES),
                     help="inference stance the answer-discipline skill is applied under "
                          "(skill §The inference stance). 'grounded' (default) allows a "
@@ -1292,11 +1460,20 @@ async def main() -> int:
                          "e.g. --space-config dedup.t_high=0.98 (value parsed as JSON). "
                          "Repeatable. Recorded in the manifest.")
     ap.add_argument("--calibration-sample", type=int, default=40)
+    ap.add_argument("--provider", default="claude-cli", choices=sorted(PROVIDERS),
+                    help="which route the extractor, reader and adjudicator run on. "
+                         "'claude-cli' needs a Claude subscription and the `claude` "
+                         "binary; 'openai' needs an OpenAI-compatible base URL and key "
+                         "and is the route a third party can reproduce a published "
+                         "number on (bench/RUN-LOCOMO.md). Recorded in the manifest.")
     ap.add_argument("--judge", default="gemini", choices=sorted(JUDGE_PROVIDERS),
                     help="which provider grades. 'gemini' is cross-vendor (the "
                          "recommended posture for a published number); 'claude' is "
                          "same-vendor, escaping the Gemini per-model daily cap at a "
-                         "stated neutrality cost -- see the manifest's judge_neutrality.")
+                         "stated neutrality cost -- see the manifest's judge_neutrality. "
+                         "'openai' grades over an OpenAI-compatible endpoint, which is "
+                         "cross-vendor whenever ENGRAPHY_BENCH_JUDGE_BASE_URL names a "
+                         "different vendor from the reader's.")
     ap.add_argument("--teardown", action="store_true",
                     help="drop the run space afterwards; never implicit")
     args = ap.parse_args()
@@ -1381,11 +1558,13 @@ async def main() -> int:
     try:
         if "ingest" in phases:
             print("\n== ingest ==")
-            await phase_ingest(pool, ck, corpus, arms, pack_spaces, "bench")
+            await phase_ingest(pool, ck, corpus, arms, pack_spaces, "bench",
+                               provider=args.provider)
         if "answer" in phases:
             print("\n== answer ==")
             await phase_answer(pool, ck, corpus, arms, pack_spaces, "bench",
-                               concurrency=args.concurrency, stance=args.reader_stance)
+                               concurrency=args.concurrency, stance=args.reader_stance,
+                               provider=args.provider)
     except QuotaExhausted as exc:
         # A usage limit during answering is a clean, resumable stop -- the errored
         # questions were NOT checkpointed, so a resume re-answers them. Skip the
@@ -1404,13 +1583,15 @@ async def main() -> int:
     finally:
         await pool.close()
 
-    # Parallel judging is safe only for the claude route; the gemini client
-    # shares a per-minute rate limiter that concurrency would corrupt.
-    judge_conc = args.judge_concurrency if args.judge == "claude" else 1
+    # Parallel judging is safe on the claude and openai routes; the gemini client
+    # shares a per-minute rate limiter that concurrency would corrupt. The
+    # OpenAI-compatible client's optional RPM guard is per client instance and
+    # each worker builds its own, so pace a low-tier key with --judge-concurrency
+    # rather than ENGRAPHY_BENCH_OPENAI_RPM.
+    judge_conc = args.judge_concurrency if args.judge in ("claude", "openai") else 1
     if ("judge" in phases or "calibrate" in phases) and not quota_stop:
-        print(f"  judge: {args.judge}"
-              + (f" (SAME-VENDOR — see manifest judge_neutrality; concurrency {judge_conc})"
-                 if args.judge == "claude" else " (cross-vendor, sequential)"))
+        print(f"  judge: {args.judge} ({_judge_banner(args.judge)}; "
+              f"concurrency {judge_conc})")
     if "judge" in phases and not quota_stop:
         print("\n== judge ==")
         quota_stop = not phase_judge(ck, corpus, lambda: _build_judge(args.judge),
@@ -1433,7 +1614,8 @@ async def main() -> int:
             await dpool.close()
 
     manifest["ingest"] = ck.rows("ingest.jsonl")
-    manifest["extrapolation"] = _extrapolate(ck, corpus, arms, args.judge)
+    manifest["extrapolation"] = _extrapolate(ck, corpus, arms, args.judge,
+                                             args.provider)
     manifest["resolved_models"] = _resolved_models(ck)
     # Sticky. A later `--phases report` invocation must not erase the fact that
     # an earlier pass was cut short by quota -- re-rendering a report is not
