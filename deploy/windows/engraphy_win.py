@@ -14,6 +14,7 @@ is either a memory that answers or there is not.
     engraphy-win status      what is running, what version, what port
     engraphy-win token       mint a fresh client token and hand it to the app
     engraphy-win upgrade     after a new build is laid down: migrate forward
+    engraphy-win selftest    prove the install is complete, no database needed
 
 WHERE THINGS LIVE
 
@@ -162,7 +163,11 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """
     env = dict(kw.pop("env", os.environ))
     env["PATH"] = str(install_root() / "pgsql" / "bin") + os.pathsep + env.get("PATH", "")
-    return subprocess.run(cmd, env=env, **kw)
+    # check defaults to False: every caller here inspects returncode itself and
+    # turns a failure into a message a non-developer can act on, which a
+    # CalledProcessError traceback is not.
+    check = kw.pop("check", False)
+    return subprocess.run(cmd, env=env, check=check, **kw)
 
 
 def pg_is_running(pgdata: pathlib.Path) -> bool:
@@ -560,7 +565,9 @@ def _install_console_handler(cfg: dict) -> None:
 def cmd_stop(args: argparse.Namespace) -> int:
     del args
     cfg = read_config()
-    subprocess.run(["schtasks", "/End", "/TN", TASK_NAME], capture_output=True)
+    # check=False: no task registered is a normal state, not a failure. The
+    # cluster still gets stopped below either way.
+    subprocess.run(["schtasks", "/End", "/TN", TASK_NAME], capture_output=True, check=False)
     pg_stop(cfg)
     print("stopped")
     return 0
@@ -601,6 +608,98 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Prove the shipped binary is complete, without needing a database.
+
+    A frozen build fails in ways a source run cannot: a module uvicorn names at
+    runtime that the analysis could not see, a data file setuptools ships that
+    PyInstaller did not, a native library that resolved on the build machine
+    because a wheel was on sys.path. Every one of those looks identical from
+    outside: a server that starts and then does nothing.
+
+    So this imports the pieces and uses them. It runs in CI on the artifact that
+    ships, and it is the first thing to run on a laptop where something is
+    wrong, because it separates "the install is broken" from "the database is
+    broken" in one command.
+    """
+    del args
+    failures: list[str] = []
+
+    def probe(label: str, fn) -> None:
+        try:
+            detail = fn()
+        except Exception as exc:  # noqa: BLE001 -- reporting every failure is the point
+            failures.append(f"{label}: {exc!r}")
+            print(f"  FAIL  {label}: {exc!r}")
+        else:
+            print(f"  ok    {label}{': ' + detail if detail else ''}")
+
+    print(f"engraphy-win selftest, install root {install_root()}")
+
+    def _migrations() -> str:
+        from engraphy.admin import migrate
+        version = migrate.expected_schema_version(migrate.DEFAULT_MIGRATIONS_DIR)
+        return f"schema {version}"
+
+    def _pack_schema() -> str:
+        import json
+        from engraphy.admin import packs
+        return f"{len(json.loads(packs.SCHEMA_PATH.read_text(encoding='utf-8')))} top-level keys"
+
+    def _uvicorn() -> str:
+        import uvicorn.lifespan.on
+        import uvicorn.loops.auto
+        import uvicorn.protocols.http.auto
+        import uvicorn
+        return uvicorn.__version__
+
+    def _psycopg() -> str:
+        import psycopg
+        import psycopg_pool
+        return f"{psycopg.__version__} on {psycopg.pq.__impl__}"
+
+    def _embedding() -> str:
+        os.environ.setdefault("HF_HOME", str(install_root() / "model"))
+        from engraphy.core import embedding
+        vec = embedding.embed_document("selftest: the model loads and produces a vector")
+        if len(vec) != embedding.DIMS:
+            raise RuntimeError(f"got {len(vec)} dimensions, expected {embedding.DIMS}")
+        return f"{embedding.profile()}, {len(vec)} dimensions"
+
+    def _postgres() -> str:
+        exe = pg_bin("pg_config")
+        if not exe.exists():
+            raise FileNotFoundError(str(exe))
+        r = _run([str(exe), "--version"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip())
+        return r.stdout.strip()
+
+    def _pgvector() -> str:
+        _install_pgvector(install_root(), pathlib.Path("."))
+        return "vector.dll and its SQL are present"
+
+    probe("migrations resolve as package data", _migrations)
+    probe("pack schema resolves as package data", _pack_schema)
+    probe("uvicorn's runtime-named modules", _uvicorn)
+    probe("psycopg and its pool", _psycopg)
+    probe("the MCP server builds", lambda: __import__(
+        "engraphy.server.app", fromlist=["create_app"]) and "engraphy.server.app imported")
+    probe("the embedding model", _embedding)
+    # The two payload checks come last: they are about what the installer laid
+    # down rather than about what was frozen, so a developer running the binary
+    # out of a build tree sees the useful failures first.
+    probe("the bundled PostgreSQL", _postgres)
+    probe("the pgvector build", _pgvector)
+
+    if failures:
+        print(f"\n{len(failures)} check(s) failed")
+        return 1
+    print("\nall checks passed")
+    return 0
+
+
 TASK_NAME = "Engraphy"
 
 
@@ -633,6 +732,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("upgrade", help="migrate the schema after a new build")
     p.set_defaults(func=cmd_upgrade)
+
+    p = sub.add_parser("selftest", help="prove the install is complete, no database needed")
+    p.set_defaults(func=cmd_selftest)
 
     args = parser.parse_args(argv)
     return args.func(args)

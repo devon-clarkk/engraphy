@@ -105,8 +105,25 @@ jobs:
           # Import the pieces a frozen build most often loses: the migration SQL
           # and pack schema resolved as package data, uvicorn's runtime-named
           # modules, and the embedding graph.
+          # selftest imports and USES every piece: the migration SQL and pack
+          # schema as package data, uvicorn's runtime-named modules, psycopg's
+          # libpq binding, and the embedding graph, which it runs to a real
+          # vector. It needs no database, which is what makes it runnable here.
+          # The two payload checks it ends with (bundled Postgres, pgvector) fail
+          # in this job by design: neither is in the server artifact, and they are
+          # asserted in the installer job where they exist.
           $env:HF_HOME = "${{ github.workspace }}/model"
-          ./dist/engraphy-win/engraphy-win.exe status 2>&1 | Out-String | Write-Output
+          $self = & ./dist/engraphy-win/engraphy-win.exe selftest 2>&1 | Out-String
+          Write-Output $self
+          foreach ($needle in @(
+              'ok    migrations resolve as package data',
+              'ok    pack schema resolves as package data',
+              "ok    uvicorn's runtime-named modules",
+              'ok    psycopg and its pool',
+              'ok    the MCP server builds',
+              'ok    the embedding model')) {
+            if ($self -notmatch [regex]::Escape($needle)) { throw "selftest missing: $needle" }
+          }
 
       - uses: actions/upload-artifact@v4
         with:
