@@ -280,3 +280,56 @@ def test_onnx_int8_diverges_but_stays_bounded_where_the_bands_read():
     assert banded_worst < 0.05, (
         f"int8 drift in the banded region is {banded_worst:.4f}, beyond what the "
         f"0.94 t_high recalibration assumes. Re-derive the band before shipping.")
+
+
+# --- Lazy model load ---------------------------------------------------------
+# The switch exists for laptops, where an instance that nobody has searched
+# holding 132MB is the difference between Engraphy being installable and not.
+# What it must never do is change any VECTOR: it moves WHEN the model loads, not
+# which model or what it produces.
+
+def test_model_load_is_eager_by_default(monkeypatch):
+    """Every deployment to date has loaded the model before serving, and that
+    stays the default. A server that answers /healthz with 200 should be able to
+    answer a search, and deferring the load breaks that correspondence."""
+    monkeypatch.delenv(embedding._LAZY_ENV, raising=False)
+    assert embedding.lazy_load() is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "Yes"])
+def test_lazy_load_accepts_the_usual_affirmatives(monkeypatch, value):
+    monkeypatch.setenv(embedding._LAZY_ENV, value)
+    assert embedding.lazy_load() is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "maybe"])
+def test_lazy_load_treats_anything_else_as_off(monkeypatch, value):
+    """Deliberately not symmetric with `profile()`, which raises on an unknown
+    value. A typo in a profile name would silently embed a store with the wrong
+    model, which is unrecoverable without a re-embed; a typo here costs an
+    operator some idle memory they meant to reclaim, and defaulting a boolean to
+    the safe side is worth more than a loud failure at boot."""
+    monkeypatch.setenv(embedding._LAZY_ENV, value)
+    assert embedding.lazy_load() is False
+
+
+def test_embed_loads_the_model_when_the_boot_warm_up_was_skipped(monkeypatch):
+    """The property the whole switch rests on: with no model loaded, `embed`
+    loads one rather than failing. If this ever stopped holding, a lazily
+    configured server would serve its first search into an exception."""
+    monkeypatch.setattr(embedding, "_model", None)
+    vec = embedding.embed("a first search on a server that skipped the warm-up")
+    assert len(vec) == embedding.DIMS
+    assert embedding._model is not None
+
+
+def test_lazy_load_does_not_change_the_vector(monkeypatch):
+    """Same text, same vector, whichever way the model got loaded. This is the
+    assertion that makes the switch safe to hand an operator: it is a decision
+    about boot order and nothing else, so no store written under one setting
+    disagrees with a store written under the other."""
+    eager = embedding.embed_document("the office coffee machine needs descaling")
+    monkeypatch.setenv(embedding._LAZY_ENV, "1")
+    monkeypatch.setattr(embedding, "_model", None)
+    lazy = embedding.embed_document("the office coffee machine needs descaling")
+    assert eager == lazy

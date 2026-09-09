@@ -44,6 +44,7 @@ tools/errors.py).
 import contextlib
 import contextvars
 import ipaddress
+import logging
 import os
 import pathlib
 
@@ -396,7 +397,20 @@ def main() -> None:  # pragma: no cover -- process entrypoint, not exercised by 
         await pool.open()
         try:
             await check_schema_version(pool)
-            embedding.embed_query("warm the model cache")  # boot order: load embedding model before serving
+            if embedding.lazy_load():
+                # The model loads on the first embed instead, since
+                # embedding.embed calls load_model when it finds none. Two
+                # consequences the operator is choosing here: the first search
+                # of the process pays the load, and /healthz answers 200 while
+                # the embedder is still absent, so it reports that the server is
+                # up rather than that it is ready to search. See
+                # embedding.lazy_load for when that trade is the right one.
+                logging.getLogger("engraphy").info(
+                    "embedding model deferred to first use (%s is set)",
+                    embedding._LAZY_ENV)
+            else:
+                # Boot order: the model is resident before the server serves.
+                embedding.embed_query("warm the model cache")
             app = create_app(pool, insecure_transport_ok=insecure_transport_ok)
             config = uvicorn.Config(app, host=bind_host, port=bind_port, log_level="info")
             await uvicorn.Server(config).serve()
