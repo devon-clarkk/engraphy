@@ -272,6 +272,25 @@ async def test_inbox_capture_endpoint_parks_a_pending_row(pool, app_space, conn)
     assert cur.fetchone() == ("note", "pending")
 
 
+async def test_inbox_capture_into_an_unknown_scope_is_scope_unknown(pool, app_space):
+    # A capture naming a scope the bearer cannot write used to fail the RLS
+    # policy with InsufficientPrivilege, which errors.py mapped to
+    # ENGRAPHY_INTERNAL: a caller-input mistake reported as a server fault.
+    # Found by Iris's capture hook (2026-09-09). Now the same answer `write`
+    # gives: ENGRAPHY_SCOPE_UNKNOWN, as a 400.
+    _space_id, raw_rw, _raw_ro = app_space
+    app = create_app(pool)
+    async with _running_app(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            resp = await c.post(
+                "/inbox", json={"kind": "note", "payload": {"text": "x"}, "scope": "no-such-scope"},
+                headers={"Authorization": f"Bearer {raw_rw}"},
+            )
+    assert resp.status_code == 400
+    assert "ENGRAPHY_SCOPE_UNKNOWN" in resp.json()["error"]
+    assert "INTERNAL" not in resp.json()["error"]
+
+
 # ---- boot-time checks (no ASGI/lifespan needed) ------------------------------
 
 

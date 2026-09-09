@@ -48,9 +48,22 @@ async def capture(pool, space_id, principal, kind, payload, scope_id=None) -> di
     """POST /inbox {kind, payload, scope?}: park one pending inbox row carrying
     the opaque capture verbatim. `payload` is the client's business (a raw tool
     failure, a chat excerpt, ...) and is stored as-is; it is not a node. RLS
-    inbox_write gates the scope (NULL, or writable)."""
+    inbox_write gates the scope (NULL, or writable).
+
+    The scope is checked before the INSERT rather than left to the RLS policy.
+    A capture into a scope the caller cannot write (unknown, or not theirs)
+    fails the policy with psycopg's InsufficientPrivilege, which
+    tools/errors.py has no mapping for, so the client saw ENGRAPHY_INTERNAL
+    for what is a caller-input error. Found 2026-09-09 by Iris's capture hook
+    posting to a scope that did not exist yet; now ENGRAPHY_SCOPE_UNKNOWN,
+    the same answer `write` gives for the same mistake (dedup.py)."""
     async with transaction(pool, space_id, principal) as conn:
         cur = conn.cursor()
+        if scope_id is not None:
+            writable = await writable_scopes_async(cur)
+            if scope_id not in writable:
+                raise ScopeUnknownError(
+                    f"ENGRAPHY_SCOPE_UNKNOWN: scope {scope_id} is not writable")
         await cur.execute(
             "INSERT INTO inbox (space_id, scope_id, kind, payload, status) "
             "VALUES (%s, %s, %s, %s, 'pending') RETURNING id, created_at",
