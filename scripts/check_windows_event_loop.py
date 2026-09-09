@@ -1,4 +1,4 @@
-"""CI guard: the Windows admin-CLI event-loop regression (walkthrough finding 2).
+"""CI guard: the Windows event-loop regression (walkthrough finding 2).
 
 psycopg's async mode refuses Windows' default ProactorEventLoop:
 
@@ -130,6 +130,41 @@ def check_import_async_path() -> None:
         check("`import`'s async path reaches the database layer", ok, detail)
 
 
+
+def check_server_installs_policy() -> None:
+    """`app.main` must install the selector policy before it opens the pool.
+
+    Every database call the server makes goes through psycopg's ASYNC pool, so a
+    server running on Windows without this cannot open its pool at boot: it dies
+    on the first connection with the Proactor InterfaceError. That is not
+    hypothetical any more, because the Docker-free Windows distribution
+    (docs/windows-native.md) runs this process natively.
+
+    Installed inside `main` rather than at import, so that importing app.py does
+    not change global state for the tests. That is why this asserts on the source
+    rather than on the policy after an import: calling `main` here would try to
+    bind a port and open a pool.
+    """
+    src = pathlib.Path("engraphy/server/app.py").read_text(encoding="utf-8")
+    body = src.split("def main()", 1)[-1]
+    check(
+        "engraphy/server/app.py::main installs WindowsSelectorEventLoopPolicy",
+        "WindowsSelectorEventLoopPolicy" in body,
+        "absent from main()" if "WindowsSelectorEventLoopPolicy" not in body else "present",
+    )
+
+
+def check_windows_launcher_installs_policy() -> None:
+    """engraphy-win is the Windows entry point, and `token` mints through the
+    same asyncio.run + psycopg async path the CLI verb does."""
+    src = pathlib.Path("deploy/windows/engraphy_win.py").read_text(encoding="utf-8")
+    check(
+        "deploy/windows/engraphy_win.py::main installs WindowsSelectorEventLoopPolicy",
+        "WindowsSelectorEventLoopPolicy" in src,
+        "absent" if "WindowsSelectorEventLoopPolicy" not in src else "present",
+    )
+
+
 def main() -> int:
     if sys.platform != "win32":
         print("not Windows -- the ProactorEventLoop bug is Windows-only; nothing to check.")
@@ -139,12 +174,16 @@ def main() -> int:
     check_policy_installed()
     check_token_create_verb()
     check_import_async_path()
+    check_server_installs_policy()
+    check_windows_launcher_installs_policy()
 
     if failures:
         print(
-            "\nREGRESSED: engraphy-admin's async verbs are broken on Windows.\n"
-            "engraphy/admin/cli.py must install WindowsSelectorEventLoopPolicy on win32\n"
-            "before any asyncio.run() -- see conftest.py / bench.py for the same guard.\n"
+            "\nREGRESSED: an async path is broken on Windows.\n"
+            "engraphy/admin/cli.py, engraphy/server/app.py::main and\n"
+            "deploy/windows/engraphy_win.py::main must each install\n"
+            "WindowsSelectorEventLoopPolicy on win32 before any asyncio.run --\n"
+            "see conftest.py / bench.py for the same guard.\n"
             f"Failed: {', '.join(failures)}"
         )
         return 1

@@ -49,6 +49,7 @@ and what the OS offers short of asking a non-developer to manage a secret.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import ctypes
 import json
@@ -481,8 +482,6 @@ def cmd_token(args: argparse.Namespace) -> int:
     it has stored the token, so the plaintext lives for one launch rather than
     forever.
     """
-    import asyncio
-
     import psycopg
 
     from engraphy.server.auth import mint_token
@@ -747,6 +746,15 @@ TASK_NAME = "Engraphy"
 
 
 def main(argv: list[str] | None = None) -> int:
+    # `token` calls psycopg's async connect through asyncio.run, and psycopg's
+    # async mode refuses Windows' default ProactorEventLoop. Installed for the
+    # whole process rather than around that one call, because this program is
+    # Windows-only and every async path in it has the same requirement.
+    # engraphy/admin/cli.py and engraphy/server/app.py do the same, and
+    # scripts/check_windows_event_loop.py guards all three.
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     parser = argparse.ArgumentParser(prog="engraphy-win", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
