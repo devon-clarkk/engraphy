@@ -558,8 +558,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         os.environ["ENGRAPHY_DATABASE_URL"] = _conninfo(cfg, superuser=False)
         os.environ["ENGRAPHY_BIND_HOST"] = "127.0.0.1"
         os.environ["ENGRAPHY_BIND_PORT"] = str(cfg["server_port"])
-        os.environ.setdefault("ENGRAPHY_EMBEDDING_PROFILE", "micro")
-        os.environ.setdefault("HF_HOME", str(install_root() / "model"))
         from engraphy.server import app as server_app
         server_app.main()
     finally:
@@ -701,12 +699,19 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                 f"pool {psycopg_pool.__version__}")
 
     def _embedding() -> str:
-        os.environ.setdefault("HF_HOME", str(install_root() / "model"))
         from engraphy.core import embedding
+        got = embedding.profile()
+        if got != SHIPPED_PROFILE:
+            # Not a warning. A different profile means a different model, which
+            # means either a network download of something the payload does not
+            # carry, or vectors that do not match what the store was written
+            # with. Both are failures, and both are silent without this.
+            raise RuntimeError(
+                f"profile is {got!r}, but this distribution ships {SHIPPED_PROFILE!r}")
         vec = embedding.embed_document("selftest: the model loads and produces a vector")
         if len(vec) != embedding.DIMS:
             raise RuntimeError(f"got {len(vec)} dimensions, expected {embedding.DIMS}")
-        return f"{embedding.profile()}, {len(vec)} dimensions"
+        return f"{got}, {len(vec)} dimensions, from {os.environ['HF_HOME']}"
 
     def _postgres() -> str:
         exe = pg_bin("pg_config")
@@ -746,6 +751,38 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     return 0
 
 
+
+# --------------------------------------------------------------------------
+# what this distribution is
+# --------------------------------------------------------------------------
+
+#: The embedding profile the Windows distribution ships. gte-small int8: the
+#: whole stack measured 187MB resident with it against 983MB on the shipped
+#: defaults (docs/footprint-2026-09-09.md), and 8GB of RAM is the machine this
+#: targets.
+SHIPPED_PROFILE = "micro"
+
+
+def apply_distribution_env() -> None:
+    """Point every verb at the model this distribution actually ships.
+
+    Applied for the whole program rather than inside `run`, because a store is
+    written under one embedding profile and has to keep being read under it, and
+    because the alternative is worse than an inconsistency. With these unset, any
+    other verb falls back to the DEFAULT profile and its model is not in the
+    payload, so `selftest` on a consultant's laptop would reach for the network
+    and download half a gigabyte, or fail outright on a machine that has none.
+
+    `setdefault`, so an operator debugging a specific profile can still override
+    either from the environment.
+    """
+    os.environ.setdefault("ENGRAPHY_EMBEDDING_PROFILE", SHIPPED_PROFILE)
+    # The baked cache, laid down beside the binary at build time. Offline and
+    # instant on first boot, the same property the Docker image gets from its
+    # prebake.
+    os.environ.setdefault("HF_HOME", str(install_root() / "model"))
+
+
 TASK_NAME = "Engraphy"
 
 
@@ -758,6 +795,8 @@ def main(argv: list[str] | None = None) -> int:
     # scripts/check_windows_event_loop.py guards all three.
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    apply_distribution_env()
 
     parser = argparse.ArgumentParser(prog="engraphy-win", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
