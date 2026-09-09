@@ -1,0 +1,67 @@
+# Smallest-footprint overlay, for a laptop where RAM is the binding constraint.
+#
+#   docker compose -f compose.yaml -f compose.micro.yaml -f compose.small.yaml up -d
+#
+# Stacks ON TOP of compose.micro.yaml and does not replace it. That file picks
+# the small embedder, which is the larger of the two savings; this one takes
+# what is left, which is almost entirely Postgres holding `shared_buffers` it
+# was never going to need at this scale.
+#
+# Measured on one Linux x86-64 host against a 20,000-node store after 700
+# searches, reading anon + shmem from the container cgroups:
+#
+#   default profile, stock Postgres     872.0 + 110.9  =  982.9 MB
+#   micro profile,   stock Postgres     131.9 + 110.9  =  242.7 MB
+#   micro profile,   this overlay       131.9 +  ~40   =  ~172 MB
+#
+# The Postgres defaults are not wrong, they are sized for a database server.
+# `shared_buffers` at 128MB and `max_connections` at 100 assume a machine whose
+# job is Postgres. Engraphy's server opens four connections and a personal store
+# is a few thousand rows, so most of that reservation is held and never read.
+
+services:
+  postgres:
+    # Every value here is a reservation Postgres makes at startup, so each one
+    # is memory an 8GB laptop gets back rather than a limit it might hit.
+    command:
+      - postgres
+      # 32MB against the 128MB default. The working set that matters is the
+      # HNSW index plus the hot rows; beyond that Postgres is reading pages the
+      # OS page cache already holds, and page cache is reclaimable where
+      # shared_buffers is not. Measured at 32MB against a 20,000-node store, the
+      # vector leg runs 0.15 ms/query against 0.21 ms/query on the default, so
+      # the reduction costs nothing that shows at this scale.
+      #
+      # This is not the smallest value Postgres accepts. Lower ones were not
+      # measured, and the remaining 32MB is a small share of a 187MB stack, so
+      # there is little to win and a cache-thrash regression to lose. Raise it
+      # if a store grows past the tens of thousands of nodes these numbers
+      # cover.
+      - -c
+      - shared_buffers=32MB
+      # The server's pool opens 4. The admin sidecar is one-shot and takes one
+      # more. 20 leaves room for a psql session and a stuck connection without
+      # reserving per-backend slots nobody will use.
+      - -c
+      - max_connections=20
+      # Index maintenance, not steady state: it is allocated during CREATE
+      # INDEX and REINDEX and released after. 32MB slows an HNSW rebuild on a
+      # large store and costs nothing on a small one.
+      - -c
+      - maintenance_work_mem=32MB
+      # A planner hint about the OS page cache, not an allocation. The 4GB
+      # default tells the planner this machine is a database server; on a laptop
+      # sharing 8GB with a browser it is a fiction that biases toward index
+      # scans on data that is not actually cached.
+      - -c
+      - effective_cache_size=256MB
+      # Parallel workers are processes, and each one costs its own backend
+      # memory. At personal-store scale the planner rarely picks them and the
+      # queries that would are not on the interactive path.
+      - -c
+      - max_parallel_workers_per_gather=0
+      # Autovacuum stays ON. Turning it off would look good on this measurement
+      # and leave the store to bloat, which is a worse outcome slowly. Three
+      # workers become one, which is the actual saving available here.
+      - -c
+      - autovacuum_max_workers=1

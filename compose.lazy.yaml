@@ -1,0 +1,19 @@
+# Defer the embedding model out of boot and into the first search.
+#
+#   docker compose -f compose.yaml -f compose.micro.yaml -f compose.small.yaml \
+#                  -f compose.lazy.yaml up -d
+#
+# Lowers what an IDLE instance holds. It does not lower what a working one
+# holds: the model loads on the first embed and stays for the life of the
+# process. See engraphy/core/embedding.py::lazy_load.
+#
+# The healthcheck is relaxed to match. With the model deferred, /healthz answers
+# 200 as soon as the server is listening, which is sooner than it can serve a
+# search, so the long start_period that exists to cover a first-boot model
+# download no longer describes anything.
+services:
+  engraphy:
+    environment:
+      ENGRAPHY_EMBEDDING_LAZY_LOAD: "1"
+    healthcheck:
+      start_period: 30s

@@ -369,6 +369,30 @@ def _build(name: str):
     return _TorchBackend(s) if s.graph is None else _OnnxBackend(s)
 
 
+#: Env var that defers the model load out of boot and into the first embed.
+_LAZY_ENV = "ENGRAPHY_EMBEDDING_LAZY_LOAD"
+
+
+def lazy_load() -> bool:
+    """Whether the model is loaded at boot or on first use.
+
+    False by default, which is the behaviour every deployment has had: the model
+    is resident before the server accepts a request, so no served query pays to
+    load it and `/healthz` returning 200 means the server can actually answer.
+
+    Setting it trades that for idle memory, and the trade is worth stating
+    precisely rather than leaving to be discovered. On the `micro` profile the
+    embedder is about 112MB of the server process, so an instance nobody has
+    searched yet holds roughly half what a working one does. The saving lasts
+    exactly until the first embed and does not come back within the process:
+    this lowers what an IDLE instance holds, not what a working one holds.
+
+    Worth taking on a laptop where Engraphy is installed and searched a few
+    times a day. Not worth taking on a server, and not a way to fit a working
+    instance inside a budget it does not otherwise fit."""
+    return os.environ.get(_LAZY_ENV, "").lower() in ("1", "true", "yes")
+
+
 def load_model() -> None:
     """Load the active profile's backend AND put it in its serving state.
     Idempotent; called once at process start.

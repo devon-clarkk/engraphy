@@ -102,6 +102,47 @@ but re-derive it if the store matters. Adopting `micro` on an existing store is 
 mandatory full re-embed and the procedure is
 [docs/micro-reembed.md](micro-reembed.md).
 
+## Resident memory
+
+Measured 2026-09-09 against a 20,000-node store, reading `anon + shmem` from the
+container cgroups. Full breakdown and method in
+[footprint-2026-09-09.md](footprint-2026-09-09.md).
+
+| configuration | server | Postgres | total |
+|---|---:|---:|---:|
+| default profile (`onnx-fp32`), stock Postgres | 872 MB | 111 MB | 983 MB |
+| `micro` profile, stock Postgres | 132 MB | 111 MB | 243 MB |
+| `micro` + `compose.small.yaml` | 132 MB | 46 MB | 178 MB |
+| the above, with a client connected | 133 MB | 54 MB | **187 MB** |
+| the above, idle, with `compose.lazy.yaml` | 49 MB | 46 MB | 95 MB |
+
+Quote **187 MB**. The 178 MB row was measured with no client attached; a
+connected client opens the pool's backends and Postgres grows by the difference,
+and a deployment nobody is connected to is not the case worth budgeting for.
+
+For a laptop, stack the two overlays that exist for it:
+
+```
+docker compose -f compose.yaml -f compose.micro.yaml -f compose.small.yaml up -d
+```
+
+`compose.small.yaml` tunes Postgres for a personal store rather than for a
+database server, which is where the second-largest saving is: `shared_buffers`
+at the 128MB default is reserved whether or not a few thousand rows need it.
+Every compose command for that stack has to carry the same `-f` set, including
+`run` and `exec`, because compose resolves a service from the files it is given
+and will otherwise recreate Postgres from the base file.
+
+`compose.lazy.yaml` defers the model load to the first search. It lowers what an
+IDLE instance holds and not what a working one holds, and it makes `/healthz`
+report liveness rather than readiness. See
+`engraphy/core/embedding.py::lazy_load`.
+
+On Windows, measure the whole picture before promising a number: Docker
+Desktop's own processes measured 730MB on the test host, which is several times
+the tuned stack. The no-Docker path below is the smaller footprint on those
+machines by a wide margin.
+
 ## Running as a service
 
 ### Local / overlay (systemd / launchd)

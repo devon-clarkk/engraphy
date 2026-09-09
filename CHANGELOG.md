@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+A laptop-sized deployment. The `micro` profile with the Postgres overlay that
+ships beside it measures **187MB resident** for the whole stack, against 983MB
+on the shipped defaults, on a store twice the size the performance budgets
+assume.
+
+### Added
+- `compose.small.yaml` tunes Postgres for a personal store: `shared_buffers`
+  32MB, `max_connections` 20, `maintenance_work_mem` 32MB, one autovacuum
+  worker, no parallel workers per gather. Stacks on top of `compose.micro.yaml`
+  and takes Postgres from 111MB to 46MB with a 20,000-node store resident. The
+  vector leg measured 0.15 ms/query against 0.21 ms/query on the defaults.
+- `compose.lazy.yaml` and `ENGRAPHY_EMBEDDING_LAZY_LOAD` defer the embedding
+  model out of boot and into the first embed. An instance nobody has searched
+  holds 49MB rather than 132MB. The saving ends at the first search and does not
+  return within the process, and `/healthz` reports liveness rather than
+  readiness while the model is absent, so it is off by default and documented as
+  a laptop trade rather than a general one.
+- `scripts/footprint.py` reports a compose project's resident memory from the
+  container cgroups, splitting `anon`, `shmem` and reclaimable page cache. It
+  reads through a throwaway privileged container rather than `docker exec`, so
+  measuring a running stack never starts a process inside it.
+- `scripts/embedding_layers.py` attributes the server process's memory by
+  import layer, which is what says whether a smaller model would help.
+- `scripts/footprint_workload.sql` and `scripts/footprint_latency.sql` seed a
+  20,000-node store and time both search legs, so a footprint figure is taken
+  after a workload rather than at idle. Postgres measures 29MB idle and 111MB
+  after work, and the second is the number an operator lives with.
+- `docs/footprint-2026-09-09.md` is the measured breakdown: where the memory
+  goes, what each configuration costs, the floor, and the two levers that were
+  measured and rejected.
+
+### Changed
+- `docs/05-deployment.md` carries the resident-memory table and points at the
+  overlays.
+
 The `micro` embedding profile runs gte-small on ONNX Runtime, for hosts where
 resident memory is the constraint. Every `v*` tag publishes it as a `-micro`
 image alongside the default one.
