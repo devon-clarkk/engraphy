@@ -417,6 +417,7 @@ it were tested is worth less than one that says where the edge is.
 | **Real MCP traffic**, bearer-authenticated: `initialize`, 19 tools listed, 30 writes and 30 searches through `/mcp/`, as `engraphy_app` under row-level security rather than as a superuser | this laptop |
 | The app role is provisioned the way the security model needs: it can log in, and it is neither `SUPERUSER` nor `BYPASSRLS` | read back from `pg_roles` by `bootstrap` itself, which now asserts it |
 | The logon task registers with the settings it is supposed to have and unregisters cleanly | registered, read back and removed on this laptop |
+| **The whole lifecycle closes.** `run` records the serving process, and `stop` ends the task, that process and the cluster, in that order: 11 processes before, 0 after, the pid file cleared, `/healthz` refused, and `status` reporting both halves down | run against the artifact `windows-dist.yml` built for this commit |
 | The whole distribution builds from a clean checkout into one installer | `windows-dist.yml`, green: 80.9 MB installer from a 258.8 MB payload |
 
 ### Not proved
