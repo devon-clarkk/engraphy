@@ -93,7 +93,12 @@ $sharedBytes = 0
 $sharedSource = 'not read (postgres is not running)'
 if ($postgres.Count -gt 0) {
     $psql = Join-Path $InstallRoot 'pgsql/bin/psql.exe'
-    $cfgPath = Join-Path $env:LOCALAPPDATA 'Engraphy/engraphy.json'
+    # Honours ENGRAPHY_WIN_DATA the same way engraphy_win.data_root does, so a
+    # measurement against a throwaway data directory reads that one's config
+    # rather than the installed instance's.
+    $dataRoot = if ($env:ENGRAPHY_WIN_DATA) { $env:ENGRAPHY_WIN_DATA }
+                else { Join-Path $env:LOCALAPPDATA 'Engraphy' }
+    $cfgPath = Join-Path $dataRoot 'engraphy.json'
     if ((Test-Path $psql) -and (Test-Path $cfgPath)) {
         $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
         $env:PGPASSWORD = $cfg.superuser_password

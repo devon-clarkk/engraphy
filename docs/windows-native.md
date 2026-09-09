@@ -316,4 +316,79 @@ To be completed against the built artifact.
 
 ## 7. What is proved, and what is not
 
+Kept separate on purpose. A design document that reads as though everything in
+it were tested is worth less than one that says where the edge is.
+
+### Proved, by running it
+
+| | where |
+|---|---|
+| pgvector 0.8.6 builds against PostgreSQL 16.15 with MSVC, loads into a cluster made from the same archive, and answers a 384-dimension cosine query through an HNSW index the plan actually uses | `pgvector-windows.yml`, green; and repeated on this Windows 11 laptop against the CI-built DLL |
+| The frozen binary carries everything it needs: package data, uvicorn's runtime-named modules, psycopg's libpq binding, the MCP server, and an embedding graph it runs to a real vector | `engraphy-win selftest --binary-only` in `windows-dist.yml`, asserted line by line |
+| `bootstrap` end to end: `initdb` with scram authentication, the laptop Postgres tuning, `CREATE DATABASE`, all 24 migrations behind their unconditional pre-dump, the `engraphy_app` role, and a space with its restore sentinel | run on this laptop against the shipped payload |
+| The Postgres tuning is what lands, not what was intended | `pg_settings` read back after the workload: `shared_buffers` 32MB, `max_connections` 20, `maintenance_work_mem` 32MB, `effective_cache_size` 256MB |
+| Port collision avoidance is real rather than theoretical | bootstrap took **8001** on this machine, because a live Engraphy already held 8000 |
+| The logon task registers with the settings it is supposed to have and unregisters cleanly | registered, read back and removed on this laptop |
+| The whole distribution builds from a clean checkout into one installer | `windows-dist.yml`, green: 80.9 MB installer from a 258.8 MB payload |
+
+### Not proved
+
+- **The installer has not been run on a clean Windows machine.** It builds, and
+  every step it performs is exercised individually above, but the sequence of
+  them under NSIS on a machine that has never had Engraphy is untested. That is
+  the single highest-value thing to do next.
+- **Uninstall and upgrade-over-an-existing-store are untested as file
+  operations.** The migration half of an upgrade is exercised; replacing a
+  running install's binaries is not.
+- **No cold boot.** The task is registered and starts on demand; a real logoff
+  and logon cycle, and the console control handler's shutdown path, have not
+  been observed.
+- **SmartScreen behaviour is unmeasured** because the installer is unsigned. See
+  section 8.
+- **The desktop handoff is unit-tested, not end-to-end.** `parseBootstrap` and
+  the import rules are covered by the desktop suite; a packaged desktop build
+  importing a file a real installer wrote has not been run.
+
 ## 8. Decisions that are not ours to make
+
+**Code signing, and it is not cosmetic.** An unsigned installer with no
+reputation gets "Windows protected your PC" from SmartScreen, and the user has
+to click More info and then Run anyway. That is exactly the friction this design
+exists to remove, and it lands on the first thirty seconds of the experience. An
+OV certificate is the cheaper option and builds reputation over time; an EV
+certificate gets SmartScreen trust immediately and needs a hardware token.
+Either way it is a purchase and an identity verification, so it is a decision
+rather than a task. Everything else here works without it.
+
+**Where the installer is hosted.** GitHub Releases is what `build-version.py`
+already reads for the desktop app, so attaching the installer to a release means
+the manifest generator learns one new asset pattern and nothing else changes. A
+download on engraphy.tech would need its own publishing step.
+
+**Whether the Windows stack gets its own product key in `version.json`.** It is a
+fourth independently versioned thing next to the engine, the extension and the
+desktop app. The manifest is built for exactly this, and the only judgement is
+its `minimumSupported` floor, which nothing publishes and which is reviewed per
+release.
+
+**NSIS or MSIX, if Store distribution ever matters.** Section 5 is a technical
+recommendation, not a business one. MSIX would mean reworking the data directory
+and the autostart around the packaging model, and it would bring signing with
+it.
+
+**Whether `micro` is permanent for Windows.** The distribution bakes gte-small
+int8, and a store written under one embedding profile has to keep being read
+under it. Changing later means a re-embed on every installed machine
+([micro-reembed.md](micro-reembed.md) is the procedure), so this is worth
+settling before it is on laptops rather than after.
+
+**Whether a service ever replaces the logon task.** Only if the stack has to be
+up before anyone logs in, or has to survive fast user switching. Neither is
+true for one consultant on their own laptop, and the change is additive if it
+becomes true.
+
+**Whether the desktop app ships inside the same installer.** They are separate
+today, which means two downloads for one product. Combining them is a packaging
+decision with a real cost: the desktop app updates from the Microsoft Store on
+one channel and from a direct download on the other, and folding it in would
+have to pick one.

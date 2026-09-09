@@ -577,13 +577,17 @@ def _install_console_handler(cfg: dict) -> None:
     into freed memory.
     """
     CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT = 2, 5, 6
-    handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
+    # BOOL is a 4-byte int in the Win32 ABI, not C++'s one-byte bool. Declaring
+    # the return as c_bool leaves three bytes of the register undefined, and
+    # whether Windows then reads the handler as having consumed the event is
+    # up to whatever was in them.
+    handler_type = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_ulong)
 
-    def _handler(event: int) -> bool:
+    def _handler(event: int) -> int:
         if event in (CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT):
             with contextlib.suppress(Exception):
                 pg_stop(cfg)
-        return False  # let the default handler end the process
+        return 0  # FALSE: let the default handler end the process
 
     callback = handler_type(_handler)
     _install_console_handler.keepalive = callback  # type: ignore[attr-defined]
