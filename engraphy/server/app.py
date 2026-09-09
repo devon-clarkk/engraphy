@@ -41,12 +41,14 @@ Dispatchers keep their own required-argument reads as defense in depth (a
 missing key raises KeyError, translated to ENGRAPHY_VALIDATION by
 tools/errors.py).
 """
+import asyncio
 import contextlib
 import contextvars
 import ipaddress
 import logging
 import os
 import pathlib
+import sys
 
 import psycopg
 from starlette.applications import Starlette
@@ -383,6 +385,17 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
 
 def main() -> None:  # pragma: no cover -- process entrypoint, not exercised by tests
     import uvicorn
+
+    if sys.platform == "win32":
+        # psycopg's async mode refuses Windows' default ProactorEventLoop, and
+        # every database call this process makes goes through the async pool, so
+        # the server cannot open its pool at boot without this. Installed here
+        # rather than at import so that importing app.py (which the tests and
+        # `create_app` callers do) changes no global state.
+        #
+        # engraphy/admin/cli.py installs the same policy for the same reason, and
+        # scripts/check_windows_event_loop.py guards both.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     conninfo = os.environ["ENGRAPHY_DATABASE_URL"]
     bind_host = os.environ.get("ENGRAPHY_BIND_HOST", "127.0.0.1")
