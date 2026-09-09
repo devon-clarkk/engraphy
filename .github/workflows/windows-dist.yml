@@ -1,0 +1,180 @@
+name: windows-dist
+
+# The Docker-free Windows distribution, end to end: pgvector, the frozen server
+# binary, and the single installer that lays both down and registers the logon
+# task. Design and rationale in docs/windows-native.md.
+#
+# Three jobs, in order, because each one consumes the last one's artifact:
+#
+#   pgvector   vector.dll built against the same PostgreSQL major that ships
+#   server     engraphy-win.exe, frozen with PyInstaller, model baked in
+#   installer  the payload assembled and wrapped in one NSIS executable
+#
+# THE POINT OF BUILDING IT HERE
+#
+# The consultant this is for has no Python, no Visual Studio, no Docker and no
+# reason to acquire any of them. Every toolchain the distribution needs lives in
+# this workflow, so what leaves it is one file that a non-developer double
+# clicks. That property is the product, so it is enforced by where the build
+# happens rather than by a document asking people to be careful.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Attach the installer to this existing release tag (optional)'
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/windows-dist.yml'
+      - 'deploy/windows/**'
+      - 'engraphy/**'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+env:
+  PG_VERSION: '16.15-3'
+  PG_URL: 'https://get.enterprisedb.com/postgresql/postgresql-16.15-3-windows-x64-binaries.zip'
+  PG_SHA256: '5e8afffe67daf949aeeb03b74951f1ec2324e1888f73fbd036ab0e567ab004d9'
+  # The laptop profile. gte-small int8 rather than the default nomic graph: the
+  # whole stack measured 187MB resident with it against 983MB on the defaults
+  # (docs/footprint-2026-09-09.md), and 8GB of RAM is the machine this targets.
+  # A store written under one profile must keep being read under it, so this is
+  # a property of the distribution and not a runtime choice.
+  ENGRAPHY_EMBEDDING_PROFILE: micro
+
+jobs:
+  pgvector:
+    uses: ./.github/workflows/pgvector-windows.yml
+
+  server:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+
+      - name: install engraphy and the freezer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          # The runtime dependency set exactly, with no dev extras: what freezes
+          # is what a `pip install engraphy` gives, so a packaging bug shows up
+          # here rather than on a consultant's laptop.
+          pip install .
+          pip install "pyinstaller==6.11.1"
+
+      - name: bake the model beside the binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:HF_HOME = "${{ github.workspace }}/model"
+          # Goes through the real load path, embedding.embed_document, so the
+          # cache holds exactly what runtime fetches at the pinned revision
+          # rather than a hand-guessed subset. Same reasoning as the Dockerfile
+          # prebake, and it fails the build if the graph cannot be executed.
+          python -c "from engraphy.core import embedding; print('prebaking', embedding.profile()); embedding.embed_document('prebake: warm the model cache')"
+
+      - name: freeze
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pyinstaller --clean --noconfirm deploy/windows/engraphy-win.spec
+          if (-not (Test-Path dist/engraphy-win/engraphy-win.exe)) { throw 'no binary produced' }
+
+      # A frozen build fails at import time or not at all, and it fails in ways
+      # a source run cannot: a missing hidden import, a data file that setuptools
+      # ships but PyInstaller did not. Running the binary here is what catches
+      # that before it becomes an install that starts and does nothing.
+      - name: the binary runs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:ENGRAPHY_WIN_ROOT = "${{ github.workspace }}/dist/engraphy-win"
+          $out = & ./dist/engraphy-win/engraphy-win.exe --help 2>&1 | Out-String
+          if ($out -notmatch 'bootstrap') { throw "unexpected help output: $out" }
+          # Import the pieces a frozen build most often loses: the migration SQL
+          # and pack schema resolved as package data, uvicorn's runtime-named
+          # modules, and the embedding graph.
+          $env:HF_HOME = "${{ github.workspace }}/model"
+          ./dist/engraphy-win/engraphy-win.exe status 2>&1 | Out-String | Write-Output
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engraphy-win-server
+          path: dist/engraphy-win
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engraphy-win-model
+          path: model
+          if-no-files-found: error
+
+  installer:
+    runs-on: windows-latest
+    needs: [pgvector, server]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'pgvector-*', path: artifacts, merge-multiple: true}
+      - uses: actions/download-artifact@v4
+        with: {name: engraphy-win-server, path: artifacts/server}
+      - uses: actions/download-artifact@v4
+        with: {name: engraphy-win-model, path: artifacts/model}
+
+      - name: read the version being built
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $init = Get-Content engraphy/__init__.py -Raw
+          if ($init -notmatch '__version__ = "([^"]+)"') { throw 'no __version__ in engraphy/__init__.py' }
+          "ENGRAPHY_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: assemble the payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./deploy/windows/build-payload.ps1 `
+            -PgUrl $env:PG_URL -PgSha256 $env:PG_SHA256 `
+            -PgvectorDir artifacts -ServerDir artifacts/server -ModelDir artifacts/model `
+            -Out build/windows/payload
+
+      - name: build the installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --no-progress -y
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          & $makensis /DVERSION=$env:ENGRAPHY_VERSION "/DPAYLOAD=${{ github.workspace }}\build\windows\payload" deploy/windows/installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'makensis failed' }
+          $exe = Get-ChildItem deploy/windows/Engraphy-Setup-*.exe
+          # The manifest both clients read carries a sha256 for each download,
+          # and version.json is generated from what a release actually attached,
+          # so the digest is produced here rather than typed later.
+          $sha = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          "$sha  $($exe.Name)" | Out-File -FilePath "$($exe.DirectoryName)/$($exe.Name).sha256" -Encoding ascii
+          Write-Output "$($exe.Name)  $([math]::Round($exe.Length / 1MB, 1)) MB  $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engraphy-windows-installer
+          path: |
+            deploy/windows/Engraphy-Setup-*.exe
+            deploy/windows/Engraphy-Setup-*.exe.sha256
+          if-no-files-found: error
+
+      - name: attach it to a release
+        if: inputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload "${{ inputs.release_tag }}" (Get-ChildItem deploy/windows/Engraphy-Setup-*).FullName --clobber
