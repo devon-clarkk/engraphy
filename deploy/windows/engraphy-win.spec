@@ -17,7 +17,7 @@
 
 import pathlib
 
-from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 ROOT = pathlib.Path(SPECPATH).parent.parent
 
@@ -60,6 +60,12 @@ hiddenimports = [
     # anyio's backend is likewise chosen by name.
     "anyio._backends._asyncio",
 ]
+
+# numpy 2.x reaches into `numpy._core` through machinery the analysis cannot
+# follow, and a build missing one of those modules fails at the first embed with
+# an ImportError that reads like a broken numpy install rather than a packaging
+# gap. Collecting the subpackage outright is cheap and removes the whole class.
+hiddenimports += collect_submodules("numpy._core")
 
 a = Analysis(
     [str(ROOT / "deploy" / "windows" / "engraphy_win.py")],

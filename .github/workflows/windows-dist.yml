@@ -71,7 +71,11 @@ jobs:
           # is what a `pip install engraphy` gives, so a packaging bug shows up
           # here rather than on a consultant's laptop.
           pip install .
-          pip install "pyinstaller==6.11.1"
+          # Pinned, like every other build input here, so a freeze that
+          # worked yesterday is the freeze that ships today. 6.22.2 is the
+          # first line that carries hooks for numpy 2.5, whose `_core`
+          # submodules an older analysis misses entirely.
+          pip install "pyinstaller==6.22.2" "pyinstaller-hooks-contrib==2026.7"
 
       - name: bake the model beside the binary
         shell: pwsh
