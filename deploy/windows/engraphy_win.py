@@ -179,18 +179,36 @@ def pg_is_running(pgdata: pathlib.Path) -> bool:
 
 
 def pg_start(cfg: dict) -> None:
+    """Start the cluster, and return once it is accepting connections.
+
+    pg_ctl's own output goes to a FILE, never to a pipe. `pg_ctl start`
+    daemonises the postmaster, which inherits whatever handles pg_ctl was given:
+    with `capture_output=True` the postmaster holds the read end of that pipe for
+    as long as it runs, and this process waits on EOF forever. pg_ctl exits, the
+    database comes up, and the caller never returns. Under the installer that is
+    a setup step that hangs on first install with everything apparently working.
+
+    A file handle has no such problem, and the diagnostics survive rather than
+    being thrown away, which redirecting to DEVNULL would also have done.
+    """
     pgdata = pathlib.Path(cfg["pgdata"])
     if pg_is_running(pgdata):
         return
     logs = pathlib.Path(cfg["logs"])
     logs.mkdir(parents=True, exist_ok=True)
-    options = (f"-p {cfg['pg_port']} -c listen_addresses=127.0.0.1")
-    r = _run([str(pg_bin("pg_ctl")), "start", "-D", str(pgdata),
-              "-l", str(logs / "postgres.log"), "-o", options, "-w",
-              "-t", str(PG_READY_TIMEOUT_S)],
-             capture_output=True, text=True)
+    ctl_log = logs / "pg_ctl.log"
+    options = f"-p {cfg['pg_port']} -c listen_addresses=127.0.0.1"
+    with open(ctl_log, "w", encoding="utf-8") as sink:
+        r = _run([str(pg_bin("pg_ctl")), "start", "-D", str(pgdata),
+                  "-l", str(logs / "postgres.log"), "-o", options, "-w",
+                  "-t", str(PG_READY_TIMEOUT_S)],
+                 stdout=sink, stderr=subprocess.STDOUT)
     if r.returncode != 0:
-        raise SystemExit(f"postgres did not start: {r.stdout}{r.stderr}")
+        detail = ctl_log.read_text(encoding="utf-8", errors="replace").strip()
+        server_log = logs / "postgres.log"
+        if server_log.exists():
+            detail += "\n" + server_log.read_text(encoding="utf-8", errors="replace")[-2000:]
+        raise SystemExit(f"postgres did not start:\n{detail}")
 
 
 def pg_stop(cfg: dict) -> None:
@@ -201,8 +219,15 @@ def pg_stop(cfg: dict) -> None:
     # logoff there is no one left to disconnect them. fast rolls back open
     # transactions and checkpoints, so the next start is a clean start rather
     # than a WAL replay.
-    _run([str(pg_bin("pg_ctl")), "stop", "-D", str(pgdata), "-m", "fast", "-w"],
-         capture_output=True, text=True)
+    # Same file-not-pipe reasoning as pg_start. `stop -w` waits for the
+    # postmaster to exit so nothing should outlive the pipe, but a backend that
+    # refuses to die would turn a shutdown into a hang, and at logoff there are
+    # seconds rather than minutes to play with.
+    logs = pathlib.Path(cfg["logs"])
+    logs.mkdir(parents=True, exist_ok=True)
+    with open(logs / "pg_ctl.log", "a", encoding="utf-8") as sink:
+        _run([str(pg_bin("pg_ctl")), "stop", "-D", str(pgdata), "-m", "fast", "-w"],
+             stdout=sink, stderr=subprocess.STDOUT)
 
 
 def wait_for_pg(cfg: dict, timeout_s: int = PG_READY_TIMEOUT_S) -> None:
@@ -427,9 +452,18 @@ def _ensure_space(cfg: dict) -> None:
     admin_cli.space_create(id=cfg["space"], display_name=cfg["space"].title(),
                            principal=cfg["principal"], principal_display_name=None,
                            database_url=conninfo)
-    pack = install_root() / "packs" / "starter" / "pack.yaml"
+    # Resolved through the packs package rather than from the install root: the
+    # starter pack is frozen into the binary as package data, at the path
+    # packs.py already resolves its schema from, so there is one answer to
+    # "where do the shipped packs live" rather than two that can disagree.
+    from engraphy.admin import packs as packs_mod
+    pack = packs_mod.SCHEMA_PATH.parent / "starter" / "pack.yaml"
     if pack.exists():
-        admin_cli.pack_apply(path=pack, space=cfg["space"], database_url=conninfo)
+        # `file` is the parameter name: pack_apply takes it as a positional
+        # typer Argument, not as --path.
+        admin_cli.pack_apply(file=str(pack), space=cfg["space"], database_url=conninfo)
+    else:
+        print(f"  no starter pack at {pack}, space created without an ontology")
 
 
 # --------------------------------------------------------------------------

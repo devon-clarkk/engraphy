@@ -8,6 +8,27 @@ on the shipped defaults, on a store twice the size the performance budgets
 assume.
 
 ### Added
+- A Docker-free Windows distribution. One installer lays down PostgreSQL 16.15
+  with pgvector 0.8.6, the server as a frozen binary, and the embedding model,
+  creates the database and a space, mints a token, and registers a logon task,
+  on a machine with no Docker, no Python and no toolchain. `deploy/windows/`
+  carries the launcher, the PyInstaller spec, the payload build and the NSIS
+  script; [docs/windows-native.md](docs/windows-native.md) is the design and the
+  measurements.
+- `.github/workflows/pgvector-windows.yml` builds pgvector for native Windows
+  PostgreSQL and proves it: it creates a cluster from the same archive the
+  installer bundles, loads the DLL it just built, and runs a 384-dimension
+  cosine query through an HNSW index, asserting the plan used the index.
+  pgvector is pinned by commit SHA and PostgreSQL by version URL plus sha256.
+- `.github/workflows/windows-dist.yml` builds the whole distribution: pgvector,
+  the frozen server, the assembled payload and the installer.
+- `engraphy-win selftest` proves a Windows install is complete without touching
+  the database: package data, uvicorn's runtime-named modules, psycopg's libpq
+  binding, the MCP server, the embedding graph run to a real vector, and the
+  bundled PostgreSQL and pgvector.
+- `scripts/footprint_windows.ps1` reports resident memory for a native Windows
+  install, summing Working Set Private across the processes and adding the
+  shared buffer pool once, read from the running server.
 - `compose.small.yaml` tunes Postgres for a personal store: `shared_buffers`
   32MB, `max_connections` 20, `maintenance_work_mem` 32MB, one autovacuum
   worker, no parallel workers per gather. Stacks on top of `compose.micro.yaml`

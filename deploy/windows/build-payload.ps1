@@ -47,7 +47,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
-$repo = (Resolve-Path (Join-Path $here '..' '..')).Path
+# Join-Path takes exactly one child path in Windows PowerShell 5.1, which is
+# what is on a stock Windows install. The multi-argument form is PowerShell 7
+# only, and this script has to run on both.
+$repo = (Resolve-Path (Join-Path $here '..\..')).Path
 
 # Every executable Engraphy runs, and the ones an operator needs when something
 # has gone wrong. pg_dump and pg_restore are not optional: `engraphy-admin
@@ -84,7 +87,12 @@ function Get-Postgres {
         throw "PostgreSQL archive sha256 is $got, expected $PgSha256"
     }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("engraphy-pg-" + [System.Guid]::NewGuid().ToString('N'))
-    Expand-Archive $zip -DestinationPath $tmp
+    # .NET's extractor rather than Expand-Archive. The archive is 20,000 files,
+    # and Windows PowerShell 5.1's cmdlet takes over ten minutes on it against
+    # well under one here. 5.1 is what is on a stock Windows install, so the
+    # difference is what a developer building this by hand actually waits.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
     Move-Item (Join-Path $tmp 'pgsql') $Destination
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
