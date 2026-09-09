@@ -143,10 +143,15 @@ jobs:
           # means the artifact is exactly what a working install contains.
           Copy-Item "$env:PGROOT/lib/vector.dll" "$out/lib/"
           Copy-Item "$env:PGROOT/share/extension/vector*" "$out/share/extension/"
-          Get-ChildItem -Recurse -File $out | ForEach-Object {
+          # The list is materialised BEFORE anything is written into $out.
+          # Streaming Get-ChildItem into Out-File makes the enumeration reach
+          # SHA256SUMS while Out-File still holds it open.
+          $files = @(Get-ChildItem -Recurse -File $out)
+          $sums = $files | ForEach-Object {
             $rel = $_.FullName.Substring($out.Length + 1)
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $rel
-          } | Out-File -FilePath "$out/SHA256SUMS" -Encoding ascii
+          }
+          $sums | Out-File -FilePath "$out/SHA256SUMS" -Encoding ascii
           @{
             pgvector = $env:PGVECTOR_VERSION
             pgvector_commit = $env:PGVECTOR_REF
