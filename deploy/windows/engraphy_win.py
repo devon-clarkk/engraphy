@@ -657,7 +657,11 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     def _psycopg() -> str:
         import psycopg
         import psycopg_pool
-        return f"{psycopg.__version__} on {psycopg.pq.__impl__}"
+        # The pool is named rather than merely imported: an import a linter can
+        # call unused is an import a future cleanup deletes, and the pool is
+        # exactly the piece a frozen build loses without anything else noticing.
+        return (f"{psycopg.__version__} on {psycopg.pq.__impl__}, "
+                f"pool {psycopg_pool.__version__}")
 
     def _embedding() -> str:
         os.environ.setdefault("HF_HOME", str(install_root() / "model"))
