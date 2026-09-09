@@ -425,13 +425,43 @@ def _provision_app_role(root: pathlib.Path, cfg: dict) -> None:
     sql = root / "deploy" / "provision-app-role.sql"
     if not sql.exists():
         raise SystemExit(f"missing {sql}")
-    r = _run([str(pg_bin("psql")), _conninfo(cfg, superuser=True),
+    # EVERY OPTION BEFORE THE CONNECTION STRING, and the connection string behind
+    # -d rather than as a bare positional.
+    #
+    # psql's own getopt does not permute arguments on Windows, so anything after
+    # the first positional is discarded:
+    #     psql: warning: extra command-line argument "--file" ignored
+    # and psql then reads an empty stdin and EXITS 0. The role is never created,
+    # nothing reports a failure, and the first sign of it is the server failing
+    # to authenticate as engraphy_app at boot, which Postgres reports as a
+    # password failure rather than a missing role. GNU getopt permutes, which is
+    # why the same ordering has always worked from the Linux containers.
+    r = _run([str(pg_bin("psql")),
               "--set", "ON_ERROR_STOP=1",
               "--set", f"app_role_password={cfg['app_password']}",
-              "--file", str(sql)],
+              "--file", str(sql),
+              "-d", _conninfo(cfg, superuser=True)],
              capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"provisioning the app role failed: {r.stdout}{r.stderr}")
+
+    # Exit 0 is not evidence, as the above proves. Read the role back.
+    import psycopg
+    with psycopg.connect(_conninfo(cfg, superuser=True)) as conn:
+        row = conn.execute(
+            "SELECT rolcanlogin, rolsuper, rolbypassrls FROM pg_roles"
+            " WHERE rolname = 'engraphy_app'").fetchone()
+    if row is None:
+        raise SystemExit(
+            "the engraphy_app role does not exist after provisioning."
+            f" psql said: {r.stdout}{r.stderr}")
+    can_login, is_super, bypasses_rls = row
+    if not can_login or is_super or bypasses_rls:
+        # The server runs as this role precisely so row-level security
+        # constrains it, which it cannot do for a superuser or a BYPASSRLS role.
+        raise SystemExit(
+            f"engraphy_app is provisioned wrongly: login={can_login}"
+            f" superuser={is_super} bypassrls={bypasses_rls}")
 
 
 def _ensure_space(cfg: dict) -> None:
