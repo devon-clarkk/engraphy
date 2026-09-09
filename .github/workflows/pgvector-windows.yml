@@ -9,13 +9,12 @@ name: pgvector-windows
 #
 # pgvector publishes no Windows binaries. Its documented Windows build is
 # `nmake /F Makefile.win` inside an "x64 Native Tools Command Prompt for VS",
-# which means Visual Studio with the C++ workload -- a multi-gigabyte developer
+# which means Visual Studio with the C++ workload, a multi-gigabyte developer
 # install, on the laptop of someone whose job is not writing software. Third
-# party prebuilt DLLs exist and are not an option either: a native library
-# loaded into the database backend has to come from a build whose inputs are
-# visible, and it has to be built against the SAME Postgres major and MSVC
-# runtime as the server it is loaded into or it fails to load, or worse, loads
-# and crashes the backend.
+# party prebuilt DLLs are not an option either: a native library loaded into the
+# database backend has to come from a build whose inputs are visible, and it has
+# to be built against the SAME Postgres major and MSVC runtime as the server it
+# loads into or it fails to load, or worse, loads and crashes the backend.
 #
 # `windows-latest` already carries MSVC, so the build happens here once, in
 # public, from pinned sources, and the artifact ships. Nobody downstream
@@ -24,15 +23,15 @@ name: pgvector-windows
 # WHAT IS PINNED, AND WHY EACH PIN IS A HASH
 #
 #   pgvector      by commit SHA, not by tag: a tag is a moveable ref.
-#   PostgreSQL    by exact version URL AND sha256 of the archive. The EDB
+#   PostgreSQL    by exact version URL AND sha256 of the archive. EDB's
 #                 "latest 16.x" redirect moves on every patch release, which
 #                 would silently change the headers this links against.
 #
-# The verify job is the point of the workflow, not a formality: it initdb's a
-# cluster from the same Postgres tree the installer bundles, loads the DLL that
-# was just built, and runs a real 384-dimension cosine query through an HNSW
-# index. A `vector.dll` that compiled but cannot be loaded by the server that
-# ships beside it is the failure this catches.
+# The verify step is the substance, not a formality: it initdb's a cluster from
+# the same Postgres tree the installer bundles, loads the DLL that was just
+# built, and runs a 384-dimension cosine query through an HNSW index, checking
+# that the plan actually used the index. A `vector.dll` that compiled but cannot
+# be loaded by the server shipping beside it is the failure this catches.
 
 on:
   workflow_dispatch:
@@ -46,10 +45,12 @@ on:
       release_tag:
         required: false
         type: string
-  # Keeps the workflow honest: a change to it is proved by running it.
+  # Keeps the workflow honest: a change to it, or to the probe it runs, is
+  # proved by running it.
   pull_request:
     paths:
       - '.github/workflows/pgvector-windows.yml'
+      - 'deploy/windows/pgvector-probe.sql'
 
 permissions:
   contents: read
@@ -69,11 +70,13 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      # Only the optional release-upload step needs this. Every other
-      # step runs read-only, and on a pull_request there is no tag to
-      # attach to, so that step does not run at all.
+      # Only the optional release-upload step needs this. Every other step is
+      # read-only, and on a pull_request there is no tag to attach to, so that
+      # step does not run at all.
       contents: write
     steps:
+      - uses: actions/checkout@v5
+
       - name: fetch the PostgreSQL binaries EDB publishes for Windows
         shell: pwsh
         run: |
@@ -83,20 +86,20 @@ jobs:
           if ($got -ne $env:PG_SHA256) {
             throw "PostgreSQL archive sha256 is $got, expected $env:PG_SHA256"
           }
-          Expand-Archive pg.zip -DestinationPath ${{ github.workspace }}\pg
+          Expand-Archive pg.zip -DestinationPath "${{ github.workspace }}/pg"
           # The archive unpacks to a single `pgsql` root.
-          "PGROOT=${{ github.workspace }}\pg\pgsql" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PGROOT=${{ github.workspace }}/pg/pgsql" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: the headers this builds against are the ones that ship
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:PGROOT\bin\pg_config.exe" --version
+          & "$env:PGROOT/bin/pg_config.exe" --version
           # postgres.lib is what Makefile.win links the extension against. Its
-          # absence means the archive is a client-only build, which would
-          # produce a DLL that cannot be loaded by any server.
-          if (-not (Test-Path "$env:PGROOT\lib\postgres.lib")) { throw 'no postgres.lib in the archive' }
-          if (-not (Test-Path "$env:PGROOT\include\server\postgres.h")) { throw 'no server headers in the archive' }
+          # absence would mean a client-only archive, and a DLL no server could
+          # load.
+          if (-not (Test-Path "$env:PGROOT/lib/postgres.lib")) { throw 'no postgres.lib in the archive' }
+          if (-not (Test-Path "$env:PGROOT/include/server/postgres.h")) { throw 'no server headers in the archive' }
 
       - name: fetch pgvector at the pinned commit
         shell: pwsh
@@ -118,7 +121,7 @@ jobs:
 
       # nmake and cl come from the VS build environment, which is on the runner
       # but not on PATH. vswhere locates the installation rather than hardcoding
-      # an edition and year that the runner image is free to change.
+      # an edition and year the runner image is free to change.
       - name: build with MSVC
         shell: cmd
         run: |
@@ -133,17 +136,17 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = "${{ github.workspace }}\artifact"
-          New-Item -ItemType Directory -Force -Path "$out\lib", "$out\share\extension" | Out-Null
-          # `nmake install` writes into PGROOT, which is exactly the layout the
-          # installer lays down, so copying from there rather than from the
-          # build tree means the artifact is what a working install contains.
-          Copy-Item "$env:PGROOT\lib\vector.dll" "$out\lib\"
-          Copy-Item "$env:PGROOT\share\extension\vector*" "$out\share\extension\"
+          $out = "${{ github.workspace }}/artifact"
+          New-Item -ItemType Directory -Force -Path "$out/lib", "$out/share/extension" | Out-Null
+          # `nmake install` writes into PGROOT, which is the layout the installer
+          # lays down, so copying from there rather than from the build tree
+          # means the artifact is exactly what a working install contains.
+          Copy-Item "$env:PGROOT/lib/vector.dll" "$out/lib/"
+          Copy-Item "$env:PGROOT/share/extension/vector*" "$out/share/extension/"
           Get-ChildItem -Recurse -File $out | ForEach-Object {
             $rel = $_.FullName.Substring($out.Length + 1)
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $rel
-          } | Out-File -FilePath "$out\SHA256SUMS" -Encoding ascii
+          } | Out-File -FilePath "$out/SHA256SUMS" -Encoding ascii
           @{
             pgvector = $env:PGVECTOR_VERSION
             pgvector_commit = $env:PGVECTOR_REF
@@ -151,46 +154,29 @@ jobs:
             postgres_version = $env:PG_VERSION
             built_at = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
             built_by = "${{ github.repository }}@${{ github.sha }}"
-          } | ConvertTo-Json | Out-File -FilePath "$out\build-info.json" -Encoding utf8
-          Get-Content "$out\SHA256SUMS"
+          } | ConvertTo-Json | Out-File -FilePath "$out/build-info.json" -Encoding utf8
+          Get-Content "$out/SHA256SUMS"
 
-      # The whole reason for building rather than downloading: prove the DLL
-      # loads into the Postgres it was built against, and that the vector
-      # operations Engraphy actually uses work. A build that only compiles is
-      # not evidence of anything.
       - name: load it into a real cluster and run a real query
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $data = "${{ github.workspace }}\pgdata"
-          $pwfile = "${{ github.workspace }}\pw.txt"
-          # Password only ever reaches initdb through a file, never a command
-          # line, so it does not land in the runner's process listing or logs.
+          $data = "${{ github.workspace }}/pgdata"
+          $pwfile = "${{ github.workspace }}/pw.txt"
+          # The password reaches initdb through a file, never a command line, so
+          # it does not land in the runner's process listing.
           [System.IO.File]::WriteAllText($pwfile, [System.Guid]::NewGuid().ToString())
-          & "$env:PGROOT\bin\initdb.exe" -D $data -U postgres --pwfile=$pwfile -E UTF8 --locale=C
+          & "$env:PGROOT/bin/initdb.exe" -D $data -U postgres --pwfile=$pwfile -E UTF8 --locale=C
           if ($LASTEXITCODE -ne 0) { throw 'initdb failed' }
-          # 55432, not 5432: a runner image may already have a Postgres service.
-          & "$env:PGROOT\bin\pg_ctl.exe" -D $data -o "-p 55432 -c listen_addresses=127.0.0.1" -l "${{ github.workspace }}\pg.log" start
-          if ($LASTEXITCODE -ne 0) { Get-Content "${{ github.workspace }}\pg.log"; throw 'pg_ctl start failed' }
+          # 55432, not 5432: the runner image may already carry a PostgreSQL.
+          & "$env:PGROOT/bin/pg_ctl.exe" -D $data -o "-p 55432 -c listen_addresses=127.0.0.1" -l "${{ github.workspace }}/pg.log" -w start
+          if ($LASTEXITCODE -ne 0) { Get-Content "${{ github.workspace }}/pg.log"; throw 'pg_ctl start failed' }
           try {
             $env:PGPASSWORD = [System.IO.File]::ReadAllText($pwfile)
-            $sql = @'
-CREATE EXTENSION vector;
-SELECT extversion FROM pg_extension WHERE extname = 'vector';
-CREATE TABLE probe (id int, embedding vector(384));
-INSERT INTO probe
-  SELECT g, (SELECT array_agg(random())::vector(384) FROM generate_series(1, 384))
-  FROM generate_series(1, 200) g;
-CREATE INDEX ON probe USING hnsw (embedding vector_cosine_ops);
-SET enable_seqscan = off;
-SELECT count(*) FROM (
-  SELECT id FROM probe ORDER BY embedding <=> (SELECT embedding FROM probe WHERE id = 1) LIMIT 10
-) t;
-'@
-            $sql | & "$env:PGROOT\bin\psql.exe" -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 55432 -U postgres -d postgres
+            & "$env:PGROOT/bin/psql.exe" -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 55432 -U postgres -d postgres -f deploy/windows/pgvector-probe.sql
             if ($LASTEXITCODE -ne 0) { throw 'pgvector did not survive a real 384-dimension HNSW query' }
           } finally {
-            & "$env:PGROOT\bin\pg_ctl.exe" -D $data -m immediate stop
+            & "$env:PGROOT/bin/pg_ctl.exe" -D $data -m immediate stop
           }
 
       - uses: actions/upload-artifact@v4
@@ -207,5 +193,5 @@ SELECT count(*) FROM (
         run: |
           $ErrorActionPreference = 'Stop'
           $name = "pgvector-$env:PGVECTOR_VERSION-pg16-windows-x64.zip"
-          Compress-Archive -Path artifact\* -DestinationPath $name
+          Compress-Archive -Path artifact/* -DestinationPath $name
           gh release upload "${{ inputs.release_tag }}" $name --clobber
