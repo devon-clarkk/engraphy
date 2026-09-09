@@ -623,7 +623,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     wrong, because it separates "the install is broken" from "the database is
     broken" in one command.
     """
-    del args
+    payload = not args.binary_only
     failures: list[str] = []
 
     def probe(label: str, fn) -> None:
@@ -691,11 +691,16 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     probe("the MCP server builds", lambda: __import__(
         "engraphy.server.app", fromlist=["create_app"]) and "engraphy.server.app imported")
     probe("the embedding model", _embedding)
-    # The two payload checks come last: they are about what the installer laid
-    # down rather than about what was frozen, so a developer running the binary
-    # out of a build tree sees the useful failures first.
-    probe("the bundled PostgreSQL", _postgres)
-    probe("the pgvector build", _pgvector)
+    # The two payload checks come last, and are skippable, because they are
+    # about what the INSTALLER laid down rather than about what was frozen. The
+    # build that produces the binary has no Postgres beside it yet and skips
+    # them; every other caller wants them, because on a real install a missing
+    # cluster is the failure rather than a category that does not apply.
+    if payload:
+        probe("the bundled PostgreSQL", _postgres)
+        probe("the pgvector build", _pgvector)
+    else:
+        print("  skip  the bundled PostgreSQL and pgvector (--binary-only)")
 
     if failures:
         print(f"\n{len(failures)} check(s) failed")
@@ -738,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_upgrade)
 
     p = sub.add_parser("selftest", help="prove the install is complete, no database needed")
+    p.add_argument("--binary-only", action="store_true",
+                   help="skip the checks that need the bundled PostgreSQL beside the binary")
     p.set_defaults(func=cmd_selftest)
 
     args = parser.parse_args(argv)

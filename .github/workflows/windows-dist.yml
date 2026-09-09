@@ -113,11 +113,10 @@ jobs:
           # schema as package data, uvicorn's runtime-named modules, psycopg's
           # libpq binding, and the embedding graph, which it runs to a real
           # vector. It needs no database, which is what makes it runnable here.
-          # The two payload checks it ends with (bundled Postgres, pgvector) fail
-          # in this job by design: neither is in the server artifact, and they are
-          # asserted in the installer job where they exist.
+          # --binary-only skips the two checks about what the INSTALLER lays
+          # down, which is not this job's artifact.
           $env:HF_HOME = "${{ github.workspace }}/model"
-          $self = & ./dist/engraphy-win/engraphy-win.exe selftest 2>&1 | Out-String
+          $self = & ./dist/engraphy-win/engraphy-win.exe selftest --binary-only 2>&1 | Out-String
           Write-Output $self
           foreach ($needle in @(
               'ok    migrations resolve as package data',
