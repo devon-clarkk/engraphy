@@ -49,6 +49,11 @@ env:
 jobs:
   pgvector:
     uses: ./.github/workflows/pgvector-windows.yml
+    # A called workflow cannot be granted more than its caller holds, and that
+    # one's build job asks for contents: write so it can attach to a release.
+    # Without this the run fails before any job starts.
+    permissions:
+      contents: write
 
   server:
     runs-on: windows-latest
