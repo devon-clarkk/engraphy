@@ -163,16 +163,23 @@ from outside: a server that starts and does nothing. So the binary carries a
 on its output against the artifact that ships:
 
 ```
-engraphy-win selftest
+> engraphy-win selftest
   ok    migrations resolve as package data: schema 0024
   ok    pack schema resolves as package data: 5 top-level keys
   ok    uvicorn's runtime-named modules: 0.52.4
   ok    psycopg and its pool: 3.3.5 on binary, pool 3.3.1
   ok    the MCP server builds: engraphy.server.app imported
-  ok    the embedding model: micro, 384 dimensions
-  ok    the bundled PostgreSQL: pg_config (PostgreSQL) 16.15
+  ok    the embedding model: micro, 384 dimensions, from ...\Engraphy\model
+  ok    the bundled PostgreSQL: PostgreSQL 16.15
   ok    the pgvector build: vector.dll and its SQL are present
+
+all checks passed
 ```
+
+It names the profile and the cache it came from, and it **fails** when the
+profile is not the one this distribution ships: a different profile means a
+different model, which is either a download of something the payload does not
+carry or vectors that do not match what the store was written with.
 
 It needs no database, which is what lets CI run it, and it is the first thing to
 run on a laptop where something is wrong, because it separates a broken install
@@ -312,7 +319,85 @@ holds the one thing here that cannot be reinstalled.
 
 ## 6. The measured footprint
 
-To be completed against the built artifact.
+**2026-09-09, Windows 11 Pro 26100, 16GB.** Measured with
+[`scripts/footprint_windows.ps1`](../scripts/footprint_windows.ps1) against the
+payload `windows-dist.yml` produced, installed from scratch, after a workload: 20,000 nodes seeded and 700 searches driven
+through `footprint_workload.sql`, then 30 writes and 30 searches through the
+real MCP endpoint with a minted token, so the server's own per-request
+allocations are inside the number.
+
+| component | MB |
+|---|---:|
+| postgres, 10 processes, working set private | 27.6 |
+| shared buffer pool, counted once | 32.0 |
+| engraphy-win, 1 process, working set private | 133.0 |
+| **total** | **192.6** |
+
+**Under 250MB, with room, and with no Docker Desktop underneath it.**
+
+### What the number is, exactly
+
+Working Set Private per process, plus the shared buffer pool once. Not
+`WorkingSet64`, which is Task Manager's "Memory" column: that counts shared
+pages, and PostgreSQL maps its buffer pool into every backend, so summing it
+across a postmaster and nine backends would count the pool ten times.
+
+The 32MB shared line is `shared_buffers` as configured, read back from
+`pg_settings` on the running server. It is a **reservation**, not an occupancy:
+Postgres has that much address space set aside whether or not every page of it
+is resident. So 192.6MB is a **ceiling** rather than a reading, and the honest
+way to state it is that the stack cannot exceed this, not that it occupies it.
+
+This is a different instrument from the cgroup `anon + shmem` used in
+[footprint-2026-09-09.md](footprint-2026-09-09.md). The two belong in different
+columns.
+
+### Against the containerised stack
+
+| | native Windows | containers (row F) |
+|---|---:|---:|
+| server | 133.0 | 133.0 |
+| postgres | 59.6 | 54.4 |
+| **stack** | **192.6** | **187.4** |
+| Docker Desktop on the host | 0 | 1,149 |
+
+The server halves are the same number to one decimal place, which is the result
+worth having: the frozen binary carries the same runtime and the same graph as
+the container, so **freezing with PyInstaller costs nothing measurable in
+resident memory**. The Postgres halves differ by 5.2MB, and the reservation
+accounts for it, since the cgroup figure counts the pool as it is faulted rather
+than as it is configured.
+
+**The open assumption from the footprint report is closed.** That report used
+46MB for a tuned containerised Postgres and could not say what a native Windows
+one would cost. Measured on its own after the same workload, before the server
+connected, it was **44.5MB** (12.5 private plus the 32MB reservation). Native
+Postgres is not more expensive than the container's.
+
+### What is not there any more
+
+Docker Desktop measured **1,149MB across 27 processes** on this host, 588MB of
+which is the WSL2 VM and 561MB of which is Docker's own Windows processes. That
+is working set, so it is not directly comparable to the table above, and it does
+not need to be: on the native path it is not running at all. It is also the
+larger number. A machine with 8GB of RAM keeps roughly a gigabyte it was
+spending on the runtime rather than on the product.
+
+### Disk, which is a different budget
+
+| | |
+|---|---:|
+| installed payload | 258.8 MB |
+| ... of which the frozen runtime | 115.4 MB |
+| ... the model cache | 66.2 MB |
+| ... PostgreSQL 16 with pgvector | 63.7 MB |
+| the installer that carries it | **80.9 MB** |
+
+One note on the model cache: 66.2MB holds a 32.4MB graph twice, because the
+HuggingFace cache links a snapshot to a blob and Windows has no symlink there,
+so the file is copied. That is 32MB of download and disk, and **none** of it is
+resident memory: the graph is mapped once. Worth removing when the download size
+matters; it does not touch the number in this section.
 
 ## 7. What is proved, and what is not
 
@@ -325,9 +410,12 @@ it were tested is worth less than one that says where the edge is.
 |---|---|
 | pgvector 0.8.6 builds against PostgreSQL 16.15 with MSVC, loads into a cluster made from the same archive, and answers a 384-dimension cosine query through an HNSW index the plan actually uses | `pgvector-windows.yml`, green; and repeated on this Windows 11 laptop against the CI-built DLL |
 | The frozen binary carries everything it needs: package data, uvicorn's runtime-named modules, psycopg's libpq binding, the MCP server, and an embedding graph it runs to a real vector | `engraphy-win selftest --binary-only` in `windows-dist.yml`, asserted line by line |
-| `bootstrap` end to end: `initdb` with scram authentication, the laptop Postgres tuning, `CREATE DATABASE`, all 24 migrations behind their unconditional pre-dump, the `engraphy_app` role, and a space with its restore sentinel | run on this laptop against the shipped payload |
+| `bootstrap` from nothing, in **7.9 seconds**: `initdb` with scram authentication, the laptop Postgres tuning, `CREATE DATABASE`, all 24 migrations behind their unconditional pre-dump, the `engraphy_app` role, a space with its restore sentinel, and the starter pack | run on this laptop against the shipped payload, into an empty data directory |
 | The Postgres tuning is what lands, not what was intended | `pg_settings` read back after the workload: `shared_buffers` 32MB, `max_connections` 20, `maintenance_work_mem` 32MB, `effective_cache_size` 256MB |
 | Port collision avoidance is real rather than theoretical | bootstrap took **8001** on this machine, because a live Engraphy already held 8000 |
+| **The server serves.** Started the way the task starts it, hidden and with no parent waiting, it answered `/healthz` with `{"status":"ok","version":"0.2.0","schema_version":"0024","embedding_model":"Xenova/gte-small+micro"}` | this laptop |
+| **Real MCP traffic**, bearer-authenticated: `initialize`, 19 tools listed, 30 writes and 30 searches through `/mcp/`, as `engraphy_app` under row-level security rather than as a superuser | this laptop |
+| The app role is provisioned the way the security model needs: it can log in, and it is neither `SUPERUSER` nor `BYPASSRLS` | read back from `pg_roles` by `bootstrap` itself, which now asserts it |
 | The logon task registers with the settings it is supposed to have and unregisters cleanly | registered, read back and removed on this laptop |
 | The whole distribution builds from a clean checkout into one installer | `windows-dist.yml`, green: 80.9 MB installer from a 258.8 MB payload |
 

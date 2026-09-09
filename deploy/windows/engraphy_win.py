@@ -584,6 +584,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     _install_console_handler(cfg)
     pg_start(cfg)
     wait_for_pg(cfg)
+    _write_pid_file()
     try:
         os.environ["ENGRAPHY_DATABASE_URL"] = _conninfo(cfg, superuser=False)
         os.environ["ENGRAPHY_BIND_HOST"] = "127.0.0.1"
@@ -591,8 +592,54 @@ def cmd_run(args: argparse.Namespace) -> int:
         from engraphy.server import app as server_app
         server_app.main()
     finally:
+        _clear_pid_file()
         pg_stop(cfg)
     return 0
+
+
+def _pid_path() -> pathlib.Path:
+    return data_root() / "engraphy.pid"
+
+
+def _write_pid_file() -> None:
+    """Record the serving process, so `stop` can end it.
+
+    Needed because `stop` cannot rely on the Scheduled Task alone: the server
+    also gets started directly, by an operator debugging it and by the installer
+    itself, and ending the task does nothing to a process the task did not
+    start. An orphaned server whose database has just been stopped answers 500
+    rather than going away, and it keeps a handle on the binaries an upgrade is
+    about to replace.
+    """
+    with contextlib.suppress(OSError):
+        _pid_path().parent.mkdir(parents=True, exist_ok=True)
+        _pid_path().write_text(str(os.getpid()), encoding="utf-8")
+
+
+def _clear_pid_file() -> None:
+    with contextlib.suppress(OSError):
+        _pid_path().unlink()
+
+
+def _stop_server_process() -> str:
+    """End the recorded server process, if it is still ours.
+
+    The image-name filter is what makes a stale pid file safe: Windows reuses
+    process ids, and a pid file left behind by a crash could otherwise name
+    something else entirely by the time anyone runs `stop`.
+    """
+    path = _pid_path()
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return "no server process recorded"
+    r = subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F", "/FI", "IMAGENAME eq engraphy-win.exe"],
+        capture_output=True, text=True, check=False)
+    _clear_pid_file()
+    if r.returncode == 0:
+        return f"server process {pid} stopped"
+    return f"no live server process {pid} ({(r.stdout + r.stderr).strip()})"
 
 
 def _install_console_handler(cfg: dict) -> None:
@@ -630,9 +677,15 @@ def _install_console_handler(cfg: dict) -> None:
 def cmd_stop(args: argparse.Namespace) -> int:
     del args
     cfg = read_config()
-    # check=False: no task registered is a normal state, not a failure. The
-    # cluster still gets stopped below either way.
+    # Order matters: end the task first so nothing restarts the server while it
+    # is being stopped, then the server, then the database. Stopping the
+    # database first would leave a server answering 500 against a cluster that
+    # is no longer there.
+    #
+    # check=False: no task registered is a normal state, not a failure. An
+    # operator who started the server by hand still gets it stopped.
     subprocess.run(["schtasks", "/End", "/TN", TASK_NAME], capture_output=True, check=False)
+    print(f"  {_stop_server_process()}")
     pg_stop(cfg)
     print("stopped")
     return 0
