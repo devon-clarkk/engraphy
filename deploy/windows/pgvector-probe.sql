@@ -33,16 +33,25 @@ SELECT count(*) AS neighbours FROM (
   LIMIT 10
 ) t;
 
--- The index has to be the plan, not a hope. A plan without an Index Scan here
--- means HNSW was not used and the probe proved nothing about it.
+-- The index has to be the plan, not a hope: a plan without it means HNSW was
+-- not used and the rows above proved nothing about the index.
+--
+-- EXPLAIN is a utility statement, so it cannot be a subquery. Collecting its
+-- rows through EXECUTE inside plpgsql is the only way to assert on a plan from
+-- SQL alone.
 DO $$
-DECLARE plan text;
+DECLARE
+  plan text := '';
+  r record;
 BEGIN
-  SELECT string_agg(l, E'\n') INTO plan FROM (
-    EXPLAIN SELECT id FROM probe
-    ORDER BY embedding <=> (SELECT embedding FROM probe WHERE id = 1) LIMIT 10
-  ) AS e(l);
+  FOR r IN EXECUTE
+    'EXPLAIN SELECT id FROM probe '
+    'ORDER BY embedding <=> (SELECT embedding FROM probe WHERE id = 1) LIMIT 10'
+  LOOP
+    plan := plan || r."QUERY PLAN" || chr(10);
+  END LOOP;
   IF plan NOT LIKE '%probe_embedding_hnsw_idx%' THEN
     RAISE EXCEPTION 'HNSW index was not used. Plan was: %', plan;
   END IF;
+  RAISE NOTICE 'HNSW index scan confirmed';
 END $$;
