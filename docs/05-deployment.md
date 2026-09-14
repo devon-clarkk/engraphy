@@ -202,9 +202,12 @@ exempt and need no opt-in.
   on every write, so never share a token across devices. Mint with `engraphy-admin
   token create …`; revoke with `engraphy-admin token revoke …` (effective on the
   next request — no cache window). A `role` of `readwrite` or `readonly` gates
-  write tools.
+  write tools and `POST /inbox`.
 - **Principals** are actors in a space. Each CLI-created principal gets a private,
-  ambient `personal-<id>` scope in the same transaction.
+  ambient `personal-<id>` scope in the same transaction. To offboard a principal,
+  run `engraphy-admin principal archive --space … --id …`. Every token that
+  principal holds is refused from its next request, and its scopes and nodes stay
+  in place.
 - **Scopes** are isolation containers with a `visibility`:
   - `private` — owner + explicit grants only.
   - `team-read` — every principal in the space may read.
@@ -229,6 +232,7 @@ engraphy.admin.cli <verb>` if `engraphy-admin` isn't on `PATH`.
 |---|---|
 | `space create --id … --display-name … --principal …` | create a space + founding `space_admin` + personal scope + restore sentinel. |
 | `principal add --space … --id … --display-name … [--role …]` | add a member (+ their personal scope). |
+| `principal archive --space … --id …` | offboard a member: every token they hold is refused from the next request; their scopes and nodes stay. |
 | `token create / token revoke` | mint / revoke a bearer token. |
 | `config set --space … --key … --value …` | set a per-space config value (JSON), e.g. `dedup.t_high`, `space_admin_tools`. |
 | `pack validate / pack apply / pack upgrade` | validate, apply, or migrate a pack's ontology. |

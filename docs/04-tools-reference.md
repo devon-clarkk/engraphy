@@ -343,4 +343,9 @@ for later triage:
 
 It returns the created inbox item; review it later with `inbox_review`.
 
+A capture needs a `readwrite` token and counts against that token's write rate
+limit (`rate.write_per_min`), the same as an MCP write. A `readonly` token
+receives `403` with `ENGRAPHY_ROLE`. A token over its limit receives `429` with
+`ENGRAPHY_RATE_LIMITED`, a `retry_after_ms` field, and a `Retry-After` header.
+
 Next: the [end-to-end tutorial](06-tutorial.md) puts these together on a real pack.
