@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-Security hardening for the HTTP routes, principal offboarding, and the admin
-image.
+Role and rate gates on `POST /inbox`, principal offboarding, and a pinned,
+verified migration runner in the admin image.
 
 ### Security
 - `POST /inbox` accepts `readwrite` tokens only. Each capture counts against the
