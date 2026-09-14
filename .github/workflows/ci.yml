@@ -31,10 +31,14 @@ jobs:
       # Pinned for the same reason every other tool here is: `releases/latest`
       # makes the migration gate depend on whatever shipped this morning, and a
       # migration runner that changes under CI is indistinguishable from a
-      # migration that broke. Bumping this is a reviewed change.
+      # migration that broke. Bumping this is a reviewed change. The version and
+      # SHA-256 are the admin image's DBMATE_VERSION and DBMATE_SHA256
+      # (Dockerfile), so CI proves the migration runner the image ships;
+      # engraphy/tests/test_dbmate_pin.py holds all three to one value.
       - name: install dbmate
         run: |
           sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.35.0/dbmate-linux-amd64
+          echo "f60fd6c6dbed316de116a701945a3fb21d365a25a7e6a9b28ba3a50f49818d8f  /usr/local/bin/dbmate" | sha256sum -c -
           sudo chmod +x /usr/local/bin/dbmate
           dbmate --version
       # ubuntu-latest's default postgresql-client is not pinned to pg16 and can
@@ -112,6 +116,7 @@ jobs:
       - name: install dbmate
         run: |
           sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.35.0/dbmate-linux-amd64
+          echo "f60fd6c6dbed316de116a701945a3fb21d365a25a7e6a9b28ba3a50f49818d8f  /usr/local/bin/dbmate" | sha256sum -c -
           sudo chmod +x /usr/local/bin/dbmate
           dbmate --version
       # No postgresql-client-16 pin here. That exists in `test` for
