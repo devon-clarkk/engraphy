@@ -17,6 +17,12 @@ verified migration runner in the admin image.
 - The admin image installs dbmate v2.35.0 and verifies its SHA-256 before the
   binary runs. CI installs the same release with the same check.
 
+### Changed
+- The embedding runtime is pinned to onnxruntime 1.29.x, the release the dedup
+  and similarity-floor calibrations are measured against. A new onnxruntime
+  minor release is adopted as a reviewed change, with the live band fixtures
+  re-run on it.
+
 A laptop-sized deployment. The `micro` profile with the Postgres overlay that
 ships beside it measures **187MB resident** for the whole stack, against 983MB
 on the shipped defaults, on a store twice the size the performance budgets
