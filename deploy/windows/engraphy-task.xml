@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Scheduled Task that makes Engraphy something the user never launches.
+
+  Registered by the installer with:
+      deploy\windows\register-task.ps1, which substitutes @INSTDIR@
+      and @USERID@ and then calls Register-ScheduledTask -Xml.
+
+  WHY A LOGON TASK AND NOT A WINDOWS SERVICE
+
+  A service runs as SYSTEM or as a service account, which puts the cluster and
+  the model cache outside the user's profile and means the installer needs
+  administrator rights and an ACL that the account can write. Every one of those
+  is a way for a first boot to fail on a machine nobody can debug, and none of
+  them buys anything here: this serves exactly one person, on their own laptop,
+  while they are logged in. A logon task needs no elevation, runs as the user,
+  and reads and writes the user's own directories.
+
+  What a service would add, if it is ever wanted: the stack would be up before
+  anyone logs in, and would survive fast user switching. Neither matters to a
+  consultant who is the only account on the machine, and the wrapper choice
+  (WinSW, NSSM) is additive rather than a rewrite.
+
+  THE SETTINGS THAT MATTER
+
+  RestartOnFailure          Task Scheduler is the supervisor. engraphy-win
+                            deliberately has no restart loop of its own.
+  StartWhenAvailable        a missed logon trigger still starts the task.
+  ExecutionTimeLimit PT0S   no time limit. The default is three days, after
+                            which Windows would stop the memory server.
+  DisallowStartIfOnBatteries / StopIfGoingOnBatteries false
+                            both default to TRUE, which on a laptop means the
+                            memory stops working when it is unplugged.
+  Hidden                    engraphy-win is a console process on purpose, so
+                            that Windows delivers CTRL_LOGOFF and CTRL_SHUTDOWN
+                            and the cluster gets a clean stop. This keeps the
+                            console off the screen.
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Runs the Engraphy memory server and its database.</Description>
+    <URI>\Engraphy</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>@USERID@</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>@USERID@</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>@INSTDIR@\engraphy-win.exe</Command>
+      <Arguments>run</Arguments>
+      <WorkingDirectory>@INSTDIR@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

@@ -161,6 +161,29 @@ The server refuses to bind a *public* interface in plaintext unless
 `ENGRAPHY_INSECURE_TRANSPORT_OK=true`; loopback / RFC1918 / CGNAT / tailnet ranges are
 exempt and need no opt-in.
 
+### Windows (no Docker)
+
+For a Windows laptop, `Engraphy-Setup-<version>-win-x64.exe` is a single
+installer that lays down PostgreSQL 16 with pgvector, the server as a frozen
+binary, and the embedding model, creates the database and a space, and registers
+a logon task. It needs no Docker, no Python, and no toolchain, and it needs
+nothing started by hand afterwards.
+
+```
+engraphy-win status      what is running, on what port, and what /healthz says
+engraphy-win selftest    prove the install is complete, no database needed
+engraphy-win stop        stop the server and the cluster
+```
+
+The cluster listens on `127.0.0.1:55432` rather than 5432, so it does not
+contend with any other PostgreSQL on the machine, and the server on
+`127.0.0.1:8000`. Both are per-user, under `%LOCALAPPDATA%`, and neither the
+install nor the daily running needs administrator rights.
+
+Design, the version pairing, the measured footprint and the build steps are in
+[windows-native.md](windows-native.md) and
+[`deploy/windows/README.md`](../deploy/windows/README.md).
+
 ### Cloud (Docker + reverse proxy)
 
 `compose.yaml` defines three services: **postgres** (`pgvector/pgvector:pg16`),
