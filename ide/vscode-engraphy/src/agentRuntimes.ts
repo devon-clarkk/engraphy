@@ -342,11 +342,7 @@ export function registerRuntime(
 	try {
 		fs.mkdirSync(path.dirname(loaded.path), { recursive: true });
 		if (loaded.exists) {
-			// Timestamped, so a second run never overwrites the copy the first one
-			// took. A backup that a retry destroys is not a backup.
-			backup =
-				loaded.path + '.engraphy-backup-' + new Date().toISOString().replace(/[:.]/g, '-');
-			fs.copyFileSync(loaded.path, backup);
+			backup = takeBackup(loaded.path);
 		}
 		const tmp = loaded.path + '.engraphy-tmp';
 		// mode 0600 matters on POSIX: the file now carries a bearer token. It is
@@ -374,6 +370,29 @@ export function registerRuntime(
 		};
 	}
 	return { ok: true, path: loaded.path, backup };
+}
+
+/**
+ * Copy a config aside under a name no earlier backup holds, so a second run
+ * never overwrites the copy the first one took. A backup that a retry destroys
+ * is not a backup. The stamp has millisecond resolution and two registrations
+ * can share one millisecond, so a numeric suffix separates them, and
+ * COPYFILE_EXCL makes the copy refuse a name that already exists rather than
+ * replace it.
+ */
+function takeBackup(file: string): string {
+	const stamp = file + '.engraphy-backup-' + new Date().toISOString().replace(/[:.]/g, '-');
+	for (let n = 1; ; n++) {
+		const candidate = n === 1 ? stamp : `${stamp}-${n}`;
+		try {
+			fs.copyFileSync(file, candidate, fs.constants.COPYFILE_EXCL);
+			return candidate;
+		} catch (e) {
+			if ((e as NodeJS.ErrnoException).code !== 'EEXIST') {
+				throw e;
+			}
+		}
+	}
 }
 
 /**

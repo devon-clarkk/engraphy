@@ -1185,6 +1185,33 @@ check('registerRuntime: backups do not overwrite each other', () => {
 	fs.rmSync(home, { recursive: true, force: true });
 });
 
+check('registerRuntime: backups taken in the same millisecond stay distinct', () => {
+	// The stamp has millisecond resolution, and two registrations can land in
+	// one millisecond. Freezing the clock makes that collision certain, so this
+	// proves each backup still gets its own file.
+	const realStamp = Date.prototype.toISOString;
+	Date.prototype.toISOString = () => '2026-01-01T00:00:00.000Z';
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	try {
+		fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: {} }));
+		const outs = ['one', 'two', 'three'].map((h) =>
+			ar.registerRuntime(claudeSpec, `http://${h}/mcp/`, 'tok', home)
+		);
+		const backups = outs.map((o) => o.backup);
+		assert.ok(outs.every((o) => o.ok === true));
+		assert.strictEqual(new Set(backups).size, 3);
+		assert.ok(backups.every((b) => fs.existsSync(b)));
+		assert.strictEqual(JSON.parse(fs.readFileSync(backups[0], 'utf8')).mcpServers, undefined);
+		assert.strictEqual(
+			JSON.parse(fs.readFileSync(backups[1], 'utf8')).mcpServers.engraphy.url,
+			'http://one/mcp/'
+		);
+	} finally {
+		Date.prototype.toISOString = realStamp;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
 check('verifyRegistration: a stale URL does not count as registered', () => {
 	// Registration drift: the entry exists but points somewhere else, so the
 	// agent is talking to the wrong server. That is not success.
