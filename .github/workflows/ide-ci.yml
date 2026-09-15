@@ -11,7 +11,9 @@ on:
     paths: ['ide/vscode-engraphy/**']
 
 jobs:
-  test:
+  # Named ide-test, never test: the main ruleset requires a check named test,
+  # and that name belongs to ci.yml's engine suite alone.
+  ide-test:
     runs-on: ubuntu-latest
     defaults:
       run:
