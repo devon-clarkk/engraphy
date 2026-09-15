@@ -1,0 +1,126 @@
+{
+  "name": "engraphy-desktop",
+  "productName": "Engraphy",
+  "version": "0.1.0",
+  "description": "Engraphy desktop, a small cross-platform memory console for AI agents. Browse memories, see impact stats, and review the confirm-write queue against your Engraphy MCP server.",
+  "author": "Engraphy",
+  "license": "BUSL-1.1",
+  "private": true,
+  "main": "out/main.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "build:main": "node esbuild.js",
+    "build:main:prod": "node esbuild.js --production",
+    "copy:renderer": "node scripts/copy-renderer.js",
+    "build": "npm run build:main && npm run copy:renderer",
+    "build:prod": "npm run clean && npm run build:main:prod && npm run copy:renderer",
+    "check-types": "tsc --noEmit -p ./",
+    "watch": "node esbuild.js --watch",
+    "start": "npm run build && electron .",
+    "stub": "node esbuild.js --stub && node out/stub-server.js",
+    "dist": "npm run build:prod && electron-builder --publish never",
+    "dist:win": "npm run build:prod && electron-builder --win --publish never",
+    "dist:mac": "npm run build:prod && electron-builder --mac --publish never",
+    "build:test": "tsc src/main/client/toolResult.ts src/main/client/webviewMessages.ts src/main/client/statsModel.ts src/main/connection.ts src/main/validation.ts src/main/explorerModel.ts src/main/ipcResult.ts src/main/windowState.ts src/main/messages.ts src/main/graphModel.ts src/main/graphHarvest.ts src/main/versionCheck.ts src/main/updateModel.ts src/main/bootstrap.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict",
+    "test": "npm run check-types && npm run build:test && node scripts/test-client.js",
+    "smoke": "npm run build && node scripts/smoke.js",
+    "smoke:shots": "npm run build && node scripts/smoke.js --shots",
+    "make-icons": "node scripts/make-icons.js",
+    "smoke:packaged": "node scripts/smoke.js --packaged"
+  },
+  "comment:deps": "The MCP SDK is a BUILD-time dependency: esbuild inlines it into out/main.js and out/stub-server.js, so it is a devDependency and no node_modules ships in the packaged app (electron-builder only bundles production `dependencies`). Pinned to 1.30.0 to match the extension.",
+  "comment:graph-deps": "cytoscape and cytoscape-fcose are BUILD-time too, for the same reason by a different route: they run in the RENDERER, which is not bundled, so scripts/copy-renderer.js copies their UMD files into out/renderer/vendor and index.html loads them from there. They must be local files -- the renderer CSP is script-src 'self', so a CDN script would be blocked outright.",
+  "dependencies": {},
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/express": "^4.17.25",
+    "cytoscape": "^3.30.4",
+    "cytoscape-fcose": "^2.2.0",
+    "@types/node": "^20.19.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "express": "^4.21.2",
+    "png-to-ico": "^2.1.8",
+    "typescript": "^5.6.0"
+  },
+  "build": {
+    "appId": "com.engraphy.desktop",
+    "productName": "Engraphy",
+    "copyright": "Copyright \u00a9 2026 Engraphy",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "!out/stub-server.*",
+      "!out/**/*.map",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "out/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "appx",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "Engraphy-Desktop-Setup-${version}-win-${arch}.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Engraphy"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "darkModeSupport": true,
+      "notarize": false
+    },
+    "dmg": {
+      "title": "Engraphy ${version}"
+    },
+    "publish": null,
+    "appx": {
+      "identityName": "Engraphy.EngraphyDesktop",
+      "publisher": "CN=Engraphy",
+      "publisherDisplayName": "Engraphy",
+      "applicationId": "EngraphyDesktop",
+      "displayName": "Engraphy",
+      "backgroundColor": "#1b1f1c",
+      "showNameOnTiles": true,
+      "languages": [
+        "en-US"
+      ]
+    }
+  }
+}
