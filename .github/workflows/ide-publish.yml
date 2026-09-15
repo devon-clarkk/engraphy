@@ -1,0 +1,38 @@
+name: ide-publish
+
+# Fires on the tag ide-release.yml creates and pushes. ide-v* is a distinct
+# namespace from the engine's v* tags (release.yml, ci.yml), so a Marketplace
+# publish never overlaps a Python package release and neither workflow's tag
+# filter matches the other's tag.
+on:
+  push:
+    tags:
+      - 'ide-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ide/vscode-engraphy
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Publish to the VS Code Marketplace
+        run: npx @vscode/vsce publish -p ${{ secrets.VSCE_PAT }}
+
+      # Uncomment once the extension has an Open VSX namespace and OVSX_PAT is
+      # set as a repository secret (Settings > Secrets and variables >
+      # Actions). ovsx reads the same package.json version vsce just
+      # published, so the two registries stay in step.
+      # - name: Publish to Open VSX
+      #   run: npx ovsx publish -p ${{ secrets.OVSX_PAT }}
