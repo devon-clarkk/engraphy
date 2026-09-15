@@ -1,0 +1,130 @@
+name: desktop-publish
+
+# Builds the Windows installer from a desktop-v<version> tag and attaches it
+# to the engine's current latest GitHub release. desktop-release.yml calls
+# this in the same run, right after it tags a release; that is the normal
+# path. Run it by hand (Actions > desktop-publish > Run workflow) with an
+# existing tag to publish that tag again.
+#
+# There is no tag-push trigger. desktop-release.yml pushes its tag with the
+# workflow's GITHUB_TOKEN, and a push made with that token starts no workflow
+# run, so a trigger here would never fire for it. Calling this workflow is
+# what publishes. desktop-v* stays a namespace apart from the engine's v*
+# tags (release.yml, ci.yml), so a desktop tag never starts a Python release.
+#
+# ONE RELEASE STREAM: build-version.py generates version.json from a single
+# `GET /releases/latest` call and reads every product's assets off that one
+# release. The engine's tagged release (v0.2.0, ...) is the only release
+# object this repository publishes; a separate release under desktop-v* would
+# make the manifest blind to whichever product's release is not currently
+# "latest". So this workflow uploads the installer onto the engine's current
+# latest release rather than creating one of its own. The engine release ends
+# up carrying a newer desktop installer than its own tag implies (v0.2.0's
+# release page holds a 0.1.1 installer, say); that is expected, and it is
+# exactly what version.json's per-product keys exist to express correctly.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to publish, for example desktop-v0.1.1'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # upload the installer onto the engine's release
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # A publish always comes from the tag that names its version, so the
+      # installer and the tag cannot disagree.
+      - name: Check the tag names this version
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$REF" != "desktop-v$version" ]; then
+            echo "::error::$REF is not desktop-v$version, the version package.json carries."
+            exit 1
+          fi
+
+      # nsis only, not `npm run dist:win`: package.json's win.target also
+      # lists appx, for a future Microsoft Store submission, and that target
+      # needs a signing certificate this runner does not have. Scoping the
+      # target here keeps this workflow to what it actually ships today.
+      - name: Build the Windows installer
+        run: npm run build:prod && npx electron-builder --win nsis --publish never
+
+      # electron-builder's nsis.artifactName already produces this shape
+      # (package.json), so this step is a check, not a rename: a filename
+      # that drifted from the pattern build-version.py reads would make
+      # desktop.latest go null in the manifest, silently, on every run.
+      - name: Confirm the installer name matches what the manifest reader expects
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(release/Engraphy-Desktop-Setup-*-win-*.exe)
+          if [ ${#files[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one Engraphy-Desktop-Setup-<version>-win-<arch>.exe in release/, found ${#files[@]}."
+            ls -la release/ || true
+            exit 1
+          fi
+          echo "installer=${files[0]}" >> "$GITHUB_ENV"
+          echo "Built ${files[0]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engraphy-desktop-installer
+          path: desktop/${{ env.installer }}
+
+      # Resolve the release to attach to at publish time, rather than
+      # assuming a tag name: the engine's latest release is whatever it is
+      # when this runs, and guessing wrong here would either upload nowhere
+      # or silently create a second release object, which is the one release
+      # stream invariant this workflow exists to protect.
+      - name: Find the engine's current latest release
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null)" || {
+            echo "::error::No published release exists yet on ${{ github.repository }}. Cut an engine release (git tag vX.Y.Z) before publishing a desktop installer; there is nothing to attach it to."
+            exit 1
+          }
+          echo "target_release=$tag" >> "$GITHUB_ENV"
+          echo "Attaching to release $tag"
+
+      - name: Attach the installer to that release
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$target_release" "$installer" --repo "${{ github.repository }}" --clobber

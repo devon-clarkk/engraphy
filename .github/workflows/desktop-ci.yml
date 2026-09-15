@@ -1,0 +1,34 @@
+name: desktop-ci
+
+# Scoped to the desktop app so an engine-only change never runs this, and vice
+# versa: ci.yml has no path filter on pull_request (the ruleset requires test,
+# deploy-smoke and windows-cli on every pull request, and a filtered workflow
+# never reports them, which is what ide-ci.yml got wrong before it was fixed).
+# The job here is named desktop-test, not test, for the same reason: the
+# ruleset tracks a check named test and a same-named job in a second workflow
+# is ambiguous about which one it is watching.
+#
+# This job is Node-only and runs on ubuntu-latest. Building the Windows
+# installer needs windows-latest, which is slower and bills at 2x; that build
+# lives in desktop-publish.yml instead, only on a tagged release.
+on:
+  push:
+    branches: [main]
+    paths: ['desktop/**', '.github/workflows/desktop-ci.yml']
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/desktop-ci.yml']
+
+jobs:
+  desktop-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run test

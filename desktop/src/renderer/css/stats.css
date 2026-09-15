@@ -1,0 +1,170 @@
+/* Engraphy Stats panel — layered on top of confirm.css (which provides the
+ * brand/theme variables, body theming, buttons, loop mark, spinner, notes, and
+ * the no-server onboarding block). Everything here is stats-specific: the
+ * scope/range controls, KPI tiles, and sparklines. Structural colors come from
+ * the same --vscode-* theme variables; the Engraphy Verdant (--brand-green /
+ * --brand-accent-text, defined in confirm.css) is layered on as the accent. No
+ * hardcoded backgrounds.
+ */
+
+/* ---- controls: scope toggle + range ------------------------------------- */
+
+.controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 10px 12px 4px;
+}
+.segmented,
+.range {
+	display: inline-flex;
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border-radius: 6px;
+	overflow: hidden;
+}
+.seg-btn {
+	font-family: inherit;
+	font-size: 12px;
+	padding: 4px 10px;
+	border: none;
+	border-right: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+.range .seg-btn {
+	padding: 4px 8px;
+	font-size: 11px;
+}
+.seg-btn:last-child {
+	border-right: none;
+}
+.seg-btn:hover {
+	background: var(--vscode-list-hoverBackground, transparent);
+}
+.seg-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+.seg-btn.active {
+	background: var(--brand-green);
+	color: var(--brand-on-green);
+}
+
+/* ---- scope line --------------------------------------------------------- */
+
+.scope-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 6px 12px 2px;
+}
+.scope-label {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--brand-accent-text);
+}
+.scope-help {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* ---- KPI tiles ---------------------------------------------------------- */
+
+.kpi-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	padding: 6px 12px;
+}
+.tile {
+	background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+	border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+	border-left: 3px solid var(--vscode-panel-border, var(--vscode-widget-border));
+	border-radius: 6px;
+	padding: 10px 12px;
+	min-width: 0;
+}
+.tile-head {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+.tile-label {
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--vscode-descriptionForeground);
+}
+.info {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	cursor: help;
+	opacity: 0.8;
+}
+.tile-value {
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 1.2;
+	margin-top: 4px;
+	color: var(--vscode-foreground);
+}
+.tile-sub {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-top: 2px;
+}
+
+/* Hero tiles — the value story. Verdant edge + verdant value, bigger. */
+.hero-grid .tile {
+	padding: 12px 14px;
+}
+.tile-hero {
+	border-left-color: var(--brand-green);
+}
+.tile-hero .tile-value {
+	font-size: 27px;
+	color: var(--brand-accent-text);
+}
+
+/* ---- sparklines --------------------------------------------------------- */
+
+.spark {
+	display: block;
+	width: 100%;
+	height: 20px;
+	margin-top: 8px;
+}
+.spark-hero {
+	height: 30px;
+}
+.spark-base {
+	fill: var(--vscode-panel-border, var(--vscode-widget-border));
+}
+.spark-bar {
+	fill: var(--brand-accent-text);
+}
+.tile-hero .spark-bar {
+	fill: var(--brand-green);
+}
+
+/* ---- footnotes ---------------------------------------------------------- */
+
+.footnotes {
+	padding: 10px 12px 16px;
+	margin-top: 4px;
+	border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-border));
+}
+.footnotes p {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin: 4px 0;
+	line-height: 1.4;
+}
+.footnotes p.muted {
+	opacity: 0.75;
+	margin-top: 8px;
+}
