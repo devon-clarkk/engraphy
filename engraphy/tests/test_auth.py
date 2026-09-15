@@ -19,6 +19,7 @@ from engraphy.server.auth import (
     hash_token,
     mint_token,
     read_rate_limits,
+    require_active_principal,
     require_write,
     resolve_token,
 )
@@ -196,6 +197,30 @@ async def test_resolve_token_empty_is_unauthorized(pool):
     async with pool.connection() as c:
         with pytest.raises(Unauthorized):
             await resolve_token(c, "")
+
+
+async def test_require_active_principal_refuses_an_archived_principal(pool, token_space, conn):
+    _insert_token(conn, token_space, "raw-secret-E")
+    async with pool.connection() as c:
+        ctx = await resolve_token(c, "raw-secret-E")
+    await require_active_principal(pool, ctx)          # active: admitted
+    conn.cursor().execute(
+        "UPDATE principals SET archived = true WHERE space_id = %s AND id = 'p1'", (token_space,))
+    conn.commit()
+    with pytest.raises(Unauthorized):
+        await require_active_principal(pool, ctx)
+
+
+async def test_principals_are_invisible_before_the_identity_is_set(pool, token_space):
+    """Why require_active_principal is its own step inside transaction() rather
+    than a JOIN in resolve_token: principals is under FORCE ROW LEVEL SECURITY,
+    and on resolve_token's plain app-role connection no identity is set yet, so
+    even the caller's own row is invisible there. A JOIN would refuse every
+    bearer in the instance."""
+    async with pool.connection() as c:
+        cur = c.cursor()
+        await cur.execute("SELECT count(*) FROM principals WHERE space_id = %s", (token_space,))
+        assert (await cur.fetchone())[0] == 0
 
 
 async def test_read_rate_limits_defaults_and_overrides(pool, token_space, conn):

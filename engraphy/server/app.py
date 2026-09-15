@@ -45,6 +45,7 @@ import contextlib
 import contextvars
 import ipaddress
 import logging
+import math
 import os
 import pathlib
 
@@ -63,6 +64,7 @@ from engraphy.core import embedding
 from engraphy.core.inbox import capture as core_capture
 from engraphy.server import tool_registry, wire_types
 from engraphy.server.auth import (
+    INBOX_CAPTURE,
     AuthContext,
     FailureTracker,
     RateLimiter,
@@ -70,6 +72,7 @@ from engraphy.server.auth import (
     Unauthorized,
     classify_kind,
     read_rate_limits,
+    require_active_principal,
     require_write,
     resolve_token,
 )
@@ -199,6 +202,19 @@ def _error_result(exc: ToolError) -> types.CallToolResult:
     )
 
 
+def _http_refusal(exc: ToolError) -> JSONResponse:
+    """A gate refusal on a plain HTTP route (POST /inbox): the ENGRAPHY_ sentence
+    in `error`, the route's error field, with the ToolError's structured fields
+    beside it. 403 for ENGRAPHY_ROLE. 429 plus Retry-After for
+    ENGRAPHY_RATE_LIMITED, so an HTTP client that never reads the body still
+    backs off."""
+    body = {"error": str(exc), **exc.extra}
+    if exc.code == "RATE_LIMITED":
+        retry_after_s = max(1, math.ceil(exc.extra.get("retry_after_ms", 1000) / 1000))
+        return JSONResponse(body, status_code=429, headers={"Retry-After": str(retry_after_s)})
+    return JSONResponse(body, status_code=403)
+
+
 def _build_mcp_server(pool, rate_limiter: RateLimiter) -> Server:
     server = Server("engraphy")
 
@@ -272,9 +288,11 @@ class BearerAuthMiddleware:
     bearer auth as MCP; /healthz is unauthenticated, deployment-gated by
     network placement instead). Resolves the bearer on a plain pooled
     connection -- api_tokens is instance-level, predating any space GUC, so
-    this must NOT go through db.transaction(). A missing/unknown/revoked
-    bearer is a transport 401 (auth.Unauthorized), never an ENGRAPHY_ tool
-    error; repeated failures from one client trip FailureTracker's ban."""
+    this must NOT go through db.transaction(); the archived-principal check
+    that follows it does (auth.require_active_principal). A missing/unknown/
+    revoked bearer, or one whose principal is archived, is a transport 401
+    (auth.Unauthorized), never an ENGRAPHY_ tool error; repeated failures from
+    one client trip FailureTracker's ban."""
 
     _EXEMPT_PATHS = frozenset({"/healthz"})
 
@@ -300,6 +318,10 @@ class BearerAuthMiddleware:
         try:
             async with self._pool.connection() as conn:
                 ctx = await resolve_token(conn, raw_token)
+            # After the block above rather than inside it: waiting on a second
+            # pooled connection while holding the first can deadlock a pool at
+            # capacity. require_active_principal says why this is its own step.
+            await require_active_principal(self._pool, ctx)
         except Unauthorized:
             self._failure_tracker.record_failure(client_key)
             response = PlainTextResponse("unauthorized", status_code=401)
@@ -330,6 +352,19 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
 
     async def _inbox_capture(request: Request) -> Response:
         ctx: AuthContext = request.state.auth_ctx
+        # A capture inserts a row, so it passes the two gates handle_call_tool
+        # applies to a write tool: the role gate, then the rate limiter on the
+        # token's write bucket (shared with its MCP writes, since this is the
+        # same RateLimiter). Both run before the body is parsed, for the reason
+        # 07 pins on the MCP path: a malformed flood is still throttled rather
+        # than cheap to send.
+        try:
+            require_write(ctx, INBOX_CAPTURE)
+            async with pool.connection() as conn:
+                read_limit, write_limit = await read_rate_limits(conn, ctx.space_id)
+            rate_limiter.check(ctx.token_id, classify_kind(INBOX_CAPTURE), read_limit, write_limit)
+        except ToolError as exc:
+            return _http_refusal(exc)
         try:
             body = await request.json()
             kind = body["kind"]

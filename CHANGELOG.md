@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Role and rate gates on `POST /inbox`, principal offboarding, and a pinned,
+verified migration runner in the admin image.
+
+### Security
+- `POST /inbox` accepts `readwrite` tokens only. Each capture counts against the
+  token's write rate limit (`rate.write_per_min`), the same as an MCP write. A
+  `readonly` token receives 403 with `ENGRAPHY_ROLE`. A token over its limit
+  receives 429 with `ENGRAPHY_RATE_LIMITED`, `retry_after_ms`, and a `Retry-After`
+  header.
+- `engraphy-admin principal archive --space … --id …` offboards a principal.
+  Every token that principal holds receives 401 from its next request, with no
+  cache window. The principal's scopes and nodes stay in place.
+- The admin image installs dbmate v2.35.0 and verifies its SHA-256 before the
+  binary runs. CI installs the same release with the same check.
+
 A laptop-sized deployment. The `micro` profile with the Postgres overlay that
 ships beside it measures **187MB resident** for the whole stack, against 983MB
 on the shipped defaults, on a store twice the size the performance budgets
