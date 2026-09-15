@@ -1,5 +1,77 @@
 # Change Log
 
+## 0.6.0 (unreleased)
+
+### The indicator reports end-to-end capability
+
+The status bar answers the question it is read for: can an agent use Engraphy
+right now. That needs both a server this extension can read and an agent that
+holds the tools, and it reports ready only when both hold. A reachable server
+whose tools no agent holds reads **Engraphy: agent cannot see memory**, and its
+tooltip names which of the two is missing and why.
+
+The extension records every time VS Code asks for its MCP server definitions.
+Being asked is the evidence that the editor consumed the registry, and it
+separates three states that previously looked identical: a VS Code too old for
+the provider API, a provider registered and never queried, and a provider
+queried and answered.
+
+When the provider is registered and VS Code has never queried it, the tooltip
+reports that as the observation it is, then names the causes. It reads
+`chat.mcp.enabled`, `chat.mcp.access`, `chat.mcp.allowManagedServersOnly` and
+`chat.mcp.deniedServers`, so an editor where MCP is restricted says so and
+points at the setting, including where an organisation sets it.
+
+Each installed agent is judged on its own. An editor where one agent holds the
+tools and another installed one does not says so by name, rather than letting a
+single working path stand in for the rest. An agent you do not use can be
+dismissed, and registering it later brings it back.
+
+Because the status bar can be hidden, these states also raise a notification
+with a one-click next step. It appears once, and arms again if a working setup
+later breaks.
+
+### Engraphy tells you when a newer version is published
+
+Once a day, Engraphy checks whether a newer version of the extension has been
+published and says so, naming the version you are running and the one that is
+available. The prompt offers the update, the release notes, and a dismissal
+that covers that version and no other, so a version you pass on stays passed on
+and the next one still reaches you.
+
+The update action takes you as far as your editor allows. In an editor whose
+gallery carries Engraphy, it installs and offers to reload. In an editor that
+installs extensions from a file, it opens the extension's page, and then the
+`.vsix` attached to the release, which now ships as a release asset.
+
+Where the editor applies extension updates on its own, the prompt agrees with
+it, and where `extensions.autoUpdate` is turned off, it says so.
+
+The check is a plain request for a public file at `engraphy.tech/version.json`.
+It sends nothing about your machine or your installed version, and it stays
+silent when it cannot reach the network. `engraphy.updateCheck.enabled` stops
+the daily check, **Engraphy: Check for updates** runs one on demand, and
+`engraphy.updateCheck.manifestUrl` points it at your own copy.
+
+### Writes are checkable against the server
+
+**Engraphy: Check that writes are reaching the server** reports when memory
+last actually changed, read from the server's own counters. An agent can only
+report a save it made, so this is the answer that does not depend on what the
+agent says. It reads the metrics rollup and records no usage of its own, so
+checking never moves the numbers in the Impact & usage panel.
+
+### Engraphy registers with agents that read their own config
+
+Copilot agent mode receives the server through VS Code's MCP provider API.
+Claude Code and Cursor read their own MCP config instead, so
+**Engraphy: Register with your coding agent** writes the entry there and reads
+the file back to confirm it landed before reporting success. It takes a
+timestamped backup, writes through a temp file and a rename, abandons the write
+if the agent changed the file underneath it, and leaves a config carrying
+comments or invalid JSON untouched. Writing a token into an agent's plaintext
+config is confirmed with you first; the keychain copy is unchanged.
+
 ## 0.5.2
 
 Setup and onboarding content only. No code, dependency or behaviour change from

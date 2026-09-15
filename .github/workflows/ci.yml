@@ -7,7 +7,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # paths-ignore stays off the push trigger: a push carrying a v* release tag
+  # must always run the full suite, and path filters on a trigger that also
+  # matches tags are unreliable about which one wins. An extension-only PR
+  # skips this job here; ide-ci.yml covers it instead.
   pull_request:
+    paths-ignore: ['ide/**']
 jobs:
   test:
     runs-on: ubuntu-latest

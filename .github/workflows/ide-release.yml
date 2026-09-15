@@ -1,0 +1,61 @@
+name: Release extension
+
+# One click: Actions > Release extension > Run workflow > type a version. This
+# bumps ide/vscode-engraphy/package.json, commits, tags ide-v<version>, and
+# pushes both to main. The tag push is what triggers ide-publish.yml; this
+# workflow itself has no push/tag trigger, so a push it makes cannot re-invoke
+# it or ide-publish.yml a second time. There is no cycle to guard against
+# beyond that, by construction.
+#
+# The tag is created explicitly as ide-v<version>, never via `npm version`'s
+# own tagging: npm version prefixes with a bare "v", and a "v<version>" tag on
+# this repo fires the ENGINE'S release.yml (tags: ['v*']), which would try to
+# build and publish a Python release from an extension version bump. --no-git-
+# tag-version stops npm from tagging at all, so the only tag this workflow can
+# ever create is the ide-v one below.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, for example 0.6.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ide/vscode-engraphy
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump the extension's version (no tag yet)
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm version "$RELEASE_VERSION" --no-git-tag-version
+
+      - name: Commit and tag ide-v<version>
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          git add package.json package-lock.json
+          git commit -m "Release the extension: $RELEASE_VERSION"
+          git tag "ide-v$RELEASE_VERSION"
+
+      - name: Push the commit and the tag
+        run: git push origin HEAD:main --follow-tags
