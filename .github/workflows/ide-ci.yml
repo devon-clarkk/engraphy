@@ -1,0 +1,26 @@
+name: ide-ci
+
+# Scoped to the extension folder so an engine-only change never runs this, and
+# vice versa: ci.yml ignores ide/** on pull_request. Both filters have to
+# agree for that split to hold, so if this path ever moves, update both files.
+on:
+  push:
+    branches: [main]
+    paths: ['ide/vscode-engraphy/**']
+  pull_request:
+    paths: ['ide/vscode-engraphy/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ide/vscode-engraphy
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run test-client
