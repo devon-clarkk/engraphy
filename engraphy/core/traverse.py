@@ -15,6 +15,15 @@ default summary. limit caps WALK ROWS (the inlined SQL's LIMIT); truncated = mor
 rows existed. A deterministic ORDER BY (depth, src_id, dst_id, type) precedes
 LIMIT so the envelope is reproducible (the inlined SQL omits it). edges are the
 RAW walked endpoints. Recall bumped for every returned node (02 batched-on-read).
+
+Archived nodes are out of the walk (design/04: archived rows are "out of search,
+briefing, and dedup candidacy", and "edges into archived nodes stop surfacing
+wherever archived nodes do"). The CTE never steps onto an archived node, so none
+is returned, none is walked through, and no edge into one is reported. A merged
+node whose canonical is archived hydrates to nothing and its edges are dropped
+with it. The START node is the exception: naming it is a read by id, which
+design/04 keeps open for archived rows, so it is returned whatever its status
+and its live neighbours are walked as usual.
 """
 from engraphy.core.dedup import _resolve_canonical
 from engraphy.core.recall import bump_recall
@@ -42,6 +51,9 @@ WITH RECURSIVE walk AS (
     AND (%(edge_types)s::text[] IS NULL OR e.type = ANY(%(edge_types)s))
     AND ( (e.src_id = %(start)s::uuid AND (%(fwd)s OR et.bidirectional))
        OR (e.dst_id = %(start)s::uuid AND (%(rev)s OR et.bidirectional)) )
+    AND NOT EXISTS (SELECT 1 FROM nodes n
+                    WHERE n.id = CASE WHEN e.src_id = %(start)s::uuid THEN e.dst_id ELSE e.src_id END
+                      AND n.status = 'archived')
   UNION ALL
   SELECT e.src_id, e.dst_id, e.type,
          CASE WHEN e.src_id = w.node THEN e.dst_id ELSE e.src_id END,
@@ -54,6 +66,9 @@ WITH RECURSIVE walk AS (
     AND ( (e.src_id = w.node AND (%(fwd)s OR et.bidirectional))
        OR (e.dst_id = w.node AND (%(rev)s OR et.bidirectional)) )
     AND NOT (CASE WHEN e.src_id = w.node THEN e.dst_id ELSE e.src_id END) = ANY(w.path)
+    AND NOT EXISTS (SELECT 1 FROM nodes n
+                    WHERE n.id = CASE WHEN e.src_id = w.node THEN e.dst_id ELSE e.src_id END
+                      AND n.status = 'archived')
 )
 SELECT src_id, dst_id, type, node, depth FROM walk
 ORDER BY depth, src_id, dst_id, type
@@ -109,8 +124,10 @@ async def traverse(
         # is included at depth 0 as given. Keep the min-depth entry per canonical,
         # carrying its resolved_from (the original id when a chain was followed).
         entries: dict[str, tuple[int, str | None]] = {str(start_id): (0, None)}
+        canon_of: dict[str, str] = {}
         for nid, d in depth_of.items():
             canon = str(await _resolve_canonical(cur, nid))
+            canon_of[nid] = canon
             rf = nid if canon != nid else None
             if canon not in entries or d < entries[canon][0]:
                 entries[canon] = (d, rf)
@@ -122,17 +139,26 @@ async def traverse(
         node_rows = {str(r[0]): r for r in await cur.fetchall()}
 
         nodes_out = []
+        hidden: set[str] = set()
         # deterministic node order: depth then id (07 doesn't pin it; this does).
         for cid, (d, rf) in sorted(entries.items(), key=lambda kv: (kv[1][0], kv[0])):
             row = node_rows.get(cid)
             if row is None:
                 continue  # not readable (e.g. an unreadable start, or a merged
                           # node whose canonical the reader cannot see)
+            if row[6] == "archived" and cid != str(start_id):
+                hidden.add(cid)  # a merged node that resolves to an archived canonical
+                continue
             env = _node_envelope(row, detail)
             env["depth"] = d
             if rf is not None:
                 env["resolved_from"] = rf
             nodes_out.append(env)
+
+        if hidden:
+            edges_out = [e for e in edges_out
+                         if canon_of.get(e["src"]) not in hidden
+                         and canon_of.get(e["dst"]) not in hidden]
 
         await bump_recall(cur, [n["id"] for n in nodes_out])
 

@@ -10,7 +10,8 @@ administration -- add members, mint/revoke tokens, set visibility, manage grants
 operator's out-of-band equivalent plus the bootstrap (`space create`) that has to
 happen before any token can exist.
 
-Implemented here: `space create`, `principal add`, `principal archive`, `token create`,
+Implemented here: `space create`, `principal add`, `principal archive`,
+`principal unarchive`, `token create`,
 `token revoke`, `config set`, `import` (JSONL bulk load through the write
 pipeline), and `pack validate` / `pack apply`. Still open: `purge-session` (its
 addenda-handling is a deferred design decision, E2-plan §5.6) and the E3 verbs
@@ -55,7 +56,8 @@ if sys.platform == "win32":
 
 app = typer.Typer(help="Engraphy instance-operator admin CLI.", no_args_is_help=True)
 space_app = typer.Typer(help="Create spaces and their founding principal.", no_args_is_help=True)
-principal_app = typer.Typer(help="Add and archive principals (members) in a space.", no_args_is_help=True)
+principal_app = typer.Typer(
+    help="Add, archive and restore principals (members) in a space.", no_args_is_help=True)
 token_app = typer.Typer(help="Mint and revoke bearer tokens.", no_args_is_help=True)
 config_app = typer.Typer(help="Set per-space config values.", no_args_is_help=True)
 pack_app = typer.Typer(help="Validate and apply pack files.", no_args_is_help=True)
@@ -207,6 +209,26 @@ def principal_add(
     typer.echo(f"added principal '{id}' ({role}) to space '{space}' with scope 'personal-{id}'")
 
 
+def _set_archived(conninfo: str, space: str, principal_id: str, archived: bool) -> bool:
+    """Flip principals.archived to `archived` for one principal. Returns whether
+    the row changed (False when it already held that value); raises
+    BadParameter when the principal does not exist in the space."""
+    with psycopg.connect(conninfo, autocommit=False) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE principals SET archived = %s "
+            "WHERE space_id = %s AND id = %s AND archived <> %s",
+            (archived, space, principal_id, archived),
+        )
+        changed = cur.rowcount == 1
+        cur.execute("SELECT 1 FROM principals WHERE space_id = %s AND id = %s", (space, principal_id))
+        exists = cur.fetchone() is not None
+        conn.commit()
+    if not exists:
+        raise typer.BadParameter(f"principal '{principal_id}' does not exist in space '{space}'")
+    return changed
+
+
 @principal_app.command("archive")
 def principal_archive(
     space: str = typer.Option(..., help="Space id."),
@@ -217,25 +239,26 @@ def principal_archive(
     request, the same as a revoked token, with no cache window. The principal's
     row, scopes and nodes stay in place (no hard deletes, design/01), so the
     provenance on everything it wrote is kept. The server enforces the flag in
-    auth.require_active_principal (design/03 lists `principal add|archive`)."""
-    conninfo = _conninfo(database_url)
-    with psycopg.connect(conninfo, autocommit=False) as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE principals SET archived = true "
-            "WHERE space_id = %s AND id = %s AND archived = false",
-            (space, id),
-        )
-        archived_now = cur.rowcount == 1
-        cur.execute("SELECT 1 FROM principals WHERE space_id = %s AND id = %s", (space, id))
-        exists = cur.fetchone() is not None
-        conn.commit()
-    if not exists:
-        raise typer.BadParameter(f"principal '{id}' does not exist in space '{space}'")
-    if not archived_now:
+    auth.require_active_principal (design/03 lists `principal add|archive`).
+    `principal unarchive` reverses it."""
+    if not _set_archived(_conninfo(database_url), space, id, True):
         typer.echo(f"principal '{id}' in space '{space}' is already archived")
         return
     typer.echo(f"archived principal '{id}' in space '{space}'; its tokens are refused from the next request")
+
+
+@principal_app.command("unarchive")
+def principal_unarchive(
+    space: str = typer.Option(..., help="Space id."),
+    id: str = typer.Option(..., help="Principal id to restore."),
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Restore an archived principal: its tokens that are not revoked
+    authenticate again from their next request, with no cache window."""
+    if not _set_archived(_conninfo(database_url), space, id, False):
+        typer.echo(f"principal '{id}' in space '{space}' is not archived")
+        return
+    typer.echo(f"restored principal '{id}' in space '{space}'; its live tokens authenticate from the next request")
 
 
 @token_app.command("create")
@@ -263,6 +286,15 @@ def token_create(
 
     async def _run() -> str:
         async with await psycopg.AsyncConnection.connect(conninfo) as aconn:
+            # A token for an archived principal would be refused at the door on
+            # every request (auth.require_active_principal), so refuse the mint.
+            cur = aconn.cursor()
+            await cur.execute(
+                "SELECT archived FROM principals WHERE space_id = %s AND id = %s", (space, principal))
+            row = await cur.fetchone()
+            if row is not None and row[0]:
+                raise typer.BadParameter(
+                    f"principal '{principal}' is archived; run `principal unarchive` before minting")
             raw, _meta = await mint_token(
                 aconn, space, principal, client_name, role, no_scope_all=no_scope_all)
             await aconn.commit()

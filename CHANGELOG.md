@@ -16,6 +16,19 @@ verified migration runner in the admin image.
   cache window. The principal's scopes and nodes stay in place.
 - The admin image installs dbmate v2.35.0 and verifies its SHA-256 before the
   binary runs. CI installs the same release with the same check.
+- `POST /inbox` caps the request body at 64 KiB. A larger body receives 413 with
+  `ENGRAPHY_VALIDATION`, whether it declares its length or streams.
+- `admin_member_archive` lets a space_admin archive a member over MCP, or
+  restore one with `archived: false`. A space_admin cannot archive itself.
+  Migration 0026 adds the `principals` UPDATE policy behind it, with the same
+  space-admin predicate as the other admin writes.
+- `engraphy-admin principal unarchive` restores an archived principal. Minting a
+  token for an archived principal, over MCP or the CLI, is refused with the
+  reason.
+- Archived nodes are out of `traverse`, and `update` and `link` refuse them with
+  `ENGRAPHY_VALIDATION`. `get` still reads them by id.
+- The admin image pins a dbmate digest for amd64 and for arm64 and installs the
+  binary for the architecture it builds. Any other architecture fails the build.
 
 ### Changed
 - The embedding runtime is pinned to onnxruntime 1.29.x, the release the dedup
