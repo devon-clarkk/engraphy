@@ -140,6 +140,24 @@ the first time 0.5.0 activates.
 | `engraphy.token` | *(empty)* | **Deprecated.** Use **Engraphy: Connect to a server**; the token lives in the OS keychain. |
 | `engraphy.space` | *(empty)* | Label only (real space comes from the token). |
 | `engraphy.composeWorkingDirectory` | *(empty)* | Folder with `compose.yaml` + `.env`, for **Start local server**. |
+| `engraphy.updateCheck.enabled` | `true` | Check once a day whether a newer version is published. |
+| `engraphy.updateCheck.manifestUrl` | *(empty)* | Where to read published version information. Empty uses `https://engraphy.tech/version.json`. |
+
+### Updates
+
+Installed from a marketplace, Engraphy is kept current by your editor. Alongside
+that, Engraphy checks once a day whether a newer version has been published and
+tells you when there is one, naming the version you are running and the one
+available. **Engraphy: Check for updates** runs the check on demand.
+
+The check is a plain request for a public file. It sends nothing about your
+machine or your installed version, and it stays silent when it cannot reach the
+network. `engraphy.updateCheck.enabled` stops the daily check. Point
+`engraphy.updateCheck.manifestUrl` at your own copy to serve version
+information from your network.
+
+Editors that install extensions from a file can take the `.vsix` from the
+[latest release](https://github.com/devon-clarkk/engraphy/releases).
 
 ### Connection status
 

@@ -14,6 +14,10 @@ const w = require('../out-test/webviewMessages.js');
 const s = require('../out-test/statsModel.js');
 const c = require('../out-test/connection.js');
 const m = require('../out-test/tokenMigration.js');
+const cap = require('../out-test/capability.js');
+const ar = require('../out-test/agentRuntimes.js');
+const vc = require('../out-test/versionCheck.js');
+const os = require('os');
 
 let passed = 0;
 function check(name, fn) {
@@ -756,4 +760,694 @@ check('planTokenMigration: a real inspect() shape is accepted as-is', () => {
 	assert.deepStrictEqual(m.planTokenMigration(inspectLike), { value: 'tok-g', clear: ['global'] });
 });
 
-console.log(`\n${passed} checks passed.`);
+// ---- capability model ------------------------------------------------------
+//
+// These cover the exact state that caused silent data loss: a reachable server,
+// an extension that can read it, and no agent anywhere holding the tools.
+
+check('vsCodeRegistryLive: registering is not consumption', () => {
+	// The provider registered and VS Code never asked. This is the normal state
+	// in an editor with no Copilot Chat traffic, and it used to be invisible.
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, {}), false);
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 0 }), false);
+});
+check('vsCodeRegistryLive: being asked and returning nothing is not consumption', () => {
+	// The empty-URL / malformed-URL path. VS Code asked, Engraphy withheld.
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 3, lastCount: 0 }), false);
+});
+check('vsCodeRegistryLive: asked and answered is consumption', () => {
+	assert.strictEqual(cap.vsCodeRegistryLive('available', true, { calls: 1, lastCount: 1 }), true);
+});
+check('vsCodeRegistryLive: an absent API can never be live', () => {
+	assert.strictEqual(cap.vsCodeRegistryLive('missing', true, { calls: 9, lastCount: 1 }), false);
+	assert.strictEqual(cap.vsCodeRegistryLive('available', false, { calls: 9, lastCount: 1 }), false);
+});
+
+const REACHABLE = {
+	reach: 'reachable',
+	host: '127.0.0.1:8000',
+	api: 'available',
+	providerRegistered: true,
+	signal: {},
+	runtimes: [],
+};
+
+check('capability: a reachable server with no agent path is NOT connected', () => {
+	// THE INCIDENT. Server up, extension reads it fine, nothing consumed the
+	// registry, no third-party runtime registered. The old bar said "connected".
+	const vm = cap.buildCapabilityVM(REACHABLE);
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.strictEqual(vm.usable, false);
+	assert.match(vm.label, /agent cannot see memory/);
+	assert.strictEqual(vm.action.command, cap.REGISTER_COMMAND);
+	// The explanation must name the real reason, not a generic failure.
+	assert.match(vm.detail, /VS Code has never asked for it/);
+});
+
+check('capability: a policy block is named, not blamed on missing Copilot traffic', () => {
+	// Devon's incident was ON Copilot, so "you have no Copilot Chat traffic" is
+	// the wrong explanation to assert. A readable restriction is reported as the
+	// cause instead.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		policy: { allowManagedServersOnly: true },
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /allowManagedServersOnly/);
+	assert.match(vm.detail, /Managed by organization/);
+	assert.doesNotMatch(vm.detail, /Two things cause this/);
+});
+
+check('capability: with no readable restriction, both causes are offered', () => {
+	// The observation is certain, the cause is not. Neither reading may be
+	// asserted as the only one.
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, policy: {} });
+	assert.match(vm.detail, /VS Code has never asked for it/);
+	assert.match(vm.detail, /Two things cause this/);
+	assert.match(vm.detail, /allowManagedServersOnly/);
+});
+
+check('policyRestrictions: each gate is reported, and silence is not proof', () => {
+	assert.deepStrictEqual(cap.policyRestrictions(undefined), []);
+	// An unreadable setting is undefined, which must never read as "off".
+	assert.deepStrictEqual(cap.policyRestrictions({}), []);
+	assert.strictEqual(cap.policyRestrictions({ enabled: false }).length, 1);
+	assert.strictEqual(cap.policyRestrictions({ enabled: true }).length, 0);
+	assert.strictEqual(cap.policyRestrictions({ access: 'none' }).length, 1);
+	assert.strictEqual(cap.policyRestrictions({ access: 'all' }).length, 0);
+	assert.strictEqual(cap.policyRestrictions({ denied: true }).length, 1);
+	assert.strictEqual(
+		cap.policyRestrictions({ enabled: false, allowManagedServersOnly: true, denied: true }).length,
+		3
+	);
+});
+
+check('capability: a detected third-party runtime is named in the gap detail', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /Claude Code/);
+	assert.match(vm.detail, /do not use the VS Code registry/);
+});
+
+check('capability: a registered third-party runtime IS ready, with no Copilot at all', () => {
+	// Devon's working machine: Claude Code holds the tools via ~/.claude.json,
+	// and VS Code has never consumed the provider. That is genuinely ready.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+	assert.strictEqual(vm.usable, true);
+	assert.match(vm.title, /Claude Code/);
+});
+
+check('capability: a consumed VS Code registry is ready on its own', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, signal: { calls: 2, lastCount: 1 } });
+	assert.strictEqual(vm.phase, 'ready');
+	assert.strictEqual(vm.usable, true);
+});
+
+check('capability: an old VS Code says so instead of failing silently', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, api: 'missing', providerRegistered: false });
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.match(vm.detail, /VS Code 1\.101 or newer/);
+});
+
+check('capability: a dead server outranks the agent question', () => {
+	// Registering an agent against a server that is not answering fixes nothing,
+	// so the server problem is the one reported.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		reach: 'unauthorized',
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'server-unavailable');
+	assert.strictEqual(vm.usable, false);
+});
+
+check('capability: no server URL asks for one', () => {
+	const vm = cap.buildCapabilityVM({ ...REACHABLE, reach: 'unconfigured' });
+	assert.strictEqual(vm.phase, 'unconfigured');
+	assert.strictEqual(vm.action.command, cap.CONNECT_COMMAND);
+});
+
+check('capability: a consumed VS Code registry does NOT excuse an unregistered agent', () => {
+	// THE REGRESSION GUARD. "At least one path is live" was the first rule here,
+	// and it re-created the original bug: the VS Code signal is sticky across
+	// sessions, so on any machine where Copilot Chat had ever submitted a
+	// message the VS Code entry counted registered forever, and an unregistered
+	// Claude Code sat beside it under a green bar.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'partial');
+	assert.match(vm.label, /Claude Code cannot see memory/);
+	assert.strictEqual(vm.action.command, cap.REGISTER_COMMAND);
+});
+
+check('capability: an UNDETECTED runtime is not a gap', () => {
+	// Not having Cursor installed is not a broken setup.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: false, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: a dismissed runtime is not a gap', () => {
+	// Detection is a heuristic: a leftover ~/.cursor means Cursor was installed
+	// once, not that anyone runs it. Dismissing must actually silence it.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: true, registered: false }],
+		ignored: ['cursor'],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: an unconsumed VS Code registry is never itself a gap', () => {
+	// An editor with no Copilot Chat traffic is not broken, it is simply not
+	// that path. Only a real third-party runtime can raise `partial`.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: {},
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: true }],
+	});
+	assert.strictEqual(vm.phase, 'ready');
+});
+
+check('capability: several gaps are counted, not listed, in the label', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [
+			{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false },
+			{ id: 'cursor', label: 'Cursor', detected: true, registered: false },
+		],
+	});
+	assert.strictEqual(vm.phase, 'partial');
+	assert.match(vm.label, /2 agents cannot see memory/);
+	assert.match(vm.title, /Claude Code, Cursor/);
+});
+
+check('capability: partial stays usable, because memory IS reachable', () => {
+	// The label carries the warning. Claiming memory is unusable when one agent
+	// can reach it would be its own false report.
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		signal: { calls: 1, lastCount: 1 },
+		runtimes: [{ id: 'cursor', label: 'Cursor', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.usable, true);
+	assert.strictEqual(vm.phase, 'partial');
+});
+
+check('capability: gaps with NO live path stay no-agent-path, not partial', () => {
+	const vm = cap.buildCapabilityVM({
+		...REACHABLE,
+		runtimes: [{ id: 'claude-code', label: 'Claude Code', detected: true, registered: false }],
+	});
+	assert.strictEqual(vm.phase, 'no-agent-path');
+	assert.strictEqual(vm.usable, false);
+});
+
+// ---- write freshness -------------------------------------------------------
+
+check('writeFreshness: an empty series says plainly that nothing was written', () => {
+	const f = cap.buildWriteFreshness([], '2026-08-30');
+	assert.strictEqual(f.lastWriteDate, undefined);
+	assert.match(f.summary, /No memory has been written/);
+});
+check('writeFreshness: zero-filled days are not writes', () => {
+	// The stats series zero-fills every day in range, so "has rows" is not
+	// "has writes". A phantom save leaves exactly this shape behind.
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-29', facts_stored: 0, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-30', facts_stored: 0, duplicates_prevented: 0, promotes: 0 },
+		],
+		'2026-08-30'
+	);
+	assert.strictEqual(f.rangeTotal, 0);
+	assert.match(f.summary, /has not reached this server/);
+});
+check('writeFreshness: counts every write-shaped outcome, not just inserts', () => {
+	// A `needs_confirmation` park counts under duplicates_prevented and is real
+	// server traffic, so it must move the freshness line even though no node
+	// was inserted yet.
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-28', facts_stored: 2, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-30', facts_stored: 0, duplicates_prevented: 1, promotes: 1 },
+		],
+		'2026-08-30'
+	);
+	assert.strictEqual(f.lastWriteDate, '2026-08-30');
+	assert.strictEqual(f.lastWriteCount, 2);
+	assert.strictEqual(f.rangeTotal, 4);
+	assert.match(f.summary, /today/);
+});
+check('writeFreshness: an out-of-order series still finds the latest day', () => {
+	const f = cap.buildWriteFreshness(
+		[
+			{ date: '2026-08-30', facts_stored: 1, duplicates_prevented: 0, promotes: 0 },
+			{ date: '2026-08-20', facts_stored: 5, duplicates_prevented: 0, promotes: 0 },
+		],
+		'2026-08-31'
+	);
+	assert.strictEqual(f.lastWriteDate, '2026-08-30');
+	assert.match(f.summary, /on 2026-08-30/);
+});
+
+// ---- agent runtime configs -------------------------------------------------
+
+check('stripJsonComments: strips comments but not a URL double slash', () => {
+	const r = ar.stripJsonComments('{"url": "http://x/mcp/"} // trailing');
+	assert.strictEqual(r.hadComments, true);
+	assert.strictEqual(JSON.parse(r.out).url, 'http://x/mcp/');
+});
+check('stripJsonComments: an escaped quote does not end the string', () => {
+	const r = ar.stripJsonComments('{"a": "he said \\" // not a comment"}');
+	assert.strictEqual(r.hadComments, false);
+	assert.strictEqual(JSON.parse(r.out).a, 'he said " // not a comment');
+});
+check('stripJsonComments: block comments go too', () => {
+	const r = ar.stripJsonComments('{/* hi */"a": 1}');
+	assert.strictEqual(r.hadComments, true);
+	assert.deepStrictEqual(JSON.parse(r.out), { a: 1 });
+});
+
+const claudeSpec = ar.RUNTIMES.find((r) => r.id === 'claude-code');
+const cursorSpec = ar.RUNTIMES.find((r) => r.id === 'cursor');
+
+check('buildEntry: matches the shape Claude Code actually stores', () => {
+	assert.deepStrictEqual(ar.buildEntry(claudeSpec, 'http://127.0.0.1:8000/mcp/', 'tok'), {
+		type: 'http',
+		url: 'http://127.0.0.1:8000/mcp/',
+		headers: { Authorization: 'Bearer tok' },
+	});
+});
+check('buildEntry: an untyped runtime gets no type discriminator', () => {
+	assert.strictEqual(ar.buildEntry(cursorSpec, 'http://x/mcp/', 'tok').type, undefined);
+});
+check('buildEntry: no token means no Authorization header', () => {
+	assert.strictEqual(ar.buildEntry(claudeSpec, 'http://x/mcp/', '').headers, undefined);
+});
+check('every shipped runtime shape was read off a real config', () => {
+	// Both entries below were copied from a populated config on a working
+	// machine. An unverified shape writes a file that parses and does nothing,
+	// which is the silent failure this whole change exists to end, so no
+	// runtime ships on a guess.
+	assert.deepStrictEqual(
+		ar.RUNTIMES.map((r) => r.id),
+		['claude-code', 'cursor']
+	);
+	assert.strictEqual(claudeSpec.mapKey, 'mcpServers');
+	assert.strictEqual(claudeSpec.typed, true);
+	assert.strictEqual(cursorSpec.mapKey, 'mcpServers');
+	assert.strictEqual(cursorSpec.typed, false);
+});
+
+check('mergeEngraphy: preserves every unrelated key and sibling server', () => {
+	const before = {
+		projects: { a: 1 },
+		mcpServers: { other: { url: 'http://other/' } },
+	};
+	const after = ar.mergeEngraphy(before, claudeSpec, { type: 'http', url: 'http://x/mcp/' });
+	assert.deepStrictEqual(after.projects, { a: 1 });
+	assert.deepStrictEqual(after.mcpServers.other, { url: 'http://other/' });
+	assert.strictEqual(after.mcpServers.engraphy.url, 'http://x/mcp/');
+	// The input must not be mutated: the caller still holds it for the backup.
+	assert.strictEqual(before.mcpServers.engraphy, undefined);
+});
+check('mergeEngraphy: a missing or non-object map is created, not crashed on', () => {
+	assert.strictEqual(ar.mergeEngraphy(null, claudeSpec, { url: 'u' }).mcpServers.engraphy.url, 'u');
+	assert.strictEqual(
+		ar.mergeEngraphy({ mcpServers: 'nonsense' }, claudeSpec, { url: 'u' }).mcpServers.engraphy.url,
+		'u'
+	);
+});
+check('hasEngraphy / registeredUrl read what mergeEngraphy wrote', () => {
+	const merged = ar.mergeEngraphy({}, claudeSpec, { type: 'http', url: 'http://x/mcp/' });
+	assert.strictEqual(ar.hasEngraphy(merged, claudeSpec), true);
+	assert.strictEqual(ar.registeredUrl(merged, claudeSpec), 'http://x/mcp/');
+	assert.strictEqual(ar.hasEngraphy({}, claudeSpec), false);
+});
+
+// ---- registration round trip, against a real temp home ---------------------
+
+check('registerRuntime: writes, backs up, and reads back verified', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const url = 'http://127.0.0.1:8000/mcp/';
+	fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { keep: 1 } }));
+
+	const out = ar.registerRuntime(claudeSpec, url, 'tok', home);
+	assert.strictEqual(out.ok, true);
+	assert.ok(fs.existsSync(out.backup), 'a backup is taken before the write');
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, url, home), true);
+
+	const written = JSON.parse(fs.readFileSync(out.path, 'utf8'));
+	assert.deepStrictEqual(written.projects, { keep: 1 }, 'unrelated config survives');
+	assert.strictEqual(written.mcpServers.engraphy.headers.Authorization, 'Bearer tok');
+	// No temp file may be left behind: a stray one carries the token.
+	assert.strictEqual(fs.existsSync(out.path + '.engraphy-tmp'), false);
+
+	// Re-running is a no-op rather than a second write.
+	assert.strictEqual(ar.registerRuntime(claudeSpec, url, 'tok', home).unchanged, true);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: creates a missing config and its directory', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const out = ar.registerRuntime(cursorSpec, 'http://x/mcp/', '', home);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(ar.verifyRegistration(cursorSpec, 'http://x/mcp/', home), true);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: a zero-byte config is a starting point, not a failure', () => {
+	// A config file that exists but is empty must not read as unparseable, or
+	// the button refuses on exactly the machine that needs it.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, cursorSpec.relPath);
+	fs.mkdirSync(path.dirname(target), { recursive: true });
+	fs.writeFileSync(target, '');
+	const out = ar.registerRuntime(cursorSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(
+		JSON.parse(fs.readFileSync(target, 'utf8')).mcpServers.engraphy.url,
+		'http://x/mcp/'
+	);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: refuses a commented config rather than eating the comments', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, '.claude.json');
+	fs.writeFileSync(target, '// keep me\n{"projects": {}}');
+	const out = ar.registerRuntime(claudeSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, false);
+	assert.match(out.problem, /comments/);
+	assert.strictEqual(fs.readFileSync(target, 'utf8'), '// keep me\n{"projects": {}}');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: refuses an unparseable config rather than overwriting it', () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	const target = path.join(home, '.claude.json');
+	fs.writeFileSync(target, '{ this is not json');
+	const out = ar.registerRuntime(claudeSpec, 'http://x/mcp/', 'tok', home);
+	assert.strictEqual(out.ok, false);
+	assert.strictEqual(fs.readFileSync(target, 'utf8'), '{ this is not json');
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('registerRuntime: backups do not overwrite each other', () => {
+	// ~/.claude.json is Claude Code's live state file. A backup that the next
+	// run destroys is not a backup, so each one is timestamped.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: {} }));
+	const a = ar.registerRuntime(claudeSpec, 'http://one/mcp/', 'tok', home);
+	const b = ar.registerRuntime(claudeSpec, 'http://two/mcp/', 'tok', home);
+	assert.strictEqual(a.ok, true);
+	assert.strictEqual(b.ok, true);
+	assert.notStrictEqual(a.backup, b.backup);
+	assert.ok(fs.existsSync(a.backup) && fs.existsSync(b.backup));
+	// The first backup still holds the pre-Engraphy file.
+	assert.strictEqual(JSON.parse(fs.readFileSync(a.backup, 'utf8')).mcpServers, undefined);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('verifyRegistration: a stale URL does not count as registered', () => {
+	// Registration drift: the entry exists but points somewhere else, so the
+	// agent is talking to the wrong server. That is not success.
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	ar.registerRuntime(claudeSpec, 'http://old/mcp/', 'tok', home);
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, 'http://new/mcp/', home), false);
+	assert.strictEqual(ar.verifyRegistration(claudeSpec, 'http://old/mcp/', home), true);
+	fs.rmSync(home, { recursive: true, force: true });
+});
+
+
+// ---- update checking (versionCheck.ts) -------------------------------------
+//
+// The desktop app carries this module verbatim apart from PRODUCT_KEY, and its
+// suite runs the same checks. A behaviour change that lands in one copy and not
+// the other fails on whichever side was missed.
+//
+// The case that drives most of this: the release tag on devon-clarkk/engraphy
+// is the ENGINE version, so at v0.2.0 the desktop app is 0.1.0 and this
+// extension is 0.5.2. Every product is compared against its own key, and any
+// answer this module cannot make sense of has to come back as "no answer"
+// rather than a confident wrong one.
+
+check('compareVersions: orders the three fields', () => {
+	assert.strictEqual(vc.compareVersions('0.5.2', '0.5.2'), 0);
+	assert.ok(vc.compareVersions('0.5.1', '0.5.2') < 0);
+	assert.ok(vc.compareVersions('0.6.0', '0.5.9') > 0);
+	assert.ok(vc.compareVersions('1.0.0', '0.99.99') > 0);
+	assert.ok(vc.compareVersions('0.10.0', '0.9.0') > 0, 'numeric, not lexical');
+});
+
+check('compareVersions: a leading v and build metadata do not change the order', () => {
+	assert.strictEqual(vc.compareVersions('v0.5.2', '0.5.2'), 0);
+	assert.strictEqual(vc.compareVersions('0.5.2+abc123', '0.5.2'), 0);
+});
+
+check('compareVersions: a release outranks its own pre-release', () => {
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.6.0') < 0);
+	assert.ok(vc.compareVersions('0.6.0', '0.6.0-rc.1') > 0);
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.6.0-rc.2') < 0);
+	assert.ok(vc.compareVersions('0.6.0-alpha', '0.6.0-beta') < 0);
+	// A numeric identifier ranks below an alphanumeric one.
+	assert.ok(vc.compareVersions('0.6.0-1', '0.6.0-alpha') < 0);
+	// A pre-release of the next version still beats the current release.
+	assert.ok(vc.compareVersions('0.6.0-rc.1', '0.5.2') > 0);
+});
+
+check('compareVersions: unparseable input answers null, never an order', () => {
+	// Reading a malformed value as 0.0.0 would announce an update to everyone.
+	assert.strictEqual(vc.compareVersions('latest', '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions('0.5', '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(undefined, '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(null, '0.5.2'), null);
+	assert.strictEqual(vc.compareVersions(520, '0.5.2'), null);
+});
+
+function versionManifest(overrides) {
+	return {
+		schema: 1,
+		products: {
+			'vscode-extension': Object.assign(
+				{
+					latest: '0.5.2',
+					minimumSupported: '0.5.0',
+					notes: 'https://github.com/devon-clarkk/engraphy/releases/tag/v0.2.0',
+					downloads: [],
+					registries: {
+						'vscode-marketplace':
+							'https://marketplace.visualstudio.com/items?itemName=engraphy.engraphy',
+						'open-vsx': null,
+					},
+				},
+				overrides || {}
+			),
+			desktop: { latest: '0.1.0', minimumSupported: '0.1.0', notes: null, downloads: [] },
+			engine: { latest: '0.2.0', minimumSupported: '0.1.0', notes: null, downloads: [] },
+		},
+	};
+}
+
+check('parseManifest: each product is read from its own key', () => {
+	const doc = versionManifest();
+	assert.strictEqual(vc.parseManifest(doc, 'vscode-extension').latest, '0.5.2');
+	assert.strictEqual(vc.parseManifest(doc, 'desktop').latest, '0.1.0');
+	assert.strictEqual(vc.parseManifest(doc, 'engine').latest, '0.2.0');
+	assert.strictEqual(vc.parseManifest(doc, 'nothing-by-that-name'), null);
+});
+
+check('parseManifest: an unreadable document answers null', () => {
+	assert.strictEqual(vc.parseManifest(null, 'vscode-extension'), null);
+	assert.strictEqual(vc.parseManifest('a string', 'vscode-extension'), null);
+	assert.strictEqual(vc.parseManifest({}, 'vscode-extension'), null);
+	// A schema this client does not read is a document written for another one.
+	assert.strictEqual(vc.parseManifest({ schema: 2, products: {} }, 'vscode-extension'), null);
+});
+
+check('parseManifest: a latest that is not a version reads as no answer', () => {
+	const p = vc.parseManifest(versionManifest({ latest: 'newest' }), 'vscode-extension');
+	assert.strictEqual(p.latest, null);
+	assert.strictEqual(vc.evaluate('0.5.0', p).state, 'unknown');
+});
+
+check('parseManifest: only https download URLs survive', () => {
+	// The manifest arrives over the network, so its URLs are untrusted input:
+	// a one-click download must never be pointed somewhere else.
+	const p = vc.parseManifest(
+		versionManifest({
+			downloads: [
+				{ url: 'http://example.test/x.vsix' },
+				{ url: 'file:///C:/x.vsix' },
+				{ url: 'javascript:alert(1)' },
+				{ url: 'https://github.com/devon-clarkk/engraphy/releases/download/v0.2.0/e.vsix' },
+			],
+		}),
+		'vscode-extension'
+	);
+	assert.strictEqual(p.downloads.length, 1);
+	assert.ok(p.downloads[0].url.startsWith('https://'));
+});
+
+check('parseManifest: a registry that does not carry it stays null', () => {
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	assert.strictEqual(p.registries['open-vsx'], null);
+	assert.ok(p.registries['vscode-marketplace'].startsWith('https://'));
+});
+
+check('evaluate: current, update, and below the supported floor', () => {
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	assert.strictEqual(vc.evaluate('0.5.2', p).state, 'current');
+	assert.strictEqual(vc.evaluate('0.5.1', p).state, 'update');
+	assert.strictEqual(vc.evaluate('0.5.0', p).state, 'update');
+	// Below minimumSupported is a firmer message than "something newer exists".
+	assert.strictEqual(vc.evaluate('0.4.0', p).state, 'unsupported');
+});
+
+check('evaluate: a build ahead of the published version is never out of date', () => {
+	// During a release cycle the running version routinely exceeds the published
+	// one. A client that prompted then would be wrong every day.
+	const p = vc.parseManifest(versionManifest(), 'vscode-extension');
+	const v = vc.evaluate('0.6.0', p);
+	assert.strictEqual(v.state, 'ahead');
+	assert.strictEqual(v.latest, '0.5.2');
+});
+
+check('evaluate: no manifest and no published version both read as unknown', () => {
+	assert.strictEqual(vc.evaluate('0.5.2', null).state, 'unknown');
+	const p = vc.parseManifest(versionManifest({ latest: null }), 'vscode-extension');
+	assert.strictEqual(vc.evaluate('0.5.2', p).state, 'unknown');
+});
+
+check('evaluate: comparing against the engine tag is what the product keys prevent', () => {
+	// The release is tagged v0.2.0 because that is the ENGINE version. An
+	// extension at 0.5.2 read against the tag would look like a downgrade, and a
+	// desktop app at 0.1.0 would be told to update to a version that is not it.
+	const doc = versionManifest();
+	assert.strictEqual(
+		vc.evaluate('0.5.2', vc.parseManifest(doc, 'vscode-extension')).state,
+		'current'
+	);
+	assert.strictEqual(vc.evaluate('0.1.0', vc.parseManifest(doc, 'desktop')).state, 'current');
+});
+
+check('pickDownload: the entry for this machine, and never one for another', () => {
+	const win = { url: 'https://x.test/a.exe', platform: 'win32', arch: 'x64' };
+	const mac = { url: 'https://x.test/a.dmg', platform: 'darwin', arch: 'arm64' };
+	const any = { url: 'https://x.test/a.vsix' };
+	assert.strictEqual(vc.pickDownload([win, mac], 'win32', 'x64'), win);
+	assert.strictEqual(vc.pickDownload([win, mac], 'darwin', 'arm64'), mac);
+	// A platform-independent artifact is a fallback; another platform's is not.
+	assert.strictEqual(vc.pickDownload([win, any], 'darwin', 'arm64'), any);
+	assert.strictEqual(vc.pickDownload([win], 'darwin', 'arm64'), null);
+	assert.strictEqual(vc.pickDownload([], 'win32', 'x64'), null);
+});
+
+check('shouldCheck: at most once an interval, and a moved clock does not park it', () => {
+	const day = 24 * 60 * 60 * 1000;
+	const now = 1800000000000;
+	assert.strictEqual(vc.shouldCheck(undefined, now, day), true);
+	assert.strictEqual(vc.shouldCheck(now - 1000, now, day), false);
+	assert.strictEqual(vc.shouldCheck(now - day, now, day), true);
+	// A clock that moved backwards would otherwise defer the next check forever.
+	assert.strictEqual(vc.shouldCheck(now + day * 400, now, day), true);
+	assert.strictEqual(vc.shouldCheck('yesterday', now, day), true);
+});
+
+check('isDismissed: per version, and it is not a permanent off switch', () => {
+	assert.strictEqual(vc.isDismissed('0.5.2', '0.5.2'), true);
+	// Saying "not now" to 0.5.2 says nothing about 0.6.0.
+	assert.strictEqual(vc.isDismissed('0.5.2', '0.6.0'), false);
+	// Dismissing 0.6.0 still covers 0.5.2 arriving late from a stale cache.
+	assert.strictEqual(vc.isDismissed('0.6.0', '0.5.2'), true);
+	assert.strictEqual(vc.isDismissed(undefined, '0.5.2'), false);
+});
+
+async function versionCheckAsyncChecks() {
+	// The fetch is injected, so offline, a 404, and a body that is not JSON can
+	// all be exercised without a network. Every one of them must come back as
+	// "no answer": an update check that surfaces its own failures would be
+	// noise on every flight and every train.
+	const ok = async () => ({
+		ok: true,
+		status: 200,
+		json: async () => versionManifest(),
+	});
+	const notFound = async () => ({
+		ok: false,
+		status: 404,
+		json: async () => ({}),
+	});
+	const offline = async () => {
+		throw new Error('getaddrinfo ENOTFOUND engraphy.tech');
+	};
+	const garbage = async () => ({
+		ok: true,
+		status: 200,
+		json: async () => {
+			throw new Error('Unexpected token < in JSON');
+		},
+	});
+
+	let v = await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, ok, 'vscode-extension');
+	assert.strictEqual(v.state, 'update');
+	assert.strictEqual(v.latest, '0.5.2');
+
+	for (const [name, fetcher] of [
+		['a 404', notFound],
+		['being offline', offline],
+		['a body that is not JSON', garbage],
+	]) {
+		v = await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, fetcher, 'vscode-extension');
+		assert.strictEqual(v.state, 'unknown', name + ' must read as no answer');
+		assert.strictEqual(v.latest, null, name + ' must claim no version');
+	}
+
+	// A non-https manifest URL is refused before any request is made.
+	let called = false;
+	const spy = async () => {
+		called = true;
+		return ok();
+	};
+	v = await vc.checkForUpdate('0.5.0', 'http://engraphy.tech/version.json', spy, 'vscode-extension');
+	assert.strictEqual(called, false, 'a plaintext manifest URL must not be fetched');
+	assert.strictEqual(v.state, 'unknown');
+
+	// The URL is the bare static path: nothing about this install may ride along.
+	let seen = null;
+	const capture = async (url) => {
+		seen = url;
+		return ok();
+	};
+	await vc.checkForUpdate('0.5.0', vc.DEFAULT_MANIFEST_URL, capture, 'vscode-extension');
+	assert.strictEqual(seen, vc.DEFAULT_MANIFEST_URL);
+	assert.ok(!seen.includes('?'), 'no query string, so the check is not version telemetry');
+	assert.ok(!seen.includes('0.5.0'), 'the running version never appears in the URL');
+
+	passed += 5;
+	console.log('  ok - checkForUpdate: offline, 404 and malformed all read as no answer');
+	console.log('  ok - checkForUpdate: a plaintext manifest URL is never fetched');
+	console.log('  ok - checkForUpdate: the request carries no version telemetry');
+	console.log('  ok - checkForUpdate: a good manifest yields the update verdict');
+	console.log('  ok - checkForUpdate: every failure path is silent');
+}
+
+versionCheckAsyncChecks().then(() => {
+	console.log(`\n${passed} checks passed.`);
+});
