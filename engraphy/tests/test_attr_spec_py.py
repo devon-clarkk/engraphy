@@ -11,7 +11,7 @@ import pathlib
 import pytest
 import yaml
 
-from engraphy.core.attr_spec import validate_attrs
+from engraphy.core.attr_spec import sanitize_attrs, validate_attrs
 
 FIXTURES_PATH = pathlib.Path(__file__).parent / "fixtures" / "attr_spec_cases.yaml"
 CASES = yaml.safe_load(FIXTURES_PATH.read_text(encoding="utf-8"))
@@ -57,3 +57,59 @@ def test_pack_declared_addenda_is_still_value_checked():
     applies -- on both sides, since neither skips Phase 4 for reserved keys."""
     spec = {"attrs": {"optional": {"addenda": {"type": "string"}}, "closed": True}}
     assert validate_attrs(spec, {"addenda": 5}) == ["attrs.addenda must be a string"]
+
+
+# --- sanitize_attrs: quarantine a bad value rather than destroy the node -----
+# Pure. test_attr_quarantine.py proves the same rule end to end against a real
+# database, and the parity fuzzer proves the plpgsql side agrees.
+
+MEMO = {"attrs": {"required": {"occurred_on": {"type": "date"}},
+                  "optional": {"note": {"type": "string"}, "rank": {"type": "int"}},
+                  "closed": True}}
+_BAD_DATE = "attrs.occurred_on must be a date"
+
+
+def test_sanitize_leaves_a_valid_write_untouched():
+    attrs = {"occurred_on": "2026-01", "note": "fine"}
+    clean, dropped = sanitize_attrs(MEMO, attrs)
+    assert clean is attrs
+    assert dropped == []
+
+
+def test_sanitize_quarantines_a_bad_required_value_and_the_rest_still_validates():
+    clean, dropped = sanitize_attrs(MEMO, {"occurred_on": "last month", "note": "kept"})
+    assert clean == {"note": "kept",
+                     "dropped": {"occurred_on": {"value": "last month", "error": _BAD_DATE}}}
+    assert dropped == [{"key": "occurred_on", "value": "last month", "error": _BAD_DATE}]
+    # the quarantined key still satisfies required-presence, so the node stores
+    assert validate_attrs(MEMO, clean) == []
+
+
+def test_sanitize_quarantines_every_failing_key_in_lexicographic_order():
+    clean, dropped = sanitize_attrs(MEMO, {"occurred_on": "nope", "note": 5, "rank": 3})
+    assert [d["key"] for d in dropped] == ["note", "occurred_on"]
+    assert clean["rank"] == 3
+    assert set(clean["dropped"]) == {"note", "occurred_on"}
+
+
+def test_sanitize_merges_an_existing_bucket_and_replaces_a_malformed_one():
+    prior = {"as_of": {"value": "x", "error": "y"}}
+    clean, _ = sanitize_attrs(MEMO, {"occurred_on": "nope", "dropped": prior})
+    assert set(clean["dropped"]) == {"as_of", "occurred_on"}
+    # only an object bucket carries forward; anything else is replaced by one
+    clean, _ = sanitize_attrs(MEMO, {"occurred_on": "nope", "dropped": ["as_of"]})
+    assert set(clean["dropped"]) == {"occurred_on"}
+
+
+def test_sanitize_never_quarantines_a_reserved_or_undeclared_key():
+    # `addenda` and `dropped` are engine-reserved, and an undeclared key under a
+    # closed spec stays a hard rejection rather than something to rescue.
+    attrs = {"occurred_on": "2026-01-15", "addenda": 5, "nope": "x"}
+    clean, dropped = sanitize_attrs(MEMO, attrs)
+    assert dropped == []
+    assert clean is attrs
+    assert "attrs.nope is not allowed (closed spec)" in validate_attrs(MEMO, attrs)
+
+
+def test_sanitize_on_absent_attrs_is_an_empty_identity():
+    assert sanitize_attrs(MEMO, None) == ({}, [])
