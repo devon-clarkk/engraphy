@@ -357,9 +357,9 @@ async def test_an_archived_principal_is_refused_on_every_route(pool, app_space, 
 
 
 def test_expected_schema_version_is_the_latest_migration_file():
-    # engraphy/db/migrations' newest file (migration 0024, the rename of every
-    # remaining `engram` database identifier to `engraphy`).
-    assert expected_schema_version() == "0024"
+    # engraphy/db/migrations' newest file (migration 0028, the `dropped` attr
+    # quarantine bucket in the plpgsql validator).
+    assert expected_schema_version() == "0028"
 
 
 async def test_applied_schema_version_reads_the_migration_table(pool):

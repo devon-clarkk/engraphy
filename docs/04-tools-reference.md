@@ -203,6 +203,19 @@ The `outcome` is one of:
 > **If a write comes back `merged` but you were updating/contradicting the stored
 > fact, call `supersede`.** Auto-merge cannot tell a correction from a restatement.
 
+> **A `date` attr takes a full ISO date or a partial**: `2026-01-15`, `2026-01` or
+> `2026`, stored exactly as written. An out-of-range month or day is refused
+> (`2026-13`, `2026-02-30`), and a month must be zero-padded so dates sort in
+> order.
+
+> **An attr whose value does not fit its declared type is quarantined, and the
+> node is still stored.** The offending value is kept under `attrs.dropped` as
+> `{key: {value, error}}`, and the envelope carries `dropped_attrs`
+> (`[{"key": …, "value": …, "error": …}]`) so a caller sees what was set aside. A
+> required attr stays satisfied by its quarantined entry. A key the type does not
+> declare is still refused under a closed spec. `supersede` and `update` answer
+> the same way.
+
 ### `supersede` — replace a node, preserving history
 
 Atomically inserts a new node, flips the old node's `status` to `superseded`, and
