@@ -32,6 +32,35 @@ verified migration runner in the admin image.
   and similarity-floor calibrations are measured against. A new onnxruntime
   minor release is adopted as a reviewed change, with the live band fixtures
   re-run on it.
+- The answer-discipline skill has an agent confirm that a returned memory is
+  about the subject and the occasion a question asks about before answering from
+  it, and before declining for want of it. Shared wording about a different
+  person or event is not a match; the right subject and occasion in other words
+  is.
+- The LoCoMo harness reader writes a `CHECK:` line naming the subject, the fact
+  asked for and the memory that states it, then its answer on an `ANSWER:` line.
+  The judge grades only the answer. `--reader-contract direct` selects the
+  single-line reply.
+
+LoCoMo is reported under the reference harness conventions beside Engraphy's
+strict figure, and the search width is set per arm.
+
+### Added
+- `python -m bench.reference_pass --run-dir runs/<run-id>` grades a completed
+  run under the conventions of the `mem0ai/memory-benchmarks` LoCoMo harness: its
+  answer prompt, its partial-credit judge, categories 1 to 4, and one judge pass
+  per answer. The prompts are vendored verbatim at commit `4b61c5d` under
+  `bench/prompts/reference/` with their Apache-2.0 licence, and the pass's
+  manifest records every difference from that harness. Engraphy's strict figure
+  remains the primary one.
+- `--arm llm-conversational:search_only:k=20` sets the search width of a
+  `search_only` arm, recorded under `retrieval_configs` in the manifest. The
+  engine returns at most 25 results.
+- `python -m bench.k_sweep` measures evidence recall at several search widths over
+  a completed run's store, with no LLM in the loop: the share of a question's
+  LoCoMo evidence turns quoted by the memories returned.
+- `python -m bench.replay` re-reads a completed run's saved envelopes under a
+  given reader and grades the answers, so two readers compare on identical memory.
 
 A laptop-sized deployment. The `micro` profile with the Postgres overlay that
 ships beside it measures **187MB resident** for the whole stack, against 983MB
