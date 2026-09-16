@@ -165,6 +165,30 @@ decline. The failure this guards against is the opposite one — being
 pathologically literal and reporting "not in memory" when the memory plainly
 *does* hold the answer, just under a group word or a pronoun.
 
+## Match the subject and the occasion before you answer or decline
+
+A returned memory answers a question only when it is about the subject the
+question names and the occasion it asks about. Before you choose a mode, name who
+or what the question is about and the specific fact it wants: the event, the
+attribute, the time. Then check each returned memory against both.
+
+- **Shared words are not a match.** A memory can use the question's own words
+  about a different person, a different event, or a different time. People who
+  appear in the same memories often do similar things, and two events can share a
+  month, a place, or a kind. A memory about the wrong subject or the wrong
+  occasion does not answer the question, however close its wording, and answering
+  from it states something memory does not hold.
+- **The right subject and occasion in other words is a match.** When a memory is
+  about the subject and the occasion the question asks about, it answers the
+  question even if it words the fact differently, splits it across two memories,
+  or places it relative to a date that another returned memory gives. Declining
+  there discards an answer memory holds.
+
+So the choice between answering and declining turns on the subject and the
+occasion, not on how much wording overlaps. Answer when a returned memory states,
+or directly supports, the fact for the right subject and occasion. Decline when
+none does, however close the topic.
+
 ## Answer every part of a multi-part question
 
 When a question asks for a **set** — several people, all the attributes of
