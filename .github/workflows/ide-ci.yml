@@ -1,8 +1,8 @@
 name: ide-ci
 
-# Scoped to the extension folder so an engine-only change never runs this, and
-# vice versa: ci.yml ignores ide/** on pull_request. Both filters have to
-# agree for that split to hold, so if this path ever moves, update both files.
+# Scoped to the extension folder, so an engine-only change never runs this.
+# ci.yml has no path filter and runs on every pull request, because the main
+# ruleset requires its jobs; do not give it one to mirror this filter.
 on:
   push:
     branches: [main]
