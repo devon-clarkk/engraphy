@@ -1,18 +1,25 @@
 name: Release extension
 
-# One click: Actions > Release extension > Run workflow > type a version. This
-# bumps ide/vscode-engraphy/package.json, commits, tags ide-v<version>, and
-# pushes both to main. The tag push is what triggers ide-publish.yml; this
-# workflow itself has no push/tag trigger, so a push it makes cannot re-invoke
-# it or ide-publish.yml a second time. There is no cycle to guard against
-# beyond that, by construction.
+# One action releases the extension: Actions > Release extension > Run
+# workflow, from main, with the version. ide/vscode-engraphy/RELEASING.md is
+# the operator's guide, including the one-time setup; this header records why
+# the workflow is shaped the way it is.
 #
-# The tag is created explicitly as ide-v<version>, never via `npm version`'s
-# own tagging: npm version prefixes with a bare "v", and a "v<version>" tag on
-# this repo fires the ENGINE'S release.yml (tags: ['v*']), which would try to
-# build and publish a Python release from an extension version bump. --no-git-
-# tag-version stops npm from tagging at all, so the only tag this workflow can
-# ever create is the ide-v one below.
+# main carries the "main: CI must pass" ruleset, so this workflow never pushes
+# to it. It commits the version bump on release/ide-v<version>, tags that
+# commit ide-v<version> (no ruleset covers tags), publishes from the tag, and
+# opens a pull request that carries the bump into main through the same checks
+# as any other change.
+#
+# A push or pull request made with the workflow's own GITHUB_TOKEN starts no
+# workflow run; only workflow_dispatch and repository_dispatch are exempt. So
+# publishing is a job in this run that calls ide-publish.yml rather than
+# something the tag push triggers, and ci.yml is dispatched on the release
+# branch so the pull request carries the checks the ruleset requires.
+#
+# The tag is created explicitly as ide-v<version>, never by npm version: npm
+# prefixes a bare "v", and a v* tag fires the engine's release.yml.
+# --no-git-tag-version keeps npm from tagging at all.
 on:
   workflow_dispatch:
     inputs:
@@ -20,42 +27,139 @@ on:
         description: 'Version to release, for example 0.6.1'
         required: true
         type: string
+      dry_run:
+        description: 'Dry run: check, test and package only; push, tag, publish and open nothing'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ide-release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release branch and the tag
+    outputs:
+      tag: ${{ steps.commit.outputs.tag }}
+      branch: ${{ steps.commit.outputs.branch }}
     defaults:
       run:
         working-directory: ide/vscode-engraphy
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+
+      # A real release tags what main holds. A dry run may start anywhere,
+      # which is how a change to this workflow is tried before it merges.
+      - name: Release only from main
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Start a release from main. This run started on $GITHUB_REF."
+          exit 1
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Configure git
+      - name: Check the version and write its changelog heading
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/ide-v$RELEASE_VERSION" >/dev/null; then
+            echo "::error::ide-v$RELEASE_VERSION is already tagged."
+            exit 1
+          fi
+          node scripts/prepare-release.js "$RELEASE_VERSION"
+
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run test-client
+
+      - name: Set the version
+        run: npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Commit and tag
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag="ide-v$RELEASE_VERSION"
+          branch="release/$tag"
+          git switch -c "$branch"
+          git add package.json package-lock.json CHANGELOG.md
+          if git diff --cached --quiet; then
+            # main already carries this version and its heading, so there is
+            # nothing to bump: the tag goes on main's commit, with no branch
+            # and no pull request.
+            branch=""
+          else
+            git commit -m "Release the extension: $RELEASE_VERSION"
+          fi
+          git tag "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ide-v$RELEASE_VERSION"
+            echo '```'
+            git show --stat --format='%H%n%s' "$tag"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Bump the extension's version (no tag yet)
+      # --atomic: the branch and the tag land together or not at all, so a
+      # failed push leaves nothing behind to block a second run.
+      - name: Push the release branch and the tag
+        if: ${{ !inputs.dry_run }}
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: npm version "$RELEASE_VERSION" --no-git-tag-version
-
-      - name: Commit and tag ide-v<version>
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TAG: ${{ steps.commit.outputs.tag }}
         run: |
-          git add package.json package-lock.json
-          git commit -m "Release the extension: $RELEASE_VERSION"
-          git tag "ide-v$RELEASE_VERSION"
+          refs=("refs/tags/$TAG")
+          if [ -n "$BRANCH" ]; then
+            refs+=("$BRANCH")
+          fi
+          git push --atomic origin "${refs[@]}"
 
-      - name: Push the commit and the tag
-        run: git push origin HEAD:main --follow-tags
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/ide-publish.yml
+    with:
+      # A dry run pushed no tag, so it packages the commit it started from.
+      ref: ${{ inputs.dry_run && github.sha || needs.prepare.outputs.tag }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  pull-request:
+    needs: [prepare, publish]
+    if: ${{ !inputs.dry_run && needs.prepare.outputs.branch != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write         # dispatch ci.yml on the release branch
+      pull-requests: write   # open the pull request
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ needs.prepare.outputs.branch }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Run ci on the release branch
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+      # Opening a pull request with GITHUB_TOKEN needs the repository setting
+      # "Allow GitHub Actions to create and approve pull requests". Without it
+      # the release has still published, so this reports the link instead of
+      # failing the run.
+      - name: Open the pull request that carries the bump into main
+        run: |
+          body="Carries the version bump for $TAG into main. $TAG is published from this branch's commit. ci runs on it by dispatch, since a pull request a workflow opens starts no checks of its own. A merge commit keeps the tagged commit in main's history."
+          if url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "Release the extension: $RELEASE_VERSION" --body "$body" 2>&1)"; then
+            echo "Opened $url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::The pull request was not opened: $url"
+            echo "$TAG is published. Open the pull request for its version bump at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1" >> "$GITHUB_STEP_SUMMARY"
+          fi

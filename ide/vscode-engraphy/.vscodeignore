@@ -10,6 +10,8 @@ out-test/**
 # Dev-only tooling & deps (everything is bundled into out/extension.js)
 scripts/**
 node_modules/**
+RELEASING.md
+*.vsix
 
 # Keep media/ (icon.png + loop.svg), out/extension.js, README, package.json.
 out/**/*.map

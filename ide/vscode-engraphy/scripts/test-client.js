@@ -1212,6 +1212,57 @@ check('registerRuntime: backups taken in the same millisecond stay distinct', ()
 	}
 });
 
+// ---- release preparation (scripts/prepare-release.js) ----------------------
+//
+// ide-release.yml runs this before it tags anything, so a wrong version or a
+// missing changelog section stops the release while nothing has been pushed.
+
+const rel = require('./prepare-release.js');
+
+check('planRelease: the current version with an unreleased heading releases, and loses the marker', () => {
+	const out = rel.planRelease('0.6.0', '0.6.0', '# Change Log\n\n## 0.6.0 (unreleased)\n\nNotes.\n\n## 0.5.2\n');
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(out.changelog, '# Change Log\n\n## 0.6.0\n\nNotes.\n\n## 0.5.2\n');
+});
+
+check('planRelease: a newer version needs its own section, which is left as written', () => {
+	const log = '## 0.6.1\n\nNotes.\n\n## 0.6.0\n';
+	const out = rel.planRelease('0.6.1', '0.6.0', log);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(out.changelog, log);
+	const missing = rel.planRelease('0.7.0', '0.6.0', log);
+	assert.strictEqual(missing.ok, false);
+	assert.match(missing.problem, /no "## 0\.7\.0" section/);
+});
+
+check('planRelease: an older version is refused', () => {
+	const out = rel.planRelease('0.5.9', '0.6.0', '## 0.5.9\n');
+	assert.strictEqual(out.ok, false);
+	assert.match(out.problem, /older/);
+});
+
+check('planRelease: only plain x.y.z versions are accepted', () => {
+	for (const v of ['v0.6.1', '0.6', '0.6.1-beta.1', ' 0.6.1', '']) {
+		assert.strictEqual(rel.planRelease(v, '0.6.0', `## ${v}\n`).ok, false, v);
+	}
+});
+
+check('planRelease: a heading that only starts with the version does not count', () => {
+	assert.strictEqual(rel.planRelease('0.6.1', '0.6.0', '## 0.6.10\n').ok, false);
+	assert.strictEqual(rel.planRelease('0.6.1', '0.6.0', '### 0.6.1\n').ok, false);
+});
+
+check('planRelease: only the released heading loses its marker, and CRLF survives', () => {
+	const out = rel.planRelease('0.6.0', '0.6.0', '## 0.7.0 (unreleased)\r\n\r\n## 0.6.0 (unreleased)\r\n');
+	assert.strictEqual(out.changelog, '## 0.7.0 (unreleased)\r\n\r\n## 0.6.0\r\n');
+});
+
+check('planRelease: versions compare numerically, not lexically', () => {
+	assert.ok(rel.compareVersions('0.10.0', '0.9.9') > 0);
+	assert.ok(rel.compareVersions('0.9.9', '0.10.0') < 0);
+	assert.strictEqual(rel.compareVersions('1.2.3', '1.2.3'), 0);
+});
+
 check('verifyRegistration: a stale URL does not count as registered', () => {
 	// Registration drift: the entry exists but points somewhere else, so the
 	// agent is talking to the wrong server. That is not success.
