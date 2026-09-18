@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from psycopg.types.json import Jsonb
 
 from engraphy.core import embedding, metrics
-from engraphy.core.attr_spec import RESERVED_ATTR_KEYS
+from engraphy.core.attr_spec import RESERVED_ATTR_KEYS, sanitize_attrs
 from engraphy.core.jaccard import is_novel
 from engraphy.core.sentinel import RESERVED_NODE_TYPES
 from engraphy.core.visibility import (
@@ -472,6 +472,26 @@ def _validate_not_reserved_type(node_type: str) -> None:
         )
 
 
+async def _sanitize_attrs_for_write(cur, space_id, node_type, attrs) -> tuple[dict, list[dict]]:
+    """Quarantine an invalid attr rather than let one bad value destroy the node.
+    Loads the node type's attr-spec and runs attr_spec.sanitize_attrs: a declared
+    attr whose value fails validation is MOVED into the reserved `dropped`
+    bucket, leaving clean attrs the DB trigger accepts, and a required key stays
+    satisfied by its quarantined presence (migration 0028). Returns
+    (clean_attrs, dropped); dropped is surfaced in the write envelope so a caller
+    sees what was set aside. A type with no registered spec, or a write with no
+    attrs, is a no-op returning (attrs, [])."""
+    if not attrs:
+        return attrs, []
+    await cur.execute(
+        "SELECT attr_spec FROM node_types WHERE space_id = %s AND name = %s",
+        (space_id, node_type),
+    )
+    row = await cur.fetchone()
+    spec = row[0] if row and row[0] is not None else {}
+    return sanitize_attrs(spec, attrs)
+
+
 async def _attach_links(cur, space_id, node_id, links) -> tuple[int, int]:
     """Attach request links to node_id and return (attached, skipped). Each item
     names exactly one explicit endpoint (shape pre-validated); the omitted end is
@@ -601,6 +621,12 @@ async def write(
                 f"ENGRAPHY_SCOPE_UNKNOWN: scope '{scope_id}' does not exist or is not writable"
             )
         bands, floor = await _resolve_config(cur, space_id, thresholds, resonance_floor)
+        # Quarantine any invalid attr rather than let the DB trigger reject the
+        # whole node. The embedding and extra_search the caller already computed
+        # are kept as they are: they may still render a quarantined value's text,
+        # which is harmless and keeps the I4 embedding-equals-surface invariant,
+        # since that is checked against the STORED extra_search, not against attrs.
+        attrs, dropped_attrs = await _sanitize_attrs_for_write(cur, space_id, node_type, attrs)
         envelope = await _locked_core(
             cur, space_id, principal, node_type, scope_id, title, body,
             attrs, embedding_vector, source_client, bands, import_mode=import_mode,
@@ -608,6 +634,11 @@ async def write(
             extra_search=extra_search,
             _between_branch_and_commit=_between_branch_and_commit,
         )
+        if dropped_attrs:
+            # Surface what was set aside on every non-stripped envelope shape
+            # (inserted / merged / merged_linked / needs_confirmation).
+            # import_mode returns a minimal envelope below and discards this.
+            envelope["dropped_attrs"] = dropped_attrs
     # Q2: import_mode skips the resonance report entirely -- the returned
     # envelope for an import-mode branch has no `resonance` key at all (not
     # an empty list). run_import already discards whatever write() returns,
@@ -1323,6 +1354,7 @@ async def supersede(
                 f"modeling error"
             )
 
+        attrs, dropped_attrs = await _sanitize_attrs_for_write(cur, space_id, node_type, attrs)
         envelope = await _locked_core(
             cur, space_id, principal, node_type, scope_id, title, body, attrs,
             embedding_vector, source_client, thresholds, exclude_id=old_id,
@@ -1363,6 +1395,8 @@ async def supersede(
         )
         await cur.execute("UPDATE nodes SET status = 'superseded' WHERE id = %s", (old_id,))
         envelope["superseded"] = str(old_id)
+        if dropped_attrs:
+            envelope["dropped_attrs"] = dropped_attrs
 
     return await _attach_resonance(
         pool, space_id, principal, embedding_vector, envelope, floor

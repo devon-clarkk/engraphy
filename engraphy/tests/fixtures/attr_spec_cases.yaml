@@ -163,6 +163,41 @@
   attrs: {due: 20260115}
   expect: ["attrs.due must be a date"]
   # a JSON number is not a JSON string; regex/cast never run
+# --- Flexible partial dates: YYYY and YYYY-MM accepted,
+#     stored verbatim; month/day still validated by padding to a full date.
+- name: date_year_only_passes
+  spec: {attrs: {required: {as_of: {type: date}}}}
+  attrs: {as_of: "2022"}
+  expect: []
+  # imprecise conversational date ("in 2022") is now valid, not node-destroying
+- name: date_year_month_passes
+  spec: {attrs: {required: {occurred_on: {type: date}}}}
+  attrs: {occurred_on: "2023-06"}
+  expect: []
+  # "June 2023" -> year+month partial, accepted
+- name: date_year_month_bad_month
+  spec: {attrs: {required: {occurred_on: {type: date}}}}
+  attrs: {occurred_on: "2023-13"}
+  expect: ["attrs.occurred_on must be a valid ISO date"]
+  # regex passes (\d{4}-\d{2}); padded to 2023-13-01, cast fails -> month range enforced
+- name: date_year_month_zero_month
+  spec: {attrs: {required: {occurred_on: {type: date}}}}
+  attrs: {occurred_on: "2023-00"}
+  expect: ["attrs.occurred_on must be a valid ISO date"]
+- name: date_non_padded_month_rejected
+  spec: {attrs: {required: {occurred_on: {type: date}}}}
+  attrs: {occurred_on: "2023-6"}
+  expect: ["attrs.occurred_on must be a date"]
+  # single-digit month fails the regex: zero-padding is required so lexical sort == chronological
+- name: date_three_digit_year_rejected
+  spec: {attrs: {required: {as_of: {type: date}}}}
+  attrs: {as_of: "202"}
+  expect: ["attrs.as_of must be a date"]
+- name: date_full_still_validates_day
+  spec: {attrs: {required: {due: {type: date}}}}
+  attrs: {due: "2026-02-30"}
+  expect: ["attrs.due must be a valid ISO date"]
+  # full-date day validity unchanged by the partial-date relaxation
 - name: conditional_fires
   spec: {attrs: {required: {method: {enum: [command, hook, manual]}},
                  optional: {command: {type: string}},
@@ -230,3 +265,31 @@
   attrs: {note: {x: 1}}
   expect: ["attrs.note must be a string"]
   # a JSON object is not a JSON string; exercises the object branch of JSON-type classification
+# --- `dropped` quarantine bucket (migration 0028): reserved, exempt from the
+#     closed-spec check, and satisfies a required key when present as an object.
+- name: dropped_bucket_exempt_from_closed_spec
+  spec: {attrs: {required: {status: {enum: [open, closed]}}, closed: true}}
+  attrs: {status: open, dropped: {occurred_on: {value: "last month", error: "attrs.occurred_on must be a date"}}}
+  expect: []
+  # the quarantine bucket is engine-reserved, never an "unknown key"
+- name: dropped_satisfies_required_key
+  spec: {attrs: {required: {occurred_on: {type: date}}, closed: true}}
+  attrs: {dropped: {occurred_on: {value: "last month", error: "attrs.occurred_on must be a date"}}}
+  expect: []
+  # a REQUIRED attr quarantined into `dropped` still satisfies required-presence
+  # (the event.occurred_on = "last month" case: node kept, not lost)
+- name: dropped_does_not_satisfy_required_when_key_absent_from_bucket
+  spec: {attrs: {required: {occurred_on: {type: date}}, closed: true}}
+  attrs: {dropped: {as_of: {value: "x", error: "y"}}}
+  expect: ["attrs.occurred_on is required"]
+  # the bucket holds a DIFFERENT key: occurred_on is genuinely absent
+- name: dropped_non_object_does_not_satisfy_required
+  spec: {attrs: {required: {occurred_on: {type: date}}, closed: true}}
+  attrs: {dropped: ["occurred_on"]}
+  expect: ["attrs.occurred_on is required"]
+  # only an OBJECT bucket counts; an array `dropped` does not satisfy required
+- name: dropped_bucket_contents_not_value_checked
+  spec: {attrs: {optional: {note: {type: string}}, closed: true}}
+  attrs: {dropped: {note: {value: 123, error: "z"}}}
+  expect: []
+  # reserved key: its arbitrary quarantined contents are never Phase-4 checked
