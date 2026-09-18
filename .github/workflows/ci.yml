@@ -4,15 +4,19 @@ name: ci
 # (~15-20 min, builds an image and boots the stack) on every push to every side branch. Pushes
 # now gate `main` and release tags; everything else is covered by pull_request.
 on:
+  # ide-release.yml dispatches this on its release branch. A pull request that
+  # a workflow opens starts no checks of its own, and this is how the
+  # extension's version-bump pull request gets the checks the ruleset requires.
+  workflow_dispatch:
   push:
     branches: [main]
     tags: ['v*']
-  # paths-ignore stays off the push trigger: a push carrying a v* release tag
-  # must always run the full suite, and path filters on a trigger that also
-  # matches tags are unreliable about which one wins. An extension-only PR
-  # skips this job here; ide-ci.yml covers it instead.
+  # No path filter on either trigger. The main ruleset requires test,
+  # deploy-smoke and windows-cli on every pull request, and a workflow a path
+  # filter skips never reports those checks, so a filtered PR would wait on
+  # them forever and could not merge. A change under ide/ runs this suite as
+  # well as ide-ci.yml. Any job the ruleset names stays unfiltered.
   pull_request:
-    paths-ignore: ['ide/**']
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,13 +1,34 @@
 name: ide-publish
 
-# Fires on the tag ide-release.yml creates and pushes. ide-v* is a distinct
-# namespace from the engine's v* tags (release.yml, ci.yml), so a Marketplace
-# publish never overlaps a Python package release and neither workflow's tag
-# filter matches the other's tag.
+# Publishes the extension from an ide-v<version> tag. ide-release.yml calls
+# this in the same run, right after it tags a release; that is the normal
+# path. Run it by hand (Actions > ide-publish > Run workflow) with an existing
+# tag to publish that tag again.
+#
+# There is no tag-push trigger. ide-release.yml pushes its tag with the
+# workflow's GITHUB_TOKEN, and a push made with that token starts no workflow
+# run, so a trigger here would never fire for it. Calling this workflow is
+# what publishes. ide-v* stays a namespace apart from the engine's v* tags
+# (release.yml, ci.yml), so an extension tag never starts a Python release.
 on:
-  push:
-    tags:
-      - 'ide-v*'
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      VSCE_PAT:
+        required: false
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to publish, for example ide-v0.6.1'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +41,8 @@ jobs:
         working-directory: ide/vscode-engraphy
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -27,12 +50,43 @@ jobs:
 
       - run: npm ci
 
+      # A publish always comes from the tag that names its version, so the
+      # Marketplace version and the tag cannot disagree.
+      - name: Check the tag names this version
+        if: ${{ !inputs.dry_run }}
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$REF" != "ide-v$version" ]; then
+            echo "::error::$REF is not ide-v$version, the version package.json carries."
+            exit 1
+          fi
+
+      # vsce runs vscode:prepublish, the production build, while packaging.
+      # The file packaged here is the file published.
+      - name: Package
+        run: npx vsce package --out engraphy.vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engraphy-vsix
+          path: ide/vscode-engraphy/engraphy.vsix
+
+      # vsce reads the token from VSCE_PAT in the environment.
       - name: Publish to the VS Code Marketplace
-        run: npx @vscode/vsce publish -p ${{ secrets.VSCE_PAT }}
+        if: ${{ !inputs.dry_run }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath engraphy.vsix
 
       # Uncomment once the extension has an Open VSX namespace and OVSX_PAT is
       # set as a repository secret (Settings > Secrets and variables >
-      # Actions). ovsx reads the same package.json version vsce just
-      # published, so the two registries stay in step.
+      # Actions), and pass it through ide-release.yml's publish job as well.
+      # ovsx publishes the same package vsce just published, so the two
+      # registries stay in step.
       # - name: Publish to Open VSX
-      #   run: npx ovsx publish -p ${{ secrets.OVSX_PAT }}
+      #   if: ${{ !inputs.dry_run }}
+      #   env:
+      #     OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      #   run: npx ovsx publish engraphy.vsix

@@ -228,9 +228,10 @@ Design, the version pairing, the measured footprint and the build steps are in
   write tools and `POST /inbox`.
 - **Principals** are actors in a space. Each CLI-created principal gets a private,
   ambient `personal-<id>` scope in the same transaction. To offboard a principal,
-  run `engraphy-admin principal archive --space … --id …`. Every token that
-  principal holds is refused from its next request, and its scopes and nodes stay
-  in place.
+  run `engraphy-admin principal archive --space … --id …`, or have a space_admin
+  call `admin_member_archive`. Every token that principal holds is refused from
+  its next request, and its scopes and nodes stay in place.
+  `engraphy-admin principal unarchive` restores it.
 - **Scopes** are isolation containers with a `visibility`:
   - `private` — owner + explicit grants only.
   - `team-read` — every principal in the space may read.
@@ -256,6 +257,7 @@ engraphy.admin.cli <verb>` if `engraphy-admin` isn't on `PATH`.
 | `space create --id … --display-name … --principal …` | create a space + founding `space_admin` + personal scope + restore sentinel. |
 | `principal add --space … --id … --display-name … [--role …]` | add a member (+ their personal scope). |
 | `principal archive --space … --id …` | offboard a member: every token they hold is refused from the next request; their scopes and nodes stay. |
+| `principal unarchive --space … --id …` | restore an archived member: their tokens that are not revoked authenticate again from the next request. |
 | `token create / token revoke` | mint / revoke a bearer token. |
 | `config set --space … --key … --value …` | set a per-space config value (JSON), e.g. `dedup.t_high`, `space_admin_tools`. |
 | `pack validate / pack apply / pack upgrade` | validate, apply, or migrate a pack's ontology. |

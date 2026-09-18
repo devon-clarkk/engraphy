@@ -114,13 +114,18 @@ USER root
 # dbmate is one exact release, verified against its SHA-256 before it is made
 # executable. This image runs `engraphy-admin migrate` against the production
 # database as the Postgres superuser, so the migration runner it carries is a
-# reviewed input rather than whatever a release URL serves at build time. The
-# digest is the one GitHub publishes for the release's dbmate-linux-amd64 asset.
-# CI's two `install dbmate` steps (.github/workflows/ci.yml) install the same
-# release with the same check, and engraphy/tests/test_dbmate_pin.py fails the
-# suite if the three disagree, so a bump is one reviewed change to all of them.
+# reviewed input rather than whatever a release URL serves at build time. Each
+# digest is the one GitHub publishes for that release's dbmate-linux-<arch>
+# asset, and the build picks the one for the architecture it is building, so an
+# arm64 host (Docker Desktop on Apple silicon, an Ampere VM) installs an arm64
+# binary rather than an amd64 one it cannot execute. Any other architecture has
+# no pinned digest and fails the build. CI's two `install dbmate` steps
+# (.github/workflows/ci.yml) install the same release on amd64 with the same
+# check, and engraphy/tests/test_dbmate_pin.py fails the suite if they
+# disagree, so a bump is one reviewed change to all of them.
 ARG DBMATE_VERSION=v2.35.0
-ARG DBMATE_SHA256=f60fd6c6dbed316de116a701945a3fb21d365a25a7e6a9b28ba3a50f49818d8f
+ARG DBMATE_SHA256_AMD64=f60fd6c6dbed316de116a701945a3fb21d365a25a7e6a9b28ba3a50f49818d8f
+ARG DBMATE_SHA256_ARM64=9aac97323334c252bc1ea7d49f3fcb67ae54636b4af6f9045b8d229027c564d6
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
     && install -d /usr/share/keyrings \
@@ -131,9 +136,15 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-16 \
     && pg_restore --version | grep -q ' 16\.' \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+         amd64) dbmate_sha256="$DBMATE_SHA256_AMD64" ;; \
+         arm64) dbmate_sha256="$DBMATE_SHA256_ARM64" ;; \
+         *) echo "no pinned dbmate digest for $arch" >&2; exit 1 ;; \
+       esac \
     && curl -fsSL -o /usr/local/bin/dbmate \
-         "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64" \
-    && echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c - \
+         "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-${arch}" \
+    && echo "${dbmate_sha256}  /usr/local/bin/dbmate" | sha256sum -c - \
     && chmod +x /usr/local/bin/dbmate \
     && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*

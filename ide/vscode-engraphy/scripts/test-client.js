@@ -1185,6 +1185,84 @@ check('registerRuntime: backups do not overwrite each other', () => {
 	fs.rmSync(home, { recursive: true, force: true });
 });
 
+check('registerRuntime: backups taken in the same millisecond stay distinct', () => {
+	// The stamp has millisecond resolution, and two registrations can land in
+	// one millisecond. Freezing the clock makes that collision certain, so this
+	// proves each backup still gets its own file.
+	const realStamp = Date.prototype.toISOString;
+	Date.prototype.toISOString = () => '2026-01-01T00:00:00.000Z';
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), 'engraphy-home-'));
+	try {
+		fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: {} }));
+		const outs = ['one', 'two', 'three'].map((h) =>
+			ar.registerRuntime(claudeSpec, `http://${h}/mcp/`, 'tok', home)
+		);
+		const backups = outs.map((o) => o.backup);
+		assert.ok(outs.every((o) => o.ok === true));
+		assert.strictEqual(new Set(backups).size, 3);
+		assert.ok(backups.every((b) => fs.existsSync(b)));
+		assert.strictEqual(JSON.parse(fs.readFileSync(backups[0], 'utf8')).mcpServers, undefined);
+		assert.strictEqual(
+			JSON.parse(fs.readFileSync(backups[1], 'utf8')).mcpServers.engraphy.url,
+			'http://one/mcp/'
+		);
+	} finally {
+		Date.prototype.toISOString = realStamp;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+});
+
+// ---- release preparation (scripts/prepare-release.js) ----------------------
+//
+// ide-release.yml runs this before it tags anything, so a wrong version or a
+// missing changelog section stops the release while nothing has been pushed.
+
+const rel = require('./prepare-release.js');
+
+check('planRelease: the current version with an unreleased heading releases, and loses the marker', () => {
+	const out = rel.planRelease('0.6.0', '0.6.0', '# Change Log\n\n## 0.6.0 (unreleased)\n\nNotes.\n\n## 0.5.2\n');
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(out.changelog, '# Change Log\n\n## 0.6.0\n\nNotes.\n\n## 0.5.2\n');
+});
+
+check('planRelease: a newer version needs its own section, which is left as written', () => {
+	const log = '## 0.6.1\n\nNotes.\n\n## 0.6.0\n';
+	const out = rel.planRelease('0.6.1', '0.6.0', log);
+	assert.strictEqual(out.ok, true);
+	assert.strictEqual(out.changelog, log);
+	const missing = rel.planRelease('0.7.0', '0.6.0', log);
+	assert.strictEqual(missing.ok, false);
+	assert.match(missing.problem, /no "## 0\.7\.0" section/);
+});
+
+check('planRelease: an older version is refused', () => {
+	const out = rel.planRelease('0.5.9', '0.6.0', '## 0.5.9\n');
+	assert.strictEqual(out.ok, false);
+	assert.match(out.problem, /older/);
+});
+
+check('planRelease: only plain x.y.z versions are accepted', () => {
+	for (const v of ['v0.6.1', '0.6', '0.6.1-beta.1', ' 0.6.1', '']) {
+		assert.strictEqual(rel.planRelease(v, '0.6.0', `## ${v}\n`).ok, false, v);
+	}
+});
+
+check('planRelease: a heading that only starts with the version does not count', () => {
+	assert.strictEqual(rel.planRelease('0.6.1', '0.6.0', '## 0.6.10\n').ok, false);
+	assert.strictEqual(rel.planRelease('0.6.1', '0.6.0', '### 0.6.1\n').ok, false);
+});
+
+check('planRelease: only the released heading loses its marker, and CRLF survives', () => {
+	const out = rel.planRelease('0.6.0', '0.6.0', '## 0.7.0 (unreleased)\r\n\r\n## 0.6.0 (unreleased)\r\n');
+	assert.strictEqual(out.changelog, '## 0.7.0 (unreleased)\r\n\r\n## 0.6.0\r\n');
+});
+
+check('planRelease: versions compare numerically, not lexically', () => {
+	assert.ok(rel.compareVersions('0.10.0', '0.9.9') > 0);
+	assert.ok(rel.compareVersions('0.9.9', '0.10.0') < 0);
+	assert.strictEqual(rel.compareVersions('1.2.3', '1.2.3'), 0);
+});
+
 check('verifyRegistration: a stale URL does not count as registered', () => {
 	// Registration drift: the entry exists but points somewhere else, so the
 	// agent is talking to the wrong server. That is not success.

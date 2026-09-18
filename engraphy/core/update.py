@@ -71,11 +71,20 @@ async def update(
     async with transaction(pool, space_id, principal) as conn:
         cur = conn.cursor()
         await cur.execute(
-            "SELECT type, title, body, attrs, extra_search FROM nodes WHERE id = %s", (node_id,))
+            "SELECT type, title, body, attrs, extra_search, status FROM nodes WHERE id = %s",
+            (node_id,))
         row = await cur.fetchone()
         if row is None:
             raise NotFoundError(f"ENGRAPHY_NOT_FOUND: node {node_id} not found")
-        node_type, cur_title, cur_body, cur_attrs, cur_extra = row
+        node_type, cur_title, cur_body, cur_attrs, cur_extra, cur_status = row
+        # An archived node is quarantined content (design/04): readable by id,
+        # restored by an operator, and not rewritten through the agent surface,
+        # the same way supersede refuses a non-active old_id. Both UPDATEs below
+        # also carry `status <> 'archived'`, so a node archived between the two
+        # phases is never rewritten either.
+        if cur_status == "archived":
+            raise ValidationError(
+                f"ENGRAPHY_VALIDATION: node {node_id} is archived; an archived node is read-only")
 
         new_title = title if title is not None else cur_title
         new_body = body if body is not None else cur_body
@@ -119,7 +128,7 @@ async def update(
             # it explicitly so the column always tracks new_attrs.
             await cur.execute(
                 f"UPDATE nodes SET title = %s, body = %s, attrs = %s, extra_search = %s "
-                f"WHERE id = %s RETURNING {_ENVELOPE_COLS}",
+                f"WHERE id = %s AND status <> 'archived' RETURNING {_ENVELOPE_COLS}",
                 (new_title, new_body, Jsonb(new_attrs), new_extra, node_id),
             )
             updated_row = await cur.fetchone()
@@ -140,8 +149,8 @@ async def update(
         cur = conn.cursor()
         await cur.execute(
             f"UPDATE nodes SET title = %s, body = %s, attrs = %s, extra_search = %s, "
-            f"embedding = %s::vector, embedding_model = %s WHERE id = %s "
-            f"RETURNING {_ENVELOPE_COLS}",
+            f"embedding = %s::vector, embedding_model = %s "
+            f"WHERE id = %s AND status <> 'archived' RETURNING {_ENVELOPE_COLS}",
             (
                 new_title, new_body, Jsonb(new_attrs), new_extra,
                 _vector_literal(embedding_vector), embedding.MODEL_STAMP, node_id,
