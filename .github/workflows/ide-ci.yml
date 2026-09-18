@@ -2,16 +2,19 @@ name: ide-ci
 
 # Scoped to the extension folder, so an engine-only change never runs this.
 # ci.yml has no path filter and runs on every pull request, because the main
-# ruleset requires its jobs; do not give it one to mirror this filter.
+# ruleset requires its jobs; do not give it one to mirror this filter. This
+# file is in its own filter, so a change to the workflow is proved by running it.
 on:
   push:
     branches: [main]
-    paths: ['ide/vscode-engraphy/**']
+    paths: ['ide/vscode-engraphy/**', '.github/workflows/ide-ci.yml']
   pull_request:
-    paths: ['ide/vscode-engraphy/**']
+    paths: ['ide/vscode-engraphy/**', '.github/workflows/ide-ci.yml']
 
 jobs:
-  test:
+  # Named ide-test, never test: the main ruleset requires a check named test,
+  # and that name belongs to ci.yml's engine suite alone.
+  ide-test:
     runs-on: ubuntu-latest
     defaults:
       run:
