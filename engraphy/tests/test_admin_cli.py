@@ -84,6 +84,57 @@ def test_principal_add_makes_personal_scope(op_db):
         assert cur.fetchone()[0] == 1
 
 
+def test_principal_archive_sets_the_flag_the_server_enforces(op_db):
+    url, space_id = op_db
+    _run(url, "space", "create", "--id", space_id, "--display-name", "S", "--principal", "founder")
+    _run(url, "principal", "add", "--space", space_id, "--id", "member1", "--display-name", "M")
+    result = _run(url, "principal", "archive", "--space", space_id, "--id", "member1")
+    assert result.exit_code == 0, result.output
+    with psycopg.connect(url, autocommit=True) as c:
+        cur = c.cursor()
+        cur.execute("SELECT id, archived FROM principals WHERE space_id = %s ORDER BY id", (space_id,))
+        assert cur.fetchall() == [("founder", False), ("member1", True)]
+        cur.execute("SELECT count(*) FROM scopes WHERE space_id = %s AND id = 'personal-member1'",
+                    (space_id,))
+        assert cur.fetchone()[0] == 1   # archive keeps the principal's scopes
+    again = _run(url, "principal", "archive", "--space", space_id, "--id", "member1")
+    assert again.exit_code == 0 and "already archived" in again.output
+    missing = _run(url, "principal", "archive", "--space", space_id, "--id", "nobody")
+    assert missing.exit_code != 0 and "does not exist" in missing.output
+
+
+def test_principal_unarchive_restores_the_flag(op_db):
+    url, space_id = op_db
+    _run(url, "space", "create", "--id", space_id, "--display-name", "S", "--principal", "founder")
+    _run(url, "principal", "add", "--space", space_id, "--id", "member1", "--display-name", "M")
+    _run(url, "principal", "archive", "--space", space_id, "--id", "member1")
+    result = _run(url, "principal", "unarchive", "--space", space_id, "--id", "member1")
+    assert result.exit_code == 0, result.output
+    with psycopg.connect(url, autocommit=True) as c:
+        cur = c.cursor()
+        cur.execute("SELECT archived FROM principals WHERE space_id = %s AND id = 'member1'", (space_id,))
+        assert cur.fetchone()[0] is False
+    again = _run(url, "principal", "unarchive", "--space", space_id, "--id", "member1")
+    assert again.exit_code == 0 and "is not archived" in again.output
+    missing = _run(url, "principal", "unarchive", "--space", space_id, "--id", "nobody")
+    assert missing.exit_code != 0 and "does not exist" in missing.output
+
+
+def test_token_create_for_an_archived_principal_fails_cleanly(op_db):
+    url, space_id = op_db
+    _run(url, "space", "create", "--id", space_id, "--display-name", "S", "--principal", "founder")
+    _run(url, "principal", "add", "--space", space_id, "--id", "member1", "--display-name", "M")
+    _run(url, "principal", "archive", "--space", space_id, "--id", "member1")
+    result = _run(url, "token", "create", "--space", space_id, "--principal", "member1",
+                  "--client-name", "laptop")
+    assert result.exit_code != 0 and "is archived" in result.output
+    with psycopg.connect(url, autocommit=True) as c:
+        cur = c.cursor()
+        cur.execute("SELECT count(*) FROM api_tokens WHERE space_id = %s AND principal = 'member1'",
+                    (space_id,))
+        assert cur.fetchone()[0] == 0
+
+
 def test_token_create_prints_plaintext_once_and_stores_only_hash(op_db):
     url, space_id = op_db
     _run(url, "space", "create", "--id", space_id, "--display-name", "S", "--principal", "founder")

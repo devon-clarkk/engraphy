@@ -1,0 +1,63 @@
+# The micro embedder, as a compose overlay.
+#
+#   docker compose -f compose.yaml -f compose.micro.yaml up -d
+#   docker compose -f compose.yaml -f compose.micro.yaml --profile admin \
+#     run --rm admin engraphy-admin reembed
+#
+# Everything else in compose.yaml stands: the same Postgres, the same volumes,
+# the same ports, the same admin sidecar. This file changes one thing, which
+# embedder the server and the sidecar run, and it changes it in both places at
+# once because a sidecar that re-embeds with a different model than the server
+# reads would write a store neither of them can search.
+#
+# An OVERLAY rather than a compose `profiles:` entry, and the distinction is not
+# stylistic. A profiled service is ADDITIVE: `engraphy` carries no profile, so it
+# starts unconditionally, and a second server started beside it would contend for
+# 127.0.0.1:8000 and for the same database. Micro is not a service to run beside
+# the default one, it is the same service running a different embedder, and
+# `-f` is how compose expresses that.
+#
+# ## Read the runbook before pointing this at a store that has data in it
+#
+# gte-small's vectors are not comparable with nomic's. An existing store must be
+# re-embedded, and until it is, every incoming write is banded against vectors
+# from a different space. docs/micro-reembed.md is the procedure. On an empty
+# store there is nothing to convert and this file is all there is to it.
+
+services:
+  engraphy:
+    build:
+      args:
+        # Baked at build time as well as set at runtime. The Dockerfile prebakes
+        # whichever profile this names into the image's model cache, so the
+        # container does not download 34MB of graph on its first boot, and the
+        # build fails immediately if the runtime cannot execute it.
+        ENGRAPHY_EMBEDDING_PROFILE: micro
+    environment:
+      ENGRAPHY_EMBEDDING_PROFILE: micro
+
+  # The sidecar carries `reembed`, which is the verb that converts a store onto
+  # this profile. It has to agree with the server about the profile for the same
+  # reason both halves of a migration have to agree about the schema.
+  admin:
+    build:
+      args:
+        ENGRAPHY_EMBEDDING_PROFILE: micro
+    environment:
+      ENGRAPHY_EMBEDDING_PROFILE: micro
+
+  # `init` runs migrations and provisions the app role and touches no embedding,
+  # so on correctness grounds it would not need this. It gets it anyway, because
+  # it builds the same `admin` target as the sidecar and compose keys an image on
+  # its build args: leaving init out would build a SECOND image, and that image
+  # would prebake the 523MB default model into a container that never embeds
+  # anything. Matching the args keeps the micro stack at two images and one
+  # 34MB download.
+  #
+  # None of this implies the schema differs between profiles. It does not. Micro
+  # is 384-dim like every other profile, and adopting it is a re-embed with no
+  # migration.
+  init:
+    build:
+      args:
+        ENGRAPHY_EMBEDDING_PROFILE: micro

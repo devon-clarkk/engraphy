@@ -41,11 +41,16 @@ Dispatchers keep their own required-argument reads as defense in depth (a
 missing key raises KeyError, translated to ENGRAPHY_VALIDATION by
 tools/errors.py).
 """
+import asyncio
 import contextlib
 import contextvars
 import ipaddress
+import json
+import logging
+import math
 import os
 import pathlib
+import sys
 
 import psycopg
 from starlette.applications import Starlette
@@ -62,6 +67,7 @@ from engraphy.core import embedding
 from engraphy.core.inbox import capture as core_capture
 from engraphy.server import tool_registry, wire_types
 from engraphy.server.auth import (
+    INBOX_CAPTURE,
     AuthContext,
     FailureTracker,
     RateLimiter,
@@ -69,6 +75,7 @@ from engraphy.server.auth import (
     Unauthorized,
     classify_kind,
     read_rate_limits,
+    require_active_principal,
     require_write,
     resolve_token,
 )
@@ -198,6 +205,48 @@ def _error_result(exc: ToolError) -> types.CallToolResult:
     )
 
 
+# POST /inbox's request-body cap. A capture is a raw excerpt (a tool failure, a
+# chat fragment) that a reviewer later authors into a node whose body is at most
+# 8000 characters (nodes.body's CHECK), so 64 KiB leaves room for the surrounding
+# context and the JSON framing while keeping one capture bounded, in storage and
+# in the memory it takes to read.
+INBOX_MAX_BODY_BYTES = 64 * 1024
+
+
+class _BodyTooLarge(Exception):
+    """The request body passed the route's cap."""
+
+
+async def _read_capped_body(request: Request, limit: int) -> bytes:
+    """The request body, or _BodyTooLarge once it passes `limit` bytes. A
+    declared Content-Length over the limit is refused before a byte is read,
+    and a chunked or understated body is counted as it streams, so the cap
+    holds either way and nothing past it is ever buffered."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > limit:
+        raise _BodyTooLarge
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise _BodyTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _http_refusal(exc: ToolError) -> JSONResponse:
+    """A gate refusal on a plain HTTP route (POST /inbox): the ENGRAPHY_ sentence
+    in `error`, the route's error field, with the ToolError's structured fields
+    beside it. 403 for ENGRAPHY_ROLE. 429 plus Retry-After for
+    ENGRAPHY_RATE_LIMITED, so an HTTP client that never reads the body still
+    backs off."""
+    body = {"error": str(exc), **exc.extra}
+    if exc.code == "RATE_LIMITED":
+        retry_after_s = max(1, math.ceil(exc.extra.get("retry_after_ms", 1000) / 1000))
+        return JSONResponse(body, status_code=429, headers={"Retry-After": str(retry_after_s)})
+    return JSONResponse(body, status_code=403)
+
+
 def _build_mcp_server(pool, rate_limiter: RateLimiter) -> Server:
     server = Server("engraphy")
 
@@ -271,9 +320,11 @@ class BearerAuthMiddleware:
     bearer auth as MCP; /healthz is unauthenticated, deployment-gated by
     network placement instead). Resolves the bearer on a plain pooled
     connection -- api_tokens is instance-level, predating any space GUC, so
-    this must NOT go through db.transaction(). A missing/unknown/revoked
-    bearer is a transport 401 (auth.Unauthorized), never an ENGRAPHY_ tool
-    error; repeated failures from one client trip FailureTracker's ban."""
+    this must NOT go through db.transaction(); the archived-principal check
+    that follows it does (auth.require_active_principal). A missing/unknown/
+    revoked bearer, or one whose principal is archived, is a transport 401
+    (auth.Unauthorized), never an ENGRAPHY_ tool error; repeated failures from
+    one client trip FailureTracker's ban."""
 
     _EXEMPT_PATHS = frozenset({"/healthz"})
 
@@ -299,6 +350,10 @@ class BearerAuthMiddleware:
         try:
             async with self._pool.connection() as conn:
                 ctx = await resolve_token(conn, raw_token)
+            # After the block above rather than inside it: waiting on a second
+            # pooled connection while holding the first can deadlock a pool at
+            # capacity. require_active_principal says why this is its own step.
+            await require_active_principal(self._pool, ctx)
         except Unauthorized:
             self._failure_tracker.record_failure(client_key)
             response = PlainTextResponse("unauthorized", status_code=401)
@@ -329,8 +384,31 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
 
     async def _inbox_capture(request: Request) -> Response:
         ctx: AuthContext = request.state.auth_ctx
+        # A capture inserts a row, so it passes the two gates handle_call_tool
+        # applies to a write tool: the role gate, then the rate limiter on the
+        # token's write bucket (shared with its MCP writes, since this is the
+        # same RateLimiter). Both run before the body is parsed, for the reason
+        # 07 pins on the MCP path: a malformed flood is still throttled rather
+        # than cheap to send.
         try:
-            body = await request.json()
+            require_write(ctx, INBOX_CAPTURE)
+            async with pool.connection() as conn:
+                read_limit, write_limit = await read_rate_limits(conn, ctx.space_id)
+            rate_limiter.check(ctx.token_id, classify_kind(INBOX_CAPTURE), read_limit, write_limit)
+        except ToolError as exc:
+            return _http_refusal(exc)
+        # The size cap runs after the gates, so a refused caller never gets a
+        # body read at all, and before parsing, so an oversized body is never
+        # decoded.
+        try:
+            raw = await _read_capped_body(request, INBOX_MAX_BODY_BYTES)
+        except _BodyTooLarge:
+            return JSONResponse(
+                {"error": f"ENGRAPHY_VALIDATION: request body exceeds {INBOX_MAX_BODY_BYTES} bytes"},
+                status_code=413,
+            )
+        try:
+            body = json.loads(raw)
             kind = body["kind"]
             payload = body["payload"]
         except Exception:  # noqa: BLE001 -- any malformed body is one 400, by design
@@ -383,6 +461,17 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
 def main() -> None:  # pragma: no cover -- process entrypoint, not exercised by tests
     import uvicorn
 
+    if sys.platform == "win32":
+        # psycopg's async mode refuses Windows' default ProactorEventLoop, and
+        # every database call this process makes goes through the async pool, so
+        # the server cannot open its pool at boot without this. Installed here
+        # rather than at import so that importing app.py (which the tests and
+        # `create_app` callers do) changes no global state.
+        #
+        # engraphy/admin/cli.py installs the same policy for the same reason, and
+        # scripts/check_windows_event_loop.py guards both.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     conninfo = os.environ["ENGRAPHY_DATABASE_URL"]
     bind_host = os.environ.get("ENGRAPHY_BIND_HOST", "127.0.0.1")
     bind_port = int(os.environ.get("ENGRAPHY_BIND_PORT", "8000"))
@@ -396,7 +485,20 @@ def main() -> None:  # pragma: no cover -- process entrypoint, not exercised by 
         await pool.open()
         try:
             await check_schema_version(pool)
-            embedding.embed_query("warm the model cache")  # boot order: load embedding model before serving
+            if embedding.lazy_load():
+                # The model loads on the first embed instead, since
+                # embedding.embed calls load_model when it finds none. Two
+                # consequences the operator is choosing here: the first search
+                # of the process pays the load, and /healthz answers 200 while
+                # the embedder is still absent, so it reports that the server is
+                # up rather than that it is ready to search. See
+                # embedding.lazy_load for when that trade is the right one.
+                logging.getLogger("engraphy").info(
+                    "embedding model deferred to first use (%s is set)",
+                    embedding._LAZY_ENV)
+            else:
+                # Boot order: the model is resident before the server serves.
+                embedding.embed_query("warm the model cache")
             app = create_app(pool, insecure_transport_ok=insecure_transport_ok)
             config = uvicorn.Config(app, host=bind_host, port=bind_port, log_level="info")
             await uvicorn.Server(config).serve()

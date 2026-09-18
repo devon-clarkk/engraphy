@@ -1,0 +1,62 @@
+# Dedup band fixtures for the `micro` embedding profile.
+#
+# Companion to dedup_cases.yaml, NOT a replacement: the cases and their
+# expected bands are read from that file, which stays the contract for the
+# fp32 vector space. Only the measured similarity differs, because int8
+# quantization contracts pairwise cosine.
+#
+# Baselined at t_high=0.955 / t_low=0.902, inside the
+# deployment image. Quantized arithmetic is platform-sensitive, so these
+# are measured where the code runs, not on a developer laptop.
+# Asserted within the same +/-0.02 the fp32 file uses.
+- name: near_identical_auto_merge
+  expect_band: merge
+  similarity: 0.9917
+- name: same_topic_different_incident_pending
+  expect_band: pending
+  similarity: 0.9034
+- name: unrelated_insert
+  expect_band: insert
+  similarity: 0.712
+- name: boundary_hunt_near_t_high_merge_side
+  expect_band: merge
+  similarity: 0.9932
+- name: boundary_hunt_near_t_high_pending_side
+  expect_band: pending
+  similarity: 0.9167
+- name: boundary_hunt_near_t_low_pending_side
+  expect_band: pending
+  similarity: 0.916
+- name: boundary_hunt_near_t_low_insert_side
+  expect_band: insert
+  similarity: 0.9005
+- name: near_identical_different_domain
+  expect_band: merge
+  similarity: 0.99
+- name: paraphrase_pending_band
+  expect_band: pending
+  similarity: 0.9235
+- name: clearly_unrelated_insert_2
+  expect_band: insert
+  similarity: 0.7569
+- name: shared_boilerplate_prefix_trap
+  expect_band: pending
+  similarity: 0.9392
+- name: short_terse_bodies_merge
+  expect_band: merge
+  similarity: 0.9892
+- name: attr_restatement_same_attrs
+  expect_band: merge
+  similarity: 0.9945
+- name: attr_same_attrs_distinct_body
+  expect_band: insert
+  similarity: 0.8983
+- name: attr_distinct_dates_locations
+  expect_band: pending
+  similarity: 0.9049
+- name: attr_different_entities_shared_value
+  expect_band: insert
+  similarity: 0.7821
+- name: attr_less_control_pair
+  expect_band: merge
+  similarity: 0.971

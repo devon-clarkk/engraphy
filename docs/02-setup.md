@@ -102,10 +102,17 @@ Row-Level Security actually constrains it — the app role is deliberately **not
 connection, using the shipped script:
 
 ```bash
-psql "postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable" \
-  -v app_role_password="devapppw" \
-  -f deploy/provision-app-role.sql
+psql -v app_role_password="devapppw" \
+  -f deploy/provision-app-role.sql \
+  -d "postgres://postgres:devpw@127.0.0.1:5432/engraphy?sslmode=disable"
 ```
+
+> Options before the connection string, and the connection string behind `-d`.
+> psql's option parsing does not permute arguments on Windows, so options placed
+> after a bare connection string are reported as "extra command-line argument
+> ignored" and psql then **exits 0** having done nothing. The role is never
+> created, and the first symptom is the server failing to authenticate as
+> `engraphy_app`.
 
 Your **app-role** URL (used by the running server) is then:
 

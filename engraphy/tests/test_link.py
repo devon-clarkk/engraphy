@@ -60,6 +60,23 @@ async def test_link_unknown_endpoint_raises_not_found(pool, write_space, conn):
     assert cur.fetchone()[0] == 0, "a rejected item leaves the whole call's edges unattached"
 
 
+async def test_link_archived_endpoint_raises_validation_either_way(pool, write_space, conn):
+    """An archived node is out of the agent-visible graph (design/04), so it
+    takes no new edges as source or as destination, and nothing is attached."""
+    a = _seed_node(conn, write_space, "widget", "Node A", "Body A.", {}, _unit_vector_at_angle(0))
+    b = _seed_node(conn, write_space, "widget", "Node B", "Body B.", {}, _unit_vector_at_angle(1))
+    cur = conn.cursor()
+    cur.execute("UPDATE nodes SET status = 'archived' WHERE id = %s", (b,))
+    conn.commit()
+
+    for src, dst in ((a, b), (b, a)):
+        with pytest.raises(ValidationError, match=f"link endpoint {b} is archived"):
+            await link(pool, write_space, "p1", [{"type": "relates_to", "src_id": str(src), "dst_id": str(dst)}])
+
+    cur.execute("SELECT count(*) FROM edges WHERE space_id = %s", (write_space,))
+    assert cur.fetchone()[0] == 0
+
+
 async def test_link_missing_endpoint_raises_validation(pool, write_space, conn):
     a = _seed_node(conn, write_space, "widget", "Node A", "Body A.", {}, _unit_vector_at_angle(0))
     with pytest.raises(ValidationError, match="ENGRAPHY_VALIDATION"):

@@ -1,6 +1,6 @@
 # Engraphy
 
-**Associative memory for AI agents, modelled on the human mind.**
+**An MCP server giving AI agents associative memory, modelled on the human mind.**
 
 [![CI](https://github.com/devon-clarkk/engraphy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/devon-clarkk/engraphy/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/devon-clarkk/engraphy?label=release)](https://github.com/devon-clarkk/engraphy/releases/latest)

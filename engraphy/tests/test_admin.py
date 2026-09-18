@@ -17,6 +17,7 @@ from engraphy.server.db import transaction
 from engraphy.server.tools.admin import (
     admin_grant,
     admin_member_add,
+    admin_member_archive,
     admin_scope_visibility,
     admin_token_create,
 )
@@ -97,6 +98,56 @@ async def test_member_add_bad_id_is_validation(pool, admin_space):
     assert exc.value.code == "VALIDATION"
 
 
+# ---- admin_member_archive ---------------------------------------------------
+
+async def test_member_archive_archives_and_restores_with_an_audit_row_each(pool, admin_space, conn):
+    result = await admin_member_archive(pool, _ctx(admin_space), {"id": "member1"})
+    assert result["v"] == 1
+    assert (result["principal"]["id"], result["principal"]["archived"]) == ("member1", True)
+    restored = await admin_member_archive(pool, _ctx(admin_space), {"id": "member1", "archived": False})
+    assert restored["principal"]["archived"] is False
+    cur = conn.cursor()
+    cur.execute("SELECT action, detail->>'archived' FROM audit_log WHERE space_id = %s", (admin_space,))
+    assert sorted(cur.fetchall()) == [("admin_member_archive", "false"), ("admin_member_archive", "true")]
+
+
+async def test_member_archive_refuses_the_calling_admin(pool, admin_space, conn):
+    """Archiving the acting principal would refuse the credential making the call
+    and could leave a space with no network administrator."""
+    with pytest.raises(ToolError) as exc:
+        await admin_member_archive(pool, _ctx(admin_space), {"id": "admin1"})
+    assert exc.value.code == "VALIDATION"
+    cur = conn.cursor()
+    cur.execute("SELECT archived FROM principals WHERE space_id = %s AND id = 'admin1'", (admin_space,))
+    assert cur.fetchone()[0] is False
+
+
+async def test_member_archive_unknown_member_is_not_found(pool, admin_space):
+    with pytest.raises(ToolError) as exc:
+        await admin_member_archive(pool, _ctx(admin_space), {"id": "ghost"})
+    assert exc.value.code == "NOT_FOUND"
+
+
+async def test_member_archive_by_non_admin_is_role(pool, admin_space):
+    with pytest.raises(ToolError) as exc:
+        await admin_member_archive(pool, _ctx(admin_space, principal="member1"), {"id": "member2"})
+    assert exc.value.code == "ROLE"
+
+
+async def test_an_archived_member_is_refused_at_the_door(pool, admin_space):
+    """End to end over the admin surface: mint a token for member1, archive
+    member1 through the tool, and the token no longer passes the door check."""
+    from engraphy.server.auth import Unauthorized, require_active_principal, resolve_token
+    minted = await admin_token_create(
+        pool, _ctx(admin_space), {"principal": "member1", "client_name": "phone", "role": "readwrite"})
+    async with pool.connection() as c:
+        ctx = await resolve_token(c, minted["token"])
+    await require_active_principal(pool, ctx)      # active: admitted
+    await admin_member_archive(pool, _ctx(admin_space), {"id": "member1"})
+    with pytest.raises(Unauthorized):
+        await require_active_principal(pool, ctx)
+
+
 # ---- admin_token_create (security-critical) --------------------------------
 
 async def test_token_create_returns_plaintext_once_and_stores_only_hash(pool, admin_space, conn):
@@ -163,6 +214,22 @@ async def test_token_create_by_non_admin_is_role(pool, admin_space):
         await admin_token_create(pool, _ctx(admin_space, principal="member1"),
                                  {"principal": "member1", "client_name": "c", "role": "readonly"})
     assert exc.value.code == "ROLE"
+
+
+async def test_token_create_for_an_archived_principal_is_validation(pool, admin_space, conn):
+    """A token for an archived principal could never pass the door check, so the
+    mint is refused with a reason and no credential is stored."""
+    cur = conn.cursor()
+    cur.execute("UPDATE principals SET archived = true WHERE space_id = %s AND id = 'member1'",
+                (admin_space,))
+    conn.commit()
+    with pytest.raises(ToolError) as exc:
+        await admin_token_create(pool, _ctx(admin_space),
+                                 {"principal": "member1", "client_name": "c", "role": "readonly"})
+    assert exc.value.code == "VALIDATION"
+    assert "is archived" in exc.value.message
+    cur.execute("SELECT count(*) FROM api_tokens WHERE space_id = %s", (admin_space,))
+    assert cur.fetchone()[0] == 0
 
 
 # ---- admin_scope_visibility -------------------------------------------------
@@ -267,11 +334,29 @@ async def test_rls_allows_space_admin_writing_principals_directly(pool, admin_sp
     # the happy-path tests -- here we only assert the INSERT was permitted.
 
 
+async def test_rls_filters_a_member_updating_principals_to_zero_rows(pool, admin_space, conn):
+    """Migration 0026's principals_admin_update, from below the app gate: a plain
+    member's own transaction changes no principal row (an UPDATE policy filters
+    rather than raises), while a space_admin's changes exactly one."""
+    async with transaction(pool, admin_space, "member1") as c:
+        cur = await c.execute(
+            "UPDATE principals SET archived = true WHERE space_id = %s AND id = 'member2'", (admin_space,))
+        assert cur.rowcount == 0
+    async with transaction(pool, admin_space, "admin1") as c:
+        cur = await c.execute(
+            "UPDATE principals SET archived = true WHERE space_id = %s AND id = 'member2'", (admin_space,))
+        assert cur.rowcount == 1
+    check = conn.cursor()
+    check.execute("SELECT archived FROM principals WHERE space_id = %s AND id = 'member2'", (admin_space,))
+    assert check.fetchone()[0] is True
+
+
 # ---- tool_registry registration gating (space_admin_tools) ------------------
 
 async def test_admin_tools_listed_by_default(pool, admin_space):
     names = {e["name"] for e in await tool_registry.list_tools_for_space(pool, admin_space)}
-    assert {"admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant"} <= names
+    assert {"admin_member_add", "admin_member_archive", "admin_token_create",
+             "admin_scope_visibility", "admin_grant"} <= names
 
 
 async def test_admin_tools_absent_when_flag_false(pool, admin_space, conn):
@@ -281,7 +366,8 @@ async def test_admin_tools_absent_when_flag_false(pool, admin_space, conn):
     conn.commit()
 
     names = {e["name"] for e in await tool_registry.list_tools_for_space(pool, admin_space)}
-    assert not (names & {"admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant"})
+    assert not (names & {"admin_member_add", "admin_member_archive", "admin_token_create",
+             "admin_scope_visibility", "admin_grant"})
     # ...and unresolvable, indistinguishable from a nonexistent tool.
     assert await tool_registry.resolve_dispatch(pool, admin_space, "admin_token_create", {}) is None
     # core tools still resolve.

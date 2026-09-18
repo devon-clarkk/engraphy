@@ -1,5 +1,160 @@
 # Changelog
 
+## Unreleased
+
+Role and rate gates on `POST /inbox`, principal offboarding, and a pinned,
+verified migration runner in the admin image.
+
+### Security
+- `POST /inbox` accepts `readwrite` tokens only. Each capture counts against the
+  token's write rate limit (`rate.write_per_min`), the same as an MCP write. A
+  `readonly` token receives 403 with `ENGRAPHY_ROLE`. A token over its limit
+  receives 429 with `ENGRAPHY_RATE_LIMITED`, `retry_after_ms`, and a `Retry-After`
+  header.
+- `engraphy-admin principal archive --space … --id …` offboards a principal.
+  Every token that principal holds receives 401 from its next request, with no
+  cache window. The principal's scopes and nodes stay in place.
+- The admin image installs dbmate v2.35.0 and verifies its SHA-256 before the
+  binary runs. CI installs the same release with the same check.
+- `POST /inbox` caps the request body at 64 KiB. A larger body receives 413 with
+  `ENGRAPHY_VALIDATION`, whether it declares its length or streams.
+- `admin_member_archive` lets a space_admin archive a member over MCP, or
+  restore one with `archived: false`. A space_admin cannot archive itself.
+  Migration 0026 adds the `principals` UPDATE policy behind it, with the same
+  space-admin predicate as the other admin writes.
+- `engraphy-admin principal unarchive` restores an archived principal. Minting a
+  token for an archived principal, over MCP or the CLI, is refused with the
+  reason.
+- Archived nodes are out of `traverse`, and `update` and `link` refuse them with
+  `ENGRAPHY_VALIDATION`. `get` still reads them by id.
+- The admin image pins a dbmate digest for amd64 and for arm64 and installs the
+  binary for the architecture it builds. Any other architecture fails the build.
+
+### Changed
+- The embedding runtime is pinned to onnxruntime 1.29.x, the release the dedup
+  and similarity-floor calibrations are measured against. A new onnxruntime
+  minor release is adopted as a reviewed change, with the live band fixtures
+  re-run on it.
+
+A laptop-sized deployment. The `micro` profile with the Postgres overlay that
+ships beside it measures **187MB resident** for the whole stack, against 983MB
+on the shipped defaults, on a store twice the size the performance budgets
+assume.
+
+### Added
+- A Docker-free Windows distribution. One installer lays down PostgreSQL 16.15
+  with pgvector 0.8.6, the server as a frozen binary, and the embedding model,
+  creates the database and a space, mints a token, and registers a logon task,
+  on a machine with no Docker, no Python and no toolchain. `deploy/windows/`
+  carries the launcher, the PyInstaller spec, the payload build and the NSIS
+  script; [docs/windows-native.md](docs/windows-native.md) is the design and the
+  measurements.
+- `.github/workflows/pgvector-windows.yml` builds pgvector for native Windows
+  PostgreSQL and proves it: it creates a cluster from the same archive the
+  installer bundles, loads the DLL it just built, and runs a 384-dimension
+  cosine query through an HNSW index, asserting the plan used the index.
+  pgvector is pinned by commit SHA and PostgreSQL by version URL plus sha256.
+- `.github/workflows/windows-dist.yml` builds the whole distribution: pgvector,
+  the frozen server, the assembled payload and the installer.
+- `engraphy-win selftest` proves a Windows install is complete without touching
+  the database: package data, uvicorn's runtime-named modules, psycopg's libpq
+  binding, the MCP server, the embedding graph run to a real vector, and the
+  bundled PostgreSQL and pgvector.
+- `scripts/footprint_windows.ps1` reports resident memory for a native Windows
+  install, summing Working Set Private across the processes and adding the
+  shared buffer pool once, read from the running server.
+- `compose.small.yaml` tunes Postgres for a personal store: `shared_buffers`
+  32MB, `max_connections` 20, `maintenance_work_mem` 32MB, one autovacuum
+  worker, no parallel workers per gather. Stacks on top of `compose.micro.yaml`
+  and takes Postgres from 111MB to 46MB with a 20,000-node store resident. The
+  vector leg measured 0.15 ms/query against 0.21 ms/query on the defaults.
+- `compose.lazy.yaml` and `ENGRAPHY_EMBEDDING_LAZY_LOAD` defer the embedding
+  model out of boot and into the first embed. An instance nobody has searched
+  holds 49MB rather than 132MB. The saving ends at the first search and does not
+  return within the process, and `/healthz` reports liveness rather than
+  readiness while the model is absent, so it is off by default and documented as
+  a laptop trade rather than a general one.
+- `scripts/footprint.py` reports a compose project's resident memory from the
+  container cgroups, splitting `anon`, `shmem` and reclaimable page cache. It
+  reads through a throwaway privileged container rather than `docker exec`, so
+  measuring a running stack never starts a process inside it.
+- `scripts/embedding_layers.py` attributes the server process's memory by
+  import layer, which is what says whether a smaller model would help.
+- `scripts/footprint_workload.sql` and `scripts/footprint_latency.sql` seed a
+  20,000-node store and time both search legs, so a footprint figure is taken
+  after a workload rather than at idle. Postgres measures 29MB idle and 111MB
+  after work, and the second is the number an operator lives with.
+- `docs/footprint-2026-09-09.md` is the measured breakdown: where the memory
+  goes, what each configuration costs, the floor, and the two levers that were
+  measured and rejected.
+
+### Changed
+- `docs/05-deployment.md` carries the resident-memory table and points at the
+  overlays.
+
+The `micro` embedding profile runs gte-small on ONNX Runtime, for hosts where
+resident memory is the constraint. Every `v*` tag publishes it as a `-micro`
+image alongside the default one.
+
+### Added
+- `ENGRAPHY_EMBEDDING_PROFILE=micro` selects gte-small's vendor-published int8
+  graph, pinned at revision `5927d1727bb12db490052a1b33265ad78058de08`. It emits
+  384-dim unit vectors into the same `vector(384)` column as every other profile,
+  so it implies no schema change. Measured on one Linux x86-64 host, one profile
+  per fresh process: **143 MB steady resident memory against `onnx-int8`'s 262 MB
+  and the `onnx-fp32` default's 882 MB**, and 5.1 ms per embed against 23.1 and
+  58.6. Fused recall@10 over 498 evidence-bearing LoCoMo questions is 0.643 to
+  0.645 against `onnx-int8`'s 0.685 to 0.691, about 6% relative. Both figures are
+  the spread of repeated runs; the approximate HNSW index accounts for it, at
+  roughly three questions out of 498 either way.
+- Four thresholds are calibrated for `micro`, because it runs a different model
+  and every absolute cosine in the engine sits on a scale the model owns:
+  `dedup.t_high` 0.955, `dedup.t_low` 0.902, `resonance.floor` 0.90,
+  `briefing.semantic_floor` 0.81. Read-time near-duplicate collapse runs at 0.97.
+  The dedup pair and the semantic floor are measured against labelled fixtures;
+  the resonance floor is derived to preserve, on those fixtures, the partition
+  the fp32 space produces at 0.75.
+- `engraphy/tests/fixtures/dedup_cases_micro.yaml` pins the dedup fixtures for
+  gte-small's vector space. The cases and their expected bands are read from
+  `dedup_cases.yaml`, so every fixture file holds one contract. Its similarities
+  and its banding are asserted live, on every host, because the windows they
+  admit intersected across four hosts spanning two instruction sets and three CPU
+  vendors.
+- `scripts/baseline_similarity_floors_profile.py` re-derives `resonance.floor`
+  and `briefing.semantic_floor` for a profile on the host that will run it, and
+  reports the window each admits rather than a single value.
+- `scripts/embedding_memprobe.py` reports resident memory and warm latency for
+  one profile in one process, through the production embedder seam.
+- `python -m bench.retrieval_recall` measures fused recall@k for the active
+  profile with no LLM in the loop, against LoCoMo gold evidence and the shipped
+  `search` path.
+- `compose.micro.yaml` is a compose overlay that moves the server and the admin
+  sidecar onto `micro` together:
+  `docker compose -f compose.yaml -f compose.micro.yaml up -d`.
+- [docs/micro-reembed.md](docs/micro-reembed.md) is the adoption runbook. A full
+  re-embed is mandatory, and unlike the int8 backfill the part-converted state
+  has no safe error direction, because the comparison is across two models rather
+  than two quantizations of one.
+
+### Changed
+- Every `v*` tag builds and publishes both embedder variants of both container
+  targets: `engraphy:<version>` and `engraphy:<version>-micro`, and the same pair
+  for `engraphy-admin`. The variant is a second axis on the existing matrix and a
+  suffix on the same GHCR packages, so `latest` continues to name the default
+  build and cutting a release stays `git tag && git push --tags`.
+- `resonance.floor` and `briefing.semantic_floor` read a per-profile code
+  default, beneath the per-space config row and the caller parameter as before.
+  Every profile that shipped before this change keeps the value it shipped with.
+- Read-time near-duplicate collapse reads a per-profile code default. Profiles
+  that do not name one continue to track their own `dedup.t_high`, which is every
+  profile that shipped before this change.
+- `engraphy-admin reembed` names both profiles that need it and states which of
+  them is safe to leave part-done.
+- The dedup pipeline tests express their synthetic similarities against the
+  active profile's bands (`engraphy/tests/bandvalues.py`) rather than fp32
+  literals, so the write path is exercised on whichever profile the suite runs
+  under.
+
 ## 0.2.0
 
 The default embedder runs nomic-embed-text-v1.5 on ONNX Runtime. The default

@@ -34,6 +34,45 @@ def out_path(profile: str) -> Path:
     return ROOT / f"engraphy/tests/fixtures/dedup_cases_{profile.replace('-', '_')}.yaml"
 
 
+def report_windows(measured, cases):
+    """The band windows these similarities admit, and which fixture sets each edge.
+
+    This is the number that decides whether a profile can ship a single default
+    pair at all, and it is arithmetic rather than a search: `t_high` must sit at
+    or below the lowest merge-expected similarity and strictly above the highest
+    pending-expected one, and `t_low` stands in the same relation to pending and
+    insert. A grid sweep would find the same answer less exactly.
+
+    Width is the point. A wide window means a shipped default survives a
+    different CPU; a narrow one means the profile has to be calibrated per host,
+    which is what `onnx-int8` learned the expensive way -- it derived a defensible
+    pair on one Linux host, and a second Linux host put the confirm-edge fixtures
+    0.026 away, outside any window either host admitted. Print the bounding
+    fixture names too: knowing WHICH pair pins an edge is what tells an operator
+    whether a near-miss is structural or incidental.
+    """
+    band_of = {c["name"]: c["expect_band"] for c in cases}
+    sims = {"merge": [], "pending": [], "insert": []}
+    for row in measured:
+        sims[band_of[row["name"]]].append((row["similarity"], row["name"]))
+
+    def window(above, below, label):
+        # (lo, hi]: lo is exclusive, set by the highest similarity that must fall
+        # BELOW this edge; hi is inclusive, set by the lowest that must sit on or
+        # above it.
+        lo, lo_by = max(above) if above else (0.0, "-")
+        hi, hi_by = min(below) if below else (1.0, "-")
+        print(f"  {label:7} ({lo:.4f}, {hi:.4f}]  width {hi - lo:+.4f}"
+              f"   lower edge set by {lo_by}, upper by {hi_by}", file=sys.stderr)
+        if hi <= lo:
+            print(f"  {label:7} NO VIABLE VALUE: {lo_by} ({lo:.4f}) and {hi_by} "
+                  f"({hi:.4f}) cannot both band correctly", file=sys.stderr)
+
+    print("\nband windows these fixtures admit on this host:", file=sys.stderr)
+    window(sims["pending"], sims["merge"], "t_high")
+    window(sims["insert"], sims["pending"], "t_low")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True, choices=[p for p in embedding.PROFILES])
@@ -43,6 +82,7 @@ def main():
     args = ap.parse_args()
 
     cases = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    prefix = embedding.document_prefix(args.profile)
     bands = BandThresholds(
         t_high=args.t_high if args.t_high is not None else BandThresholds.for_profile(args.profile).t_high,
         t_low=args.t_low if args.t_low is not None else BandThresholds.for_profile(args.profile).t_low)
@@ -52,10 +92,10 @@ def main():
     for c in cases:
         a = embedding.embed_with(
             args.profile,
-            embedding.DOCUMENT_PREFIX + embedding.searchable_text(c["a"]["title"], c["a"]["body"], ""))
+            prefix + embedding.searchable_text(c["a"]["title"], c["a"]["body"], ""))
         b = embedding.embed_with(
             args.profile,
-            embedding.DOCUMENT_PREFIX + embedding.searchable_text(c["b"]["title"], c["b"]["body"], ""))
+            prefix + embedding.searchable_text(c["b"]["title"], c["b"]["body"], ""))
         sim = round(sum(x * y for x, y in zip(a, b)), 4)
         band = select_band(sim, bands)
         if band != c["expect_band"]:
@@ -63,6 +103,8 @@ def main():
         out.append({"name": c["name"], "expect_band": c["expect_band"], "similarity": sim})
         print(f"  {c['name']:44} {sim:.4f}  {band:<7} (fp32 pin {c['similarity']:.4f})",
               file=sys.stderr)
+
+    report_windows(out, cases)
 
     if disagreements:
         # Same posture as the fp32 baseline script: a computed band that

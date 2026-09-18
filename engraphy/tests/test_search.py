@@ -40,6 +40,7 @@ def test_rrf_fixture_case(case):
 # convention). rrf_fuse's pure arithmetic is covered by rrf_cases.yaml above.
 
 from engraphy.core import embedding as _emb  # noqa: E402
+from engraphy.core.briefing import semantic_floor_default  # noqa: E402
 from engraphy.core.search import search  # noqa: E402
 
 
@@ -192,9 +193,15 @@ async def test_space_isolation_no_cross_space_hit(pool, search_space, conn):
 
 
 async def test_scope_set_specific_includes_ambient_excludes_others(pool, search_space, conn):
-    in_scope1 = _seed(conn, search_space, "note", "scope1", "Note in scope one", "Content about widgets and gears.")
-    in_ambient = _seed(conn, search_space, "note", "personal", "Note in personal", "Content about widgets and gears.")
-    _seed(conn, search_space, "note", "other", "Note in other", "Content about widgets and gears.")
+    # Distinct facts, deliberately. The test is about which SCOPES are searched,
+    # and three restatements of one fact would additionally be exercising
+    # read-time near-duplicate collapse, which is a different test below.
+    in_scope1 = _seed(conn, search_space, "note", "scope1", "Note in scope one",
+                      "The widgets and gears order ships from the Leeds depot on Fridays.")
+    in_ambient = _seed(conn, search_space, "note", "personal", "Note in personal",
+                       "Personal preference: buy widgets and gears in bulk once a quarter.")
+    _seed(conn, search_space, "note", "other", "Note in other",
+          "The other team tracks widgets and gears stock in a separate spreadsheet.")
 
     result = await search(pool, search_space, "p1", "scope1", "widgets and gears content", "pytest")
     ids = set(_ids(result))
@@ -205,8 +212,10 @@ async def test_scope_set_specific_includes_ambient_excludes_others(pool, search_
 
 
 async def test_scope_all_searches_every_readable_scope_and_audits(pool, search_space, conn):
-    a = _seed(conn, search_space, "note", "scope1", "Alpha widget note", "Content about widgets and gears.")
-    b = _seed(conn, search_space, "note", "other", "Beta widget note", "Content about widgets and gears.")
+    a = _seed(conn, search_space, "note", "scope1", "Alpha widget note",
+              "Widgets and gears are counted at the start of every shift.")
+    b = _seed(conn, search_space, "note", "other", "Beta widget note",
+              "Spare widgets and gears live in the second cupboard by the door.")
 
     result = await search(pool, search_space, "p1", "all", "widgets and gears content", "pytest")
     assert {a, b} <= set(_ids(result))
@@ -230,8 +239,10 @@ async def test_type_filter(pool, search_space, conn):
 
 
 async def test_include_inactive(pool, search_space, conn):
-    active = _seed(conn, search_space, "note", "scope1", "Active widget note", "Content about widgets and gears.")
-    archived = _seed(conn, search_space, "note", "scope1", "Archived widget note", "Content about widgets and gears.")
+    active = _seed(conn, search_space, "note", "scope1", "Active widget note",
+                   "Widgets and gears are reordered when the shelf runs low.")
+    archived = _seed(conn, search_space, "note", "scope1", "Archived widget note",
+                     "The old widgets and gears supplier closed its Bristol warehouse.")
     cur = conn.cursor()
     cur.execute("UPDATE nodes SET status = 'archived' WHERE id = %s", (archived,))
     conn.commit()
@@ -368,12 +379,20 @@ async def test_hybrid_fuse_floor_boundary_is_inclusive(pool, search_space, conn)
 
 async def test_search_returns_sub_floor_node_no_floor_leak(pool, search_space, conn):
     """Parity guard: search() applies NO floor, so a node whose query<->doc
-    cosine is below the briefing floor (0.50) is still returned -- proving the
-    floor did not leak into search."""
+    cosine is below the briefing floor is still returned -- proving the floor did
+    not leak into search.
+
+    The floor is read from the active profile rather than restated. It is an
+    absolute cosine and the scale belongs to the model: 0.50 separates related
+    from unrelated on the fp32 space and would sit under every node in the store
+    on `micro`, so a literal here would quietly stop testing anything."""
     off = _seed(conn, search_space, "note", "scope1", "Aisle seat preference",
                 "Prefers an aisle seat on short domestic flights.")
     result = await search(pool, search_space, "p1", "scope1",
                           "what do we know about descaling the office coffee machine", "pytest")
     hit = next((r for r in result["results"] if r["node"]["id"] == off), None)
     assert hit is not None, "search must not floor -- the sub-floor node is still returned"
-    assert hit["similarity"] < 0.50, "confirms it is genuinely sub-floor (~0.43 baselined)"
+    floor = semantic_floor_default()
+    assert hit["similarity"] < floor, (
+        f"confirms it is genuinely sub-floor: {hit['similarity']:.4f} against the "
+        f"{_emb.profile()} briefing floor of {floor}")

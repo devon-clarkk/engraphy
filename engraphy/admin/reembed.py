@@ -2,10 +2,19 @@
 profile's vector space.
 
 Needed exactly once, when a store moves onto a profile whose vectors are not
-interchangeable with the ones already written. Today that means moving onto
-`onnx-int8`: quantization shifts pairwise cosine, so until every row is rewritten
-the write path bands an int8 vector against fp32 neighbours, which is a comparison
-across two spaces and lands on the wrong side of `t_high` for near-duplicates.
+interchangeable with the ones already written. Two profiles are in that position
+and they are not equally forgiving about being half done.
+
+`onnx-int8` is the same model quantized. Until every row is rewritten the write
+path bands an int8 vector against fp32 neighbours, which is a comparison across
+two spaces and lands on the wrong side of `t_high` for near-duplicates. The drift
+is a small systematic contraction, so the error direction is the safe one: a
+near-duplicate opens a confirm round-trip rather than merging silently.
+
+`micro` is a DIFFERENT MODEL, and the mixed state there has no safe direction.
+gte-small's cosines carry no relationship at all to nomic's, so a part-converted
+store can merge unrelated facts as readily as it can split identical ones. The
+re-embed is mandatory rather than recommended, and it wants a quiet window.
 
 Moving between `legacy-torch` and `onnx-fp32` needs nothing. Those two produce
 interchangeable vectors and therefore share a stamp, so this command correctly

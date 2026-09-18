@@ -56,9 +56,50 @@ MERGED_INSTRUCTION = (
 
 # 07 §Exact formulas names this as config key `resonance.floor`, default 0.75.
 # Carried as a default argument, matching BandThresholds' handling of the
-# `dedup.t_high`/`dedup.t_low` config keys -- no code in this repo reads the
-# config table yet (see the gate report).
+# `dedup.t_high`/`dedup.t_low` config keys.
 RESONANCE_FLOOR = 0.75
+
+#: Per-profile overrides, for the same reason `_PROFILE_BANDS` exists a few
+#: hundred lines below: this is an ABSOLUTE cosine, and the scale it sits on is
+#: a property of the model rather than of this engine. gte-small scores a
+#: clearly-unrelated pair around 0.71 where nomic scores it around 0.45, so the
+#: fp32 default carried over would sit under nearly every node in the store and
+#: a resonance report would resonate with anything. Nothing would error.
+#:
+#: 0.90 is a PARITY derivation, and it is weaker evidence than the dedup bands
+#: and worth naming as such. No fixture in this repo labels a resonance decision,
+#: so there is no window to measure. What is computable, and what
+#: scripts/baseline_similarity_floors_profile.py computes, is the value that
+#: makes micro partition the 17 dedup fixtures exactly as the fp32 space does at
+#: 0.75: the same pairs admitted to a report, the same pairs dropped. That
+#: preserves behaviour across the adoption, which is what an operator needs; it
+#: does not re-derive whether 0.75 was right on fp32.
+#:
+#: The window is (0.8983, 0.9005] and it is 0.0022 wide, against 0.068 on fp32.
+#: That is roughly a thirtieth of the room, and it is the same structural
+#: crowding the t_low window shows: gte-small packs its similarities into a
+#: narrower range, so every absolute threshold has less margin. Measured on
+#: x86-64 and aarch64, which put the two bounding pairs at 0.8983/0.9005 and
+#: 0.8983/0.9009; 0.90 is inside both. Verify resonance behaviour after adopting
+#: micro, and use the per-space `resonance.floor` config key if a store wants a
+#: different answer.
+_PROFILE_RESONANCE_FLOOR = {
+    "micro": 0.90,
+}
+
+
+def resonance_floor_default(name: str | None = None) -> float:
+    """The calibrated code default for an embedding profile. Lowest-precedence:
+    a per-space `resonance.floor` config row still wins, and an explicit caller
+    parameter wins over that (design/07 §Config-read contract).
+
+    Named `_default` rather than `resonance_floor` because `_resolve_config` and
+    every public entry point in this module already take a `resonance_floor`
+    parameter, and a module-level function of that name is shadowed by it inside
+    exactly the function that needs to call it."""
+    from engraphy.core import embedding
+
+    return _PROFILE_RESONANCE_FLOOR.get(name or embedding.profile(), RESONANCE_FLOOR)
 
 # Typed exceptions carrying the design/07 §Error codes ENGRAPHY_<CODE> semantic.
 # E1 raises these; E2's tool layer (not built yet) is what translates them
@@ -164,8 +205,38 @@ async def _resolve_canonical(cur, node_id):
 #: These are CODE DEFAULTS, the lowest-precedence source. A per-space
 #: `dedup.t_high` / `dedup.t_low` config row still wins, and an explicit caller
 #: parameter still wins over that (design/07 §Config-read contract).
+#: `micro` runs a different MODEL, not the same one quantized, so its bands are
+#: derived from scratch rather than nudged. Measured windows, from
+#: scripts/baseline_dedup_fixtures_profile.py:
+#:
+#:     t_high  (0.9392, 0.9710]   width 0.032
+#:     t_low   (0.9005, 0.9034]   width 0.0029
+#:
+#: 0.955 and 0.902 are the midpoints, chosen for maximum room on both sides
+#: rather than for proximity to any other profile's numbers, which would mean
+#: nothing across a different vector space.
+#:
+#: **The t_low window is 0.0029 wide, and that is the headline risk of this
+#: profile.** int8's equivalent window is 0.0125 and fp32's is 0.0221, so micro
+#: has roughly a quarter of int8's room and an eighth of fp32's at the confirm
+#: edge. The cause is structural rather than incidental: gte-small scores every
+#: pair higher and packs them into a narrower range, so the insert-to-pending
+#: distinction the fixtures encode survives with very little margin. The two
+#: fixtures that set the edge sit 0.0029 apart --
+#: `boundary_hunt_near_t_low_insert_side` at 0.9005 and
+#: `same_topic_different_incident_pending` at 0.9034 -- and nothing about the
+#: model suggests that gap widens on a wider fixture set.
+#:
+#: Measured on four hosts spanning two CPU vendors and two instruction sets
+#: (Intel i5-11600K on Windows and in a Linux container, AMD EPYC 9V74, and an
+#: Ampere aarch64 runner). All seventeen similarities agreed to four decimal
+#: places on every one, which is why a single default pair is shipped at all.
+#: That is evidence, not a guarantee: see docs/05-deployment.md for the
+#: calibration step, which stays the operator's responsibility on a host that
+#: matters.
 _PROFILE_BANDS = {
     "onnx-int8": (0.94, 0.81),
+    "micro": (0.955, 0.902),
 }
 _DEFAULT_BANDS = (0.95, 0.80)
 
@@ -278,7 +349,8 @@ async def _resolve_config(cur, space_id, thresholds, resonance_floor):
     lookup of all three keys, NO caching -- a config change is effective on the
     next write. Precedence: explicit caller parameter > config row > code
     default (BandThresholds.for_profile(), which is 0.95/0.80 on the fp32 vector
-    space and 0.94/0.80 on int8; RESONANCE_FLOOR 0.75).
+    space and 0.94/0.81 on int8; resonance_floor_default(), which is 0.75 on the fp32
+    space and 0.90 on micro).
 
     Space-safety is the in-query `space_id` filter, exactly as edge_rules,
     node_types and every other space-scoped reference table is read (config is
@@ -311,7 +383,7 @@ async def _resolve_config(cur, space_id, thresholds, resonance_floor):
         bands = thresholds
 
     if resonance_floor is None:
-        floor = _config_float(rows, "resonance.floor", RESONANCE_FLOOR)
+        floor = _config_float(rows, "resonance.floor", resonance_floor_default())
         if not (0.0 < floor <= 1.0):
             raise ConfigError(
                 f"ENGRAPHY_INTERNAL: resonance.floor must be in (0, 1], got {floor}"

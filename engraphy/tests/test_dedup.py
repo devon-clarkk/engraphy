@@ -30,6 +30,7 @@ from engraphy.core.dedup import (
     supersede,
     write,
 )
+from engraphy.tests import bandvalues as bv
 from engraphy.tests.conftest import DATABASE_URL
 
 
@@ -264,7 +265,7 @@ async def test_resolve_duplicate_distinct_preserves_source_session_across_park(p
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest", source_session="sess-parked",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest", source_session="sess-parked",
     )
     assert parked["outcome"] == "needs_confirmation"
 
@@ -285,7 +286,7 @@ async def test_resolve_duplicate_merge_source_session_lands_on_member(pool, writ
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "A novel enough sentence to add as an addendum here.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest", source_session="sess-merge-parked",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest", source_session="sess-merge-parked",
     )
     assert parked["outcome"] == "needs_confirmation"
 
@@ -372,11 +373,11 @@ async def test_write_pending_parks_no_node_row(pool, write_space, conn):
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # similarity 0.87 -> pending
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # a confirm-band similarity
     )
     assert result["outcome"] == "needs_confirmation"
     assert result["candidates"][0]["id"] == str(candidate_id)
-    assert result["candidates"][0]["similarity"] == 0.87
+    assert result["candidates"][0]["similarity"] == bv.PENDING
     assert "resolve_duplicate" in result["instruction"]
     assert result["expires_at"]
 
@@ -508,12 +509,13 @@ async def test_merge_link_novelty_corpus_includes_same_topic_peers(pool, write_s
         conn, write_space, "widget", "Priya", "Priya works as a nurse.", {}, _unit_vector_at_angle(0),
     )
     member_body = "Priya works as a nurse in Leeds at the general paediatric teaching hospital."
-    # first statement: novel vs the canonical -> merge-link a member (its embedding
-    # sits at 0.97, so a later write at the canonical's exact angle prefers the
-    # canonical as the banded candidate).
+    # first statement: novel vs the canonical -> merge-link a member (its
+    # embedding sits inside the merge band but short of the canonical's own
+    # angle, so a later write at that exact angle prefers the canonical as the
+    # banded candidate).
     first = await write(
         pool, write_space, "p1", "widget", "scope1", "Priya detail", member_body,
-        {}, _unit_vector_at_angle(math.acos(0.97)), "pytest",
+        {}, _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest",
     )
     assert first["outcome"] == "merged_linked"
 
@@ -689,7 +691,7 @@ async def test_resolve_duplicate_distinct_inserts_and_attaches_relates_to(pool, 
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # similarity 0.87 -> pending
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # a confirm-band similarity
     )
     assert parked["outcome"] == "needs_confirmation"
 
@@ -715,15 +717,15 @@ async def test_resolve_duplicate_distinct_converts_to_merge_when_world_moved(poo
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # similarity 0.87 -> pending
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # a confirm-band similarity
     )
 
     # world moved: a near-identical node landed while this write sat parked --
     # seeded at the PARKED PAYLOAD's own embedding angle (not the original
-    # candidate's), so its similarity to the payload is 1.0, not another 0.87.
+    # candidate's), so its similarity to the payload is 1.0, not another confirm-band value.
     _seed_node(
         conn, write_space, "widget", "Similar-ish exact",
-        "Similar-ish body.", {}, _unit_vector_at_angle(math.acos(0.87)),
+        "Similar-ish body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING)),
     )
 
     result = await resolve_duplicate(pool, write_space, "p1", parked["pending_id"], "distinct")
@@ -748,7 +750,7 @@ async def test_resolve_duplicate_merge_into_specific_candidate(pool, write_space
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "A genuinely novel addendum sentence not seen before.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     result = await resolve_duplicate(
@@ -788,7 +790,7 @@ async def test_resolve_duplicate_merge_non_novel_absorbs(pool, write_space, conn
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Existing body.", {},  # non-novel
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
     result = await resolve_duplicate(
         pool, write_space, "p1", parked["pending_id"], "merge", merge_into=str(candidate_id),
@@ -813,7 +815,7 @@ async def test_resolve_duplicate_merge_chases_canonical_when_target_was_merged(p
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Real canonical body.", {},  # non-novel vs the chased canonical -> absorb
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     # the candidate itself got merged into a third node while this sat parked.
@@ -841,7 +843,7 @@ async def test_resolve_duplicate_merge_target_archived_raises_pending_expired(po
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     cur = conn.cursor()
@@ -859,7 +861,7 @@ async def test_resolve_duplicate_ttl_expired_raises(pool, write_space, conn):
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     cur = conn.cursor()
@@ -882,7 +884,7 @@ async def test_resolve_duplicate_scope_unwritable_raises(pool, write_space, conn
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     cur = conn.cursor()
@@ -904,7 +906,7 @@ async def test_resolve_duplicate_by_non_author_raises_not_found(pool, write_spac
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     cur = conn.cursor()
@@ -927,7 +929,7 @@ async def test_resolve_duplicate_merge_without_merge_into_raises_value_error(poo
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
 
     with pytest.raises(ValueError, match="merge_into"):
@@ -943,9 +945,9 @@ async def test_resolve_duplicate_merge_without_merge_into_raises_value_error(poo
 
 
 async def test_supersede_self_exclusion_replacement_does_not_band_against_old(pool, write_space, conn):
-    """Trap #2: the replacement is *supposed* to be ~0.9-similar to what it
-    replaces. Without old_id excluded from the candidate set that 0.9 lands in
-    the PENDING band and the supersede parks instead of writing -- so this test
+    """Trap #2: the replacement is *supposed* to be very similar to what it
+    replaces. Without old_id excluded from the candidate set that similarity lands
+    in the PENDING band and the supersede parks instead of writing -- so this test
     is the whole reason §Supersede atomicity says to exclude it."""
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0)
@@ -954,7 +956,7 @@ async def test_supersede_self_exclusion_replacement_does_not_band_against_old(po
     result = await supersede(
         pool, write_space, "p1", str(old_id), "widget", "scope1",
         "New node", "New body, a revision of the old one.", {},
-        _unit_vector_at_angle(math.acos(0.9)), "pytest",  # 0.9 vs old -> PENDING if not excluded
+        _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",  # vs old -> PENDING if not excluded
     )
     assert result["outcome"] == "inserted"
     assert result["superseded"] == str(old_id)
@@ -980,7 +982,7 @@ async def test_supersede_cross_type_rejected(pool, write_space, conn):
     with pytest.raises(ValidationError, match="ENGRAPHY_VALIDATION"):
         await supersede(
             pool, write_space, "p1", str(old_id), "error", "scope1",
-            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(0.9)), "pytest",
+            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
         )
 
     cur = conn.cursor()
@@ -1001,7 +1003,7 @@ async def test_supersede_non_active_old_node_rejected(pool, write_space, conn):
     with pytest.raises(ValidationError, match="ENGRAPHY_VALIDATION"):
         await supersede(
             pool, write_space, "p1", str(old_id), "widget", "scope1",
-            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(0.9)), "pytest",
+            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
         )
 
 
@@ -1105,10 +1107,10 @@ async def test_supersede_refuses_pending_band_third_node_collision(pool, write_s
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(math.pi / 2)
     )
-    # third node at similarity 0.87 to the replacement (e1) -> PENDING band
+    # third node in the confirm band against the replacement (e1)
     _seed_node(
         conn, write_space, "widget", "Near neighbour", "Near body.", {},
-        _unit_vector_at_angle(math.acos(0.87)),
+        _unit_vector_at_angle(math.acos(bv.PENDING)),
     )
 
     with pytest.raises(SupersedeUnresolvedBandError):
@@ -1132,7 +1134,7 @@ async def test_supersede_without_matching_edge_rule_raises_edge_rule_violation(p
         await supersede(
             pool, write_space, "p1", str(old_id), "error", "scope1",
             "New error", "New error body.", {},
-            _unit_vector_at_angle(math.acos(0.9)), "pytest",
+            _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
         )
 
     cur = conn.cursor()
@@ -1170,7 +1172,7 @@ async def test_supersede_replacement_scope_unwritable_raises_scope_unknown(pool,
     ):
         await supersede(
             pool, write_space, "p1", str(old_id), "widget", "p2-private",
-            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(0.9)), "pytest",
+            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
         )
 
     cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
@@ -1195,7 +1197,7 @@ async def test_import_mode_pending_goes_to_review_queue_not_parked(pool, write_s
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # 0.87 -> PENDING band
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # confirm band
         import_mode=True,
     )
 
@@ -1203,7 +1205,7 @@ async def test_import_mode_pending_goes_to_review_queue_not_parked(pool, write_s
     assert result["outcome"] == "review_queued"
     assert result["incoming"] == {"title": "Similar-ish", "body": "Similar-ish body."}
     assert result["candidate"]["id"] == str(candidate_id)
-    assert result["similarity"] == 0.87
+    assert result["similarity"] == bv.PENDING
 
     cur = conn.cursor()
     # the gate: NOT parked, and no node row either (it is still the PENDING band).
@@ -1224,7 +1226,7 @@ async def test_import_mode_pending_goes_to_review_queue_not_parked(pool, write_s
     assert len(rows) == 1
     band, similarity, node_id, logged_candidate = rows[0]
     assert band == "pending"
-    assert round(similarity, 2) == 0.87
+    assert round(similarity, 2) == bv.PENDING
     assert node_id is None
     assert str(logged_candidate) == str(candidate_id)
 
@@ -1352,14 +1354,14 @@ async def test_resonance_excludes_the_canonical_just_merged_into(pool, write_spa
 
 async def test_resonance_is_any_type_and_respects_the_floor(pool, write_space, conn):
     """Widened vs the dedup candidate query: ANY type, not just same-type.
-    And the 0.75 floor is a floor: a 0.5-similar node is not a resonance."""
+    And the floor is a floor: a node below it is not a resonance."""
     error_id = _seed_node(
         conn, write_space, "error", "A different type", "Other body.", {},
-        _unit_vector_at_angle(math.acos(0.79)),
+        _unit_vector_at_angle(math.acos(bv.RESONATES)),
     )
     _seed_node(
         conn, write_space, "widget", "Too far away", "Far body.", {},
-        _unit_vector_at_angle(math.acos(0.5)),  # 0.5 < 0.75 floor
+        _unit_vector_at_angle(math.acos(bv.BELOW_RESONANCE)),
     )
 
     result = await write(
@@ -1374,15 +1376,15 @@ async def test_resonance_is_any_type_and_respects_the_floor(pool, write_space, c
     assert entry["type"] == "error"
     assert entry["scope"] == "scope1"
     assert entry["title"] == "A different type"
-    assert entry["similarity"] == 0.79
+    assert entry["similarity"] == bv.RESONATES
     assert entry["links"] == []
 
 
 async def test_resonance_floor_boundary_is_inclusive(pool, write_space, conn):
-    """">= 0.75" -- the boundary value itself resonates."""
+    """The comparison is ">=", so the floor value itself resonates."""
     at_floor = _seed_node(
         conn, write_space, "widget", "Exactly at the floor", "Floor body.", {},
-        _unit_vector_at_angle(math.acos(0.75)),
+        _unit_vector_at_angle(math.acos(bv.AT_RESONANCE_FLOOR)),
     )
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
@@ -1413,12 +1415,12 @@ async def test_resonance_caps_at_top_3_ordered_by_similarity(pool, write_space, 
 
 
 async def test_resonance_carries_one_hop_link_summaries(pool, write_space, conn):
-    # 'error'-typed so the 0.9-similar resonant node resonates against a
-    # 'widget' write without ever entering its same-type candidate query (0.9
-    # would otherwise be the PENDING band, and a parked write gets no report).
+    # 'error'-typed so the resonant node resonates against a 'widget' write
+    # without ever entering its same-type candidate query (a similarity this
+    # high would otherwise be a dedup band, and a parked write gets no report).
     resonant = _seed_node(
         conn, write_space, "error", "Resonant node", "Resonant body.", {},
-        _unit_vector_at_angle(math.acos(0.9)),
+        _unit_vector_at_angle(math.acos(bv.RESONATES)),
     )
     # peers sit orthogonal (similarity 0), so they are links, not resonances.
     peer_out = _seed_node(
@@ -1458,7 +1460,7 @@ async def test_resonance_absent_from_pending_and_review_queue_envelopes(pool, wr
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
     assert parked["outcome"] == "needs_confirmation"
     assert "resonance" not in parked
@@ -1466,7 +1468,7 @@ async def test_resonance_absent_from_pending_and_review_queue_envelopes(pool, wr
     queued = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish two", "Similar-ish body two.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest", import_mode=True,
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest", import_mode=True,
     )
     assert queued["outcome"] == "review_queued"
     assert "resonance" not in queued
@@ -1510,7 +1512,7 @@ async def test_resonance_attaches_to_supersede(pool, write_space, conn):
     status='active' filter, without needing the self-exclusion."""
     resonant = _seed_node(
         conn, write_space, "error", "Resonant other type", "Resonant body.", {},
-        _unit_vector_at_angle(math.acos(0.9)),
+        _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)),
     )
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0)
@@ -1518,7 +1520,7 @@ async def test_resonance_attaches_to_supersede(pool, write_space, conn):
 
     superseded = await supersede(
         pool, write_space, "p1", str(old_id), "widget", "scope1",
-        "New node", "New body.", {}, _unit_vector_at_angle(math.acos(0.9)), "pytest",
+        "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
     )
     assert superseded["outcome"] == "inserted"
     # the 'error' node sits at the replacement's own angle -> similarity 1.0.
@@ -1534,23 +1536,23 @@ async def test_resonance_attaches_to_resolve_duplicate(pool, write_space, conn):
     )
     resonant = _seed_node(
         conn, write_space, "error", "Resonant other type", "Resonant body.", {},
-        _unit_vector_at_angle(math.acos(0.87)),
+        _unit_vector_at_angle(math.acos(bv.PENDING)),
     )
 
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # 0.87 vs candidate -> PENDING
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # vs the candidate -> PENDING
     )
     assert parked["outcome"] == "needs_confirmation"
 
     resolved = await resolve_duplicate(pool, write_space, "p1", parked["pending_id"], "distinct")
     assert resolved["outcome"] == "inserted"
     # the 'error' node at the parked payload's own angle (1.0), then the widget
-    # candidate it was parked against (0.87) -- both over the 0.75 floor, and
+    # candidate it was parked against -- both over the resonance floor, and
     # the newly inserted node itself excluded.
     assert [r["id"] for r in resolved["resonance"]] == [str(resonant), str(candidate_id)]
-    assert [r["similarity"] for r in resolved["resonance"]] == [1.0, 0.87]
+    assert [r["similarity"] for r in resolved["resonance"]] == [1.0, bv.PENDING]
 
 
 # ---- per-space config reads (QUESTIONS.md per-space-config, 2026-07-16) ------
@@ -1570,16 +1572,16 @@ def _set_config(conn, space_id, key, value):
 
 
 async def test_config_lowers_t_high_so_a_pending_write_merges(pool, write_space, conn):
-    """A 0.87-similar write is PENDING under the 0.95 default, but MERGE once the
-    space configures dedup.t_high = 0.85 -- proving the config row is read and
-    applied, with no caching (the row was set after bootstrap)."""
+    """A confirm-band write is PENDING under the profile's default t_high, but
+    MERGE once the space configures a lower one -- proving the config row is read
+    and applied, with no caching (the row was set after bootstrap)."""
     _seed_node(conn, write_space, "widget", "Existing node", "Existing body.", {}, _unit_vector_at_angle(0))
-    _set_config(conn, write_space, "dedup.t_high", 0.85)
+    _set_config(conn, write_space, "dedup.t_high", bv.CONFIG_T_HIGH_BELOW_PENDING)
 
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Existing body.", {},  # non-novel: absorbs, so the outcome
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # is 'merged', proving the band
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # is 'merged', proving the band
     )
     assert result["outcome"] == "merged"
 
@@ -1587,25 +1589,27 @@ async def test_config_lowers_t_high_so_a_pending_write_merges(pool, write_space,
 async def test_caller_thresholds_win_over_config(pool, write_space, conn):
     """Precedence: an explicit caller BandThresholds outranks the config row."""
     _seed_node(conn, write_space, "widget", "Existing node", "Existing body.", {}, _unit_vector_at_angle(0))
-    _set_config(conn, write_space, "dedup.t_high", 0.85)
+    _set_config(conn, write_space, "dedup.t_high", bv.CONFIG_T_HIGH_BELOW_PENDING)
 
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
-        thresholds=BandThresholds(),  # explicit 0.95/0.80 -> 0.87 is PENDING again
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
+        # The profile's own calibrated pair, which puts a confirm-band
+        # similarity back in the confirm band over the top of the config row.
+        thresholds=BandThresholds.for_profile(),
     )
     assert result["outcome"] == "needs_confirmation"
 
 
 async def test_config_resonance_floor_is_read(pool, write_space, conn):
-    """A 0.90-similar node resonates under the 0.75 default floor, but not once
-    the space sets resonance.floor = 0.95."""
+    """A node that resonates under the profile's default floor stops resonating
+    once the space configures a floor above it."""
     _seed_node(
         conn, write_space, "error", "A resonant node", "Resonant body.", {},
-        _unit_vector_at_angle(math.acos(0.90)),
+        _unit_vector_at_angle(math.acos(bv.RESONATES)),
     )
-    _set_config(conn, write_space, "resonance.floor", 0.95)
+    _set_config(conn, write_space, "resonance.floor", bv.ABOVE_RESONATES)
 
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
@@ -1790,7 +1794,7 @@ async def test_import_pending_review_queue_drops_links(pool, write_space, conn):
 
     result = await write(
         pool, write_space, "p1", "widget", "scope1", "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest", import_mode=True,
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest", import_mode=True,
         links=[{"type": "relates_to", "dst_id": str(peer)}],
     )
     assert result["outcome"] == "review_queued"
@@ -1809,7 +1813,7 @@ async def test_pending_parks_links_and_distinct_applies_them(pool, write_space, 
 
     parked = await write(
         pool, write_space, "p1", "widget", "scope1", "Similar-ish", "Similar-ish body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
         links=[{"type": "relates_to", "dst_id": str(peer)}],
     )
     assert parked["outcome"] == "needs_confirmation"
@@ -1830,7 +1834,7 @@ async def test_resolve_duplicate_merge_attaches_parked_links(pool, write_space, 
 
     parked = await write(
         pool, write_space, "p1", "widget", "scope1", "Similar-ish", "Candidate body.", {},
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",  # non-novel -> absorbs on merge
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",  # non-novel -> absorbs on merge
         links=[{"type": "relates_to", "dst_id": str(peer)}],
     )
     resolved = await resolve_duplicate(
@@ -2118,7 +2122,7 @@ async def test_merged_envelope_carries_the_static_instruction(pool, write_space,
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Restatement", "The original body.", {},  # non-novel restatement -> absorbs
-        _unit_vector_at_angle(math.acos(0.97)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest",
     )
     assert result["outcome"] == "merged"
     assert result["instruction"] == MERGED_INSTRUCTION
@@ -2135,7 +2139,7 @@ async def test_the_instruction_is_present_even_when_the_body_was_dropped(pool, w
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Correction", "Priya works as a paediatric nurse.", {},
-        _unit_vector_at_angle(math.acos(0.97)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest",
     )
     assert result["outcome"] == "merged"
     assert result["addendum_added"] is False, "precondition: this wording is judged a restatement"
@@ -2152,7 +2156,7 @@ async def test_resolve_duplicate_merge_inherits_the_instruction(pool, write_spac
     parked = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Maybe a duplicate", "The original body.", {},  # non-novel -> merge absorbs
-        _unit_vector_at_angle(math.acos(0.87)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
     )
     assert parked["outcome"] == "needs_confirmation"
 
@@ -2194,7 +2198,7 @@ async def test_supersede_repairs_a_contradiction_that_was_absorbed_by_auto_merge
     correction = "Priya works as a paediatric nurse at Leeds Central."
     absorbed = await write(
         pool, write_space, "p1", "widget", "scope1", "Priya's job", correction, {},
-        _unit_vector_at_angle(math.acos(0.97)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest",
     )
     assert absorbed["outcome"] == "merged"
     assert absorbed["canonical"]["id"] == str(stale)
@@ -2209,7 +2213,7 @@ async def test_supersede_repairs_a_contradiction_that_was_absorbed_by_auto_merge
     repaired = await supersede(
         pool, write_space, "p1", absorbed["canonical"]["id"], "widget", "scope1",
         "Priya's job", correction, {},
-        _unit_vector_at_angle(math.acos(0.97)), "pytest",
+        _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest",
     )
     assert repaired["outcome"] == "inserted"
     assert repaired["superseded"] == str(stale)
@@ -2240,7 +2244,7 @@ async def test_import_mode_strips_the_report_but_keeps_addendum_added(pool, writ
     result = await write(
         pool, write_space, "p1", "widget", "scope1",
         "Restatement", "The original body.", {},
-        _unit_vector_at_angle(math.acos(0.97)), "pytest", import_mode=True,
+        _unit_vector_at_angle(math.acos(bv.MERGE)), "pytest", import_mode=True,
     )
     assert set(result) == {"v", "outcome", "addendum_added"}
     assert result["outcome"] == "merged"

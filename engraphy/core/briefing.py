@@ -43,13 +43,41 @@ _SECTION_CAP = 10       # non-semantic section cap (gate Q1)
 _DEFAULT_TOP_K = 10     # semantic top_k when the pack omits it (schema maximum)
 _DEFAULT_SEMANTIC_FLOOR = 0.50   # briefing.semantic_floor default (relevance floor)
 
+#: Per-profile overrides of that default, for the same reason
+#: `dedup._PROFILE_RESONANCE_FLOOR` and `dedup._PROFILE_BANDS` exist: the floor
+#: is an absolute cosine, and the scale belongs to the model. Left uncorrected on
+#: a profile that scores everything higher, a semantic section stops selecting
+#: and starts returning whatever the vector leg ranked first, which reads as a
+#: working briefing right up until someone checks whether the contents are
+#: relevant.
+#:
+#: 0.81 is MEASURED, unlike its resonance counterpart. The
+#: `semantic_with_hint_membership` case in fixtures/briefing/section_cases.yaml
+#: labels which nodes belong in a section for one real hint, so the floor takes a
+#: window from labelled data exactly as the dedup bands do: it must sit above
+#: every excluded node and at or below every member. On micro that window is
+#: (0.7442, 0.8766], 0.1324 wide, and 0.81 is its midpoint.
+#: scripts/baseline_similarity_floors_profile.py re-derives it.
+_PROFILE_SEMANTIC_FLOOR = {
+    "micro": 0.81,
+}
+
+
+def semantic_floor_default(name: str | None = None) -> float:
+    """The calibrated code default for an embedding profile, beneath both the
+    config row and the caller parameter."""
+    from engraphy.core import embedding
+
+    return _PROFILE_SEMANTIC_FLOOR.get(name or embedding.profile(), _DEFAULT_SEMANTIC_FLOOR)
+
 
 async def _resolve_semantic_floor(cur, space_id, caller_floor):
     """The vector-leg relevance floor for semantic sections (02 §The briefing
     engine; QUESTIONS.md "semantic-section-relevance-floor", Devon option b).
-    Precedence caller-param > config `briefing.semantic_floor` > 0.50 default,
-    read per-call inside the briefing transaction (no cache), same governance
-    family as resonance.floor. A config-sourced value out of (0, 1] or non-numeric
+    Precedence caller-param > config `briefing.semantic_floor` > the active
+    profile's calibrated default (0.50 on the fp32 space), read per-call inside
+    the briefing transaction (no cache), same governance family as
+    resonance.floor. A config-sourced value out of (0, 1] or non-numeric
     fails loud via ConfigError; a caller override is trusted test surface."""
     if caller_floor is not None:
         return caller_floor
@@ -59,7 +87,7 @@ async def _resolve_semantic_floor(cur, space_id, caller_floor):
     )
     row = await cur.fetchone()
     rows = {"briefing.semantic_floor": row[0]} if row else {}
-    floor = _config_float(rows, "briefing.semantic_floor", _DEFAULT_SEMANTIC_FLOOR)
+    floor = _config_float(rows, "briefing.semantic_floor", semantic_floor_default())
     if not (0.0 < floor <= 1.0):
         raise ConfigError(
             f"ENGRAPHY_INTERNAL: briefing.semantic_floor must be in (0, 1], got {floor}"

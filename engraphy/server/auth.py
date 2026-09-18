@@ -15,7 +15,10 @@ What lives here (design/03 file reference "Token resolution, roles, rate limiter
   errors (ENGRAPHY_RATE_LIMITED / ENGRAPHY_ROLE, design/07).
 * RateLimiter -- per-token sliding 60s window, 60 reads / 30 writes per minute
   (design/03), per-space config-overridable via rate.read_per_min / rate.write_per_min.
-* Tool classification + require_write -- readonly tokens cannot call write tools.
+* Tool classification + require_write -- readonly tokens cannot call write tools,
+  and cannot capture through POST /inbox (INBOX_CAPTURE).
+* require_active_principal -- an archived principal (principals.archived) is
+  refused at the door, the same 401 as a revoked token.
 * FailureTracker -- the auth-failure ban list: repeated bad bearers from one source
   are briefly banned so a stolen-or-guessed-token loop is slow and loud (design/03
   "a stolen token bulk-exfiltrates slowly and loudly").
@@ -32,15 +35,27 @@ import secrets
 import time
 from collections import defaultdict, deque
 
-# design/03 s.The tool surface -- which core tools mutate. inbox_review is split:
-# action=list is a read, action in {promote, discard} is a write (classified per
-# call by classify_kind, since one tool name spans both).
+from engraphy.server.db import transaction
+
+# POST /inbox is a plain HTTP route rather than an MCP tool, but a capture
+# inserts a row, so app.py gates it under this name exactly as it gates a write
+# tool: readwrite tokens only, drawing on the write rate bucket. The name is what
+# a refused caller reads in the ENGRAPHY_ROLE sentence.
+INBOX_CAPTURE = "POST /inbox"
+
+# design/03 s.The tool surface -- which core tools mutate, plus the /inbox
+# capture route. inbox_review is split: action=list is a read, action in
+# {promote, discard} is a write (classified per call by classify_kind, since one
+# tool name spans both).
 WRITE_TOOLS = frozenset({
     "write", "link", "update", "supersede", "resolve_duplicate", "scope_create",
-    "admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant",
+    "admin_member_add", "admin_member_archive", "admin_token_create",
+    "admin_scope_visibility", "admin_grant",
+    INBOX_CAPTURE,
 })
 ADMIN_TOOLS = frozenset({
-    "admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant",
+    "admin_member_add", "admin_member_archive", "admin_token_create",
+    "admin_scope_visibility", "admin_grant",
 })
 _INBOX_WRITE_ACTIONS = frozenset({"promote", "discard"})
 
@@ -175,6 +190,32 @@ async def resolve_token(conn, raw_token: str) -> AuthContext:
         token_id=str(token_id), space_id=space_id, principal=principal,
         client_name=client_name, role=role, no_scope_all=no_scope_all,
     )
+
+
+async def require_active_principal(pool, ctx: AuthContext) -> None:
+    """Raise Unauthorized if the token's principal is archived. Archiving a
+    principal is the offboarding control (design/03 `principal archive`,
+    design/06 "archive members"): every token the principal holds is refused
+    from its next request, with the same 401 as a revoked token and no cache
+    window, while its row, scopes and nodes stay in place.
+
+    A separate step after resolve_token, run inside db.transaction(), on
+    purpose. `principals` is under FORCE ROW LEVEL SECURITY and principals_read
+    keys on the space GUC, which resolve_token's plain connection does not carry
+    (it runs before any identity is known). Under the app role a JOIN on
+    principals in resolve_token's lookup therefore matches zero rows and refuses
+    every bearer. transaction() sets the identity first, and principals_read
+    always admits the caller's own row. The cost is one more pooled transaction
+    per authenticated request. A missing row fails closed."""
+    async with transaction(pool, ctx.space_id, ctx.principal) as conn:
+        cur = conn.cursor()
+        await cur.execute(
+            "SELECT archived FROM principals WHERE space_id = %s AND id = %s",
+            (ctx.space_id, ctx.principal),
+        )
+        row = await cur.fetchone()
+    if row is None or row[0]:
+        raise Unauthorized("principal archived")
 
 
 def classify_kind(tool_name: str, arguments: dict | None = None) -> str:

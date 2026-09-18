@@ -57,6 +57,18 @@ async def _assert_space_admin(conn, ctx) -> None:
         raise ToolError("ROLE", "this principal is not a space_admin")
 
 
+async def _principal_archived(conn, space_id: str, principal_id: str) -> bool:
+    """Whether `principal_id` exists in this space and is archived. An unknown
+    principal answers False, so the caller's own not-found path still runs."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT archived FROM principals WHERE space_id = %s AND id = %s",
+        (space_id, principal_id),
+    )
+    row = await cur.fetchone()
+    return row is not None and row[0]
+
+
 async def _audit(conn, ctx, action: str, detail: dict) -> None:
     """One audit_log row per mutating admin call (design/03 §Audit). audit_log
     is instance-level (not RLS-covered); the ungated INSERT grant covers it.
@@ -102,6 +114,46 @@ async def admin_member_add(pool, ctx, arguments: dict) -> dict:
         raise to_tool_error(exc) from exc
 
 
+async def admin_member_archive(pool, ctx, arguments: dict) -> dict:
+    """{id, archived?} -> {"v": 1, "principal": {updated row}}.
+
+    The network counterpart of `engraphy-admin principal archive` (design/06: a
+    space_admin adds and archives members). With `archived` absent or true the
+    member is archived: every token it holds is refused at the door from its
+    next request (auth.require_active_principal), and its row, scopes and nodes
+    stay in place. `archived: false` restores it, and its tokens that are not
+    revoked authenticate again from their next request.
+
+    A space_admin may archive another space_admin, the same way it may create
+    one, but never itself: archiving the acting principal would refuse the very
+    credential making the call, and a space whose last admin did so would have
+    no network administrator left. Unknown member -> ENGRAPHY_NOT_FOUND.
+    Migration 0026's principals_admin_update policy is the RLS backstop."""
+    try:
+        member_id = arguments["id"]
+        archived = bool(arguments.get("archived", True))
+        async with transaction(pool, ctx.space_id, ctx.principal) as conn:
+            await _assert_space_admin(conn, ctx)
+            if archived and member_id == ctx.principal:
+                raise ToolError("VALIDATION", "a space_admin cannot archive itself")
+            cur = conn.cursor()
+            await cur.execute(
+                f"UPDATE principals SET archived = %s WHERE space_id = %s AND id = %s "
+                f"RETURNING {_PRINCIPAL_COLS}",
+                (archived, ctx.space_id, member_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise ToolError("NOT_FOUND", f"principal '{member_id}' does not exist")
+            await _audit(conn, ctx, "admin_member_archive",
+                         {"principal": member_id, "archived": archived})
+        return {"v": 1, "principal": _principal_row(row)}
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise to_tool_error(exc) from exc
+
+
 async def admin_token_create(pool, ctx, arguments: dict) -> dict:
     """{principal, client_name, role, no_scope_all?} -> {"v": 1, "token":
     "<plaintext>", "principal", "client_name", "role", "no_scope_all",
@@ -129,6 +181,15 @@ async def admin_token_create(pool, ctx, arguments: dict) -> dict:
         no_scope_all = bool(arguments.get("no_scope_all", False))
         async with transaction(pool, ctx.space_id, ctx.principal) as conn:
             await _assert_space_admin(conn, ctx)
+            # An archived principal is refused at the door on every request
+            # (auth.require_active_principal), so a token minted for one could
+            # never authenticate. Refuse the mint and say why, rather than hand
+            # back a credential that is dead on arrival.
+            if await _principal_archived(conn, ctx.space_id, target):
+                raise ToolError(
+                    "VALIDATION",
+                    f"principal '{target}' is archived; restore it before minting a token for it",
+                )
             try:
                 raw, metadata = await mint_token(
                     conn, ctx.space_id, target, client_name, role,

@@ -36,3 +36,6 @@ runs/
 # into the repo). Never committed: the graphs are hundreds of megabytes.
 .hfc/
 .hfcache-linux/
+
+# Claude Code working directory -- per-machine agent settings, not product.
+.claude/

@@ -13,6 +13,7 @@ ASGITransport does not drive ASGI lifespan itself, so `_running_app` below
 hand-simulates the lifespan.startup/shutdown handshake around each test.
 """
 import contextlib
+import json
 
 import anyio
 import httpx
@@ -21,6 +22,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from engraphy.server.app import (
+    INBOX_MAX_BODY_BYTES,
     SchemaVersionMismatch,
     applied_schema_version,
     check_schema_version,
@@ -169,7 +171,8 @@ async def test_tools_list_includes_all_fourteen_core_tools(pool, app_space):
         "write", "resolve_duplicate", "update", "link", "supersede",
         "get", "search", "traverse", "briefing", "pending_list", "stats", "inbox_review",
         "scope_list", "scope_guide", "scope_create",
-        "admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant",
+        "admin_member_add", "admin_member_archive", "admin_token_create",
+        "admin_scope_visibility", "admin_grant",
     }
 
 
@@ -272,13 +275,123 @@ async def test_inbox_capture_endpoint_parks_a_pending_row(pool, app_space, conn)
     assert cur.fetchone() == ("note", "pending")
 
 
+async def test_inbox_capture_refuses_a_readonly_token(pool, app_space, conn):
+    """POST /inbox passes the same role gate as every MCP write tool, ahead of
+    parsing the body: a readonly token is refused whether its body is well formed
+    or not, and no row lands."""
+    space_id, _raw_rw, raw_ro = app_space
+    app = create_app(pool)
+    async with _running_app(app):
+        async with _asgi_http_client(app, raw_ro) as c:
+            well_formed = await c.post("/inbox", json={"kind": "note", "payload": {"text": "x"}})
+            malformed = await c.post("/inbox", content=b"not json")
+    for resp in (well_formed, malformed):
+        assert resp.status_code == 403
+        assert resp.json()["error"].startswith("ENGRAPHY_ROLE:")
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM inbox WHERE space_id = %s", (space_id,))
+    assert cur.fetchone()[0] == 0
+
+
+async def test_inbox_capture_draws_on_the_write_rate_bucket(pool, app_space, conn):
+    """A capture inserts a row, so it counts against rate.write_per_min. The read
+    limit stays at its default of 60, so a refusal on the second capture can only
+    come from the write bucket, and the refusal says so."""
+    space_id, raw_rw, _raw_ro = app_space
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO config (space_id, key, value) VALUES (%s, 'rate.write_per_min', %s)",
+        (space_id, "1"),
+    )
+    conn.commit()
+    app = create_app(pool)
+    async with _running_app(app):
+        async with _asgi_http_client(app, raw_rw) as c:
+            first = await c.post("/inbox", json={"kind": "note", "payload": {"n": 1}})
+            second = await c.post("/inbox", json={"kind": "note", "payload": {"n": 2}})
+    assert first.status_code == 200
+    assert second.status_code == 429
+    body = second.json()
+    assert body["error"].startswith("ENGRAPHY_RATE_LIMITED: write window")
+    assert body["retry_after_ms"] > 0
+    assert int(second.headers["retry-after"]) >= 1
+    cur.execute("SELECT count(*) FROM inbox WHERE space_id = %s", (space_id,))
+    assert cur.fetchone()[0] == 1
+
+
+async def test_inbox_capture_refuses_a_body_over_the_cap(pool, app_space, conn):
+    """POST /inbox caps the request body at INBOX_MAX_BODY_BYTES. A declared
+    Content-Length over the cap and a chunked body that streams past it are
+    both refused with 413 and no row lands; a body under the cap is captured."""
+    space_id, raw_rw, _raw_ro = app_space
+    over = {"kind": "note", "payload": {"text": "x" * (INBOX_MAX_BODY_BYTES + 1)}}
+    under = {"kind": "note", "payload": {"text": "y" * (INBOX_MAX_BODY_BYTES - 1024)}}
+
+    async def chunked():
+        encoded = json.dumps(over).encode()
+        for i in range(0, len(encoded), 8192):
+            yield encoded[i:i + 8192]
+
+    app = create_app(pool)
+    async with _running_app(app):
+        async with _asgi_http_client(app, raw_rw) as c:
+            declared = await c.post("/inbox", json=over)
+            streamed = await c.post("/inbox", content=chunked())
+            accepted = await c.post("/inbox", json=under)
+    assert "content-length" not in streamed.request.headers   # the streaming path ran
+    for resp in (declared, streamed):
+        assert resp.status_code == 413
+        assert resp.json()["error"].startswith("ENGRAPHY_VALIDATION: request body exceeds")
+    assert accepted.status_code == 200
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM inbox WHERE space_id = %s", (space_id,))
+    assert cur.fetchone()[0] == 1
+
+
+_MCP_INITIALIZE = {
+    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+               "clientInfo": {"name": "pytest", "version": "0"}},
+}
+
+
+async def test_an_archived_principal_is_refused_on_every_route(pool, app_space, conn):
+    """principals.archived is the offboarding control: once it is set, every
+    token the principal holds answers 401 on /mcp and on /inbox from the next
+    request, and clearing it restores access just as promptly (no cache window
+    either way). The check reads principals under the caller's own RLS
+    identity; every other test in this file is the positive control that an
+    active principal still authenticates through it."""
+    space_id, raw_rw, raw_ro = app_space
+    mcp_headers = {"Accept": "application/json, text/event-stream"}
+    cur = conn.cursor()
+    cur.execute("UPDATE principals SET archived = true WHERE space_id = %s AND id = 'p1'", (space_id,))
+    conn.commit()
+    app = create_app(pool)
+    async with _running_app(app):
+        for raw in (raw_rw, raw_ro):
+            async with _asgi_http_client(app, raw) as c:
+                inbox = await c.post("/inbox", json={"kind": "note", "payload": {}})
+                mcp = await c.post("/mcp/", json=_MCP_INITIALIZE, headers=mcp_headers)
+            assert inbox.status_code == 401
+            assert mcp.status_code == 401
+
+        cur.execute("UPDATE principals SET archived = false WHERE space_id = %s AND id = 'p1'", (space_id,))
+        conn.commit()
+        async with _asgi_http_client(app, raw_rw) as c:
+            restored = await c.post("/inbox", json={"kind": "note", "payload": {}})
+    assert restored.status_code == 200
+    cur.execute("SELECT count(*) FROM inbox WHERE space_id = %s", (space_id,))
+    assert cur.fetchone()[0] == 1
+
+
 # ---- boot-time checks (no ASGI/lifespan needed) ------------------------------
 
 
 def test_expected_schema_version_is_the_latest_migration_file():
-    # engraphy/db/migrations' newest file (migration 0024, the rename of every
-    # remaining `engram` database identifier to `engraphy`).
-    assert expected_schema_version() == "0024"
+    # engraphy/db/migrations' newest file (migration 0026, the principals UPDATE
+    # policy behind admin_member_archive).
+    assert expected_schema_version() == "0026"
 
 
 async def test_applied_schema_version_reads_the_migration_table(pool):

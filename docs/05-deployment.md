@@ -25,15 +25,16 @@ overview and the reference for auth, scopes, and day-2 tasks.
 
 ## Embedding profiles
 
-One model, one pinned revision, three ways to run it. All three emit the same
-384-dim unit vectors into the same `vector(384)` column, so no profile implies a
-schema change.
+Four profiles. Every one emits 384-dim unit vectors into the same
+`vector(384)` column, so no profile implies a schema change. Three of them run
+one model at one pinned revision; the fourth runs a different, smaller model.
 
 | Profile | Runs on | Vector space | Notes |
 |---|---|---|---|
 | `onnx-fp32` (default) | ONNX Runtime, full graph | same as `legacy-torch` | The shipped default. Reproduces the torch vectors to float noise. |
 | `onnx-int8` | ONNX Runtime, quantized graph | its own | Smaller and faster. Calibrate on the target host first, see below. |
 | `legacy-torch` | sentence-transformers | same as `onnx-fp32` | Needs `pip install '.[legacy-torch]'`; see `requirements-cpu.txt`. |
+| `micro` | ONNX Runtime, gte-small int8 | its own | 143 MB steady against the default's 882 MB, for about 6% less recall than `onnx-int8`. A full re-embed is mandatory: [docs/micro-reembed.md](micro-reembed.md). |
 
 **Switching between `onnx-fp32` and `legacy-torch` is a restart.** Their vectors
 are interchangeable and they share a stamp in `nodes.embedding_model`, so nothing
@@ -71,6 +72,77 @@ engraphy-admin config set --space <space> --key dedup.t_low --value 0.80
 The `onnx-fp32` and `legacy-torch` profiles need none of this. They are
 bit-reproducible and leave 0.040 of room at the same edge.
 
+**`micro` moves four thresholds, not two, and ships all four calibrated.** It
+runs a different model, so every absolute cosine in the engine moves with it:
+
+| | fp32 default | `micro` |
+|---|---:|---:|
+| `dedup.t_high` | 0.95 | 0.955 |
+| `dedup.t_low` | 0.80 | 0.902 |
+| `resonance.floor` | 0.75 | 0.90 |
+| `briefing.semantic_floor` | 0.50 | 0.81 |
+
+The first three are per-space config keys and the shipped values are code
+defaults beneath them. Read-time near-duplicate collapse also moves, to 0.97, and
+it is a code default with no config key (`core/search.py`).
+
+Two scripts re-derive these on the host that will run them, and both report the
+WINDOW each threshold has rather than a single value, which is the number that
+says whether a shipped default survives your hardware:
+
+```
+python scripts/baseline_dedup_fixtures_profile.py --profile micro \
+    --t-high 0.955 --t-low 0.902
+python scripts/baseline_similarity_floors_profile.py --profile micro
+```
+
+`micro`'s `t_low` window is 0.0029 wide, against 0.0221 on the fp32 space. It
+held on four hosts across two instruction sets, which is why one default ships,
+but re-derive it if the store matters. Adopting `micro` on an existing store is a
+mandatory full re-embed and the procedure is
+[docs/micro-reembed.md](micro-reembed.md).
+
+## Resident memory
+
+Measured 2026-09-09 against a 20,000-node store, reading `anon + shmem` from the
+container cgroups. Full breakdown and method in
+[footprint-2026-09-09.md](footprint-2026-09-09.md).
+
+| configuration | server | Postgres | total |
+|---|---:|---:|---:|
+| default profile (`onnx-fp32`), stock Postgres | 872 MB | 111 MB | 983 MB |
+| `micro` profile, stock Postgres | 132 MB | 111 MB | 243 MB |
+| `micro` + `compose.small.yaml` | 132 MB | 46 MB | 178 MB |
+| the above, with a client connected | 133 MB | 54 MB | **187 MB** |
+| the above, idle, with `compose.lazy.yaml` | 49 MB | 46 MB | 95 MB |
+
+Quote **187 MB**. The 178 MB row was measured with no client attached; a
+connected client opens the pool's backends and Postgres grows by the difference,
+and a deployment nobody is connected to is not the case worth budgeting for.
+
+For a laptop, stack the two overlays that exist for it:
+
+```
+docker compose -f compose.yaml -f compose.micro.yaml -f compose.small.yaml up -d
+```
+
+`compose.small.yaml` tunes Postgres for a personal store rather than for a
+database server, which is where the second-largest saving is: `shared_buffers`
+at the 128MB default is reserved whether or not a few thousand rows need it.
+Every compose command for that stack has to carry the same `-f` set, including
+`run` and `exec`, because compose resolves a service from the files it is given
+and will otherwise recreate Postgres from the base file.
+
+`compose.lazy.yaml` defers the model load to the first search. It lowers what an
+IDLE instance holds and not what a working one holds, and it makes `/healthz`
+report liveness rather than readiness. See
+`engraphy/core/embedding.py::lazy_load`.
+
+On Windows, measure the whole picture before promising a number: Docker
+Desktop's own processes measured 730MB on the test host, which is several times
+the tuned stack. The no-Docker path below is the smaller footprint on those
+machines by a wide margin.
+
 ## Running as a service
 
 ### Local / overlay (systemd / launchd)
@@ -88,6 +160,29 @@ bit-reproducible and leave 0.040 of room at the same edge.
 The server refuses to bind a *public* interface in plaintext unless
 `ENGRAPHY_INSECURE_TRANSPORT_OK=true`; loopback / RFC1918 / CGNAT / tailnet ranges are
 exempt and need no opt-in.
+
+### Windows (no Docker)
+
+For a Windows laptop, `Engraphy-Setup-<version>-win-x64.exe` is a single
+installer that lays down PostgreSQL 16 with pgvector, the server as a frozen
+binary, and the embedding model, creates the database and a space, and registers
+a logon task. It needs no Docker, no Python, and no toolchain, and it needs
+nothing started by hand afterwards.
+
+```
+engraphy-win status      what is running, on what port, and what /healthz says
+engraphy-win selftest    prove the install is complete, no database needed
+engraphy-win stop        stop the server and the cluster
+```
+
+The cluster listens on `127.0.0.1:55432` rather than 5432, so it does not
+contend with any other PostgreSQL on the machine, and the server on
+`127.0.0.1:8000`. Both are per-user, under `%LOCALAPPDATA%`, and neither the
+install nor the daily running needs administrator rights.
+
+Design, the version pairing, the measured footprint and the build steps are in
+[windows-native.md](windows-native.md) and
+[`deploy/windows/README.md`](../deploy/windows/README.md).
 
 ### Cloud (Docker + reverse proxy)
 
@@ -130,9 +225,13 @@ exempt and need no opt-in.
   on every write, so never share a token across devices. Mint with `engraphy-admin
   token create …`; revoke with `engraphy-admin token revoke …` (effective on the
   next request — no cache window). A `role` of `readwrite` or `readonly` gates
-  write tools.
+  write tools and `POST /inbox`.
 - **Principals** are actors in a space. Each CLI-created principal gets a private,
-  ambient `personal-<id>` scope in the same transaction.
+  ambient `personal-<id>` scope in the same transaction. To offboard a principal,
+  run `engraphy-admin principal archive --space … --id …`, or have a space_admin
+  call `admin_member_archive`. Every token that principal holds is refused from
+  its next request, and its scopes and nodes stay in place.
+  `engraphy-admin principal unarchive` restores it.
 - **Scopes** are isolation containers with a `visibility`:
   - `private` — owner + explicit grants only.
   - `team-read` — every principal in the space may read.
@@ -157,6 +256,8 @@ engraphy.admin.cli <verb>` if `engraphy-admin` isn't on `PATH`.
 |---|---|
 | `space create --id … --display-name … --principal …` | create a space + founding `space_admin` + personal scope + restore sentinel. |
 | `principal add --space … --id … --display-name … [--role …]` | add a member (+ their personal scope). |
+| `principal archive --space … --id …` | offboard a member: every token they hold is refused from the next request; their scopes and nodes stay. |
+| `principal unarchive --space … --id …` | restore an archived member: their tokens that are not revoked authenticate again from the next request. |
 | `token create / token revoke` | mint / revoke a bearer token. |
 | `config set --space … --key … --value …` | set a per-space config value (JSON), e.g. `dedup.t_high`, `space_admin_tools`. |
 | `pack validate / pack apply / pack upgrade` | validate, apply, or migrate a pack's ontology. |

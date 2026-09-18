@@ -38,21 +38,34 @@ def test_embed_distinguishes_different_text():
 
 
 # Task prefixes (QUESTIONS.md embedding-task-prefix, Fable option b): the wrappers
-# prepend the pinned model's mandated prefix and defer to core embed().
+# prepend the prefix the ACTIVE profile's model expects and defer to core embed().
+# Read through document_prefix() / query_prefix() rather than the module constants,
+# which are nomic's: a profile running a model that was trained without a task
+# instruction takes none (core/embedding.py, section Backends).
 
 def test_embed_document_prepends_document_prefix():
     text = "A title\nA body."
-    assert embedding.embed_document(text) == embedding.embed(embedding.DOCUMENT_PREFIX + text)
+    assert embedding.embed_document(text) == embedding.embed(
+        embedding.document_prefix() + text)
 
 
 def test_embed_query_prepends_query_prefix():
     text = "how do I descale the coffee machine"
-    assert embedding.embed_query(text) == embedding.embed(embedding.QUERY_PREFIX + text)
+    assert embedding.embed_query(text) == embedding.embed(embedding.query_prefix() + text)
 
 
-def test_document_and_query_prefixes_differ():
+def test_the_legs_agree_with_the_model_about_asymmetry():
+    """Whether the two legs differ is the MODEL's design, not this engine's, so
+    the assertion follows the profile's own prefixes. nomic was trained with two
+    distinct task instructions and its legs must differ; a model trained without
+    one is symmetric on both legs. Demanding one shape for every profile would be
+    demanding that a model do something it was never trained to do."""
     text = "Coffee maker needs descaling\nDescale monthly."
-    assert embedding.embed_document(text) != embedding.embed_query(text)
+    doc, query = embedding.embed_document(text), embedding.embed_query(text)
+    if embedding.document_prefix() == embedding.query_prefix():
+        assert doc == query
+    else:
+        assert doc != query
 
 
 def test_embed_document_is_unit_norm():

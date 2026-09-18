@@ -103,6 +103,23 @@ async def test_update_unknown_id_raises_not_found(pool, write_space):
         )
 
 
+async def test_update_archived_node_raises_validation_and_leaves_it_unchanged(pool, write_space, conn):
+    """An archived node is quarantined content (design/04): readable by id,
+    restored by an operator, and read-only through update. Both the attrs-only
+    path and the re-embedding path are refused before anything is written."""
+    nid = _seed_node(conn, write_space, "widget", "Original title", "Original body.", {}, _VEC_A)
+    cur = conn.cursor()
+    cur.execute("UPDATE nodes SET status = 'archived' WHERE id = %s", (nid,))
+    conn.commit()
+
+    for kwargs in ({"attrs": {"color": "blue"}}, {"title": "A rewritten title"}):
+        with pytest.raises(ValidationError, match=f"node {nid} is archived"):
+            await update(pool, write_space, "p1", str(nid), embed_document=_stub_embed, **kwargs)
+
+    cur.execute("SELECT title, attrs, embedding_model FROM nodes WHERE id = %s", (nid,))
+    assert cur.fetchone() == ("Original title", {}, "test-model")
+
+
 async def test_update_no_fields_supplied_is_a_no_op(pool, write_space, conn):
     nid = _seed_node(conn, write_space, "widget", "Original title", "Original body.", {}, _VEC_A)
     result = await update(pool, write_space, "p1", str(nid), embed_document=_stub_embed)
