@@ -47,6 +47,8 @@ from typing import Protocol, runtime_checkable
 
 __all__ = [
     "DEFAULT_MODEL",
+    "OPENAI_ROLE_MODELS",
+    "OPENAI_ROLE_MODEL_ENV",
     "PROMPTS_DIR",
     "ROLE_MODELS",
     "AnthropicClient",
@@ -55,6 +57,8 @@ __all__ = [
     "LLMResponse",
     "StubLLM",
     "load_prompt",
+    "openai_model_for",
+    "openai_role_manifest",
     "prompt_hash",
 ]
 
@@ -101,6 +105,85 @@ ROLE_MODELS: dict[str, dict[str, str]] = {
     # instability is measured on every run rather than assumed either way.
     "judge":       {"provider": "gemini",     "model": "gemini-flash-lite-latest"},
 }
+
+# --------------------------------------------------- the reproducible route
+# What each role runs when the whole harness routes through an OpenAI-compatible
+# endpoint (`bench.core.run --provider openai`). `bench/RUN-LOCOMO.md` is the
+# walkthrough; this is the pin.
+#
+# **These ids are the ones the published LoCoMo figure was produced with**, and
+# they are pinned here rather than only in the documentation so that a run which
+# quietly used something else is visible in the manifest as a difference from
+# this table. The extractor and reader are Opus because extraction quality sets
+# the ceiling on every downstream number; the judge is Sonnet because binary
+# answer-matching against a supplied gold answer does not need Opus (Devon,
+# 2026-07-22). Best-of-3 majority grading is part of the same pin and lives in
+# `judge.JUDGE_PASSES`.
+#
+# **The model ids are the pin, the endpoint is not.** These are Claude ids and
+# several endpoints serve them: Anthropic's own OpenAI-compatibility layer, and
+# gateways such as OpenRouter or LiteLLM. Reproducing the *configuration* means
+# reaching these ids; the base URL is whichever route the operator has.
+#
+# **Changing any of them changes the number.** A run on different reader and
+# judge models measures a different system, and the report should not be
+# compared to the published figure. Every id here is overridable so that
+# comparison is possible on purpose, and each override is recorded in the
+# manifest so it is never accidental:
+#
+#     ENGRAPHY_BENCH_EXTRACTOR_MODEL
+#     ENGRAPHY_BENCH_READER_MODEL
+#     ENGRAPHY_BENCH_ADJUDICATOR_MODEL
+#     ENGRAPHY_BENCH_JUDGE_MODEL
+OPENAI_ROLE_MODELS: dict[str, str] = {
+    "extractor": "claude-opus-4-8",
+    "reader": "claude-opus-4-8",
+    "adjudicator": "claude-opus-4-8",
+    "judge": "claude-sonnet-5",
+}
+
+OPENAI_ROLE_MODEL_ENV: dict[str, str] = {
+    "extractor": "ENGRAPHY_BENCH_EXTRACTOR_MODEL",
+    "reader": "ENGRAPHY_BENCH_READER_MODEL",
+    "adjudicator": "ENGRAPHY_BENCH_ADJUDICATOR_MODEL",
+    "judge": "ENGRAPHY_BENCH_JUDGE_MODEL",
+}
+
+
+def openai_model_for(role: str) -> str:
+    """The model id one role runs on over the OpenAI-compatible route.
+
+    The pinned id unless its environment variable overrides it. Resolution lives
+    here, next to the pin, so there is one authority for what ran and the
+    manifest can record both the pin and the deviation.
+    """
+    from bench.core.providers import _setting
+
+    try:
+        pinned = OPENAI_ROLE_MODELS[role]
+    except KeyError:
+        raise LLMError(
+            f"unknown role {role!r}; the harness has {sorted(OPENAI_ROLE_MODELS)}"
+        ) from None
+    return _setting(OPENAI_ROLE_MODEL_ENV[role], pinned)
+
+
+def openai_role_manifest() -> dict:
+    """The role table for the manifest, marking every id that is not the pin.
+
+    A reader of a published run must be able to tell a reproduction of the
+    pinned configuration from a run that swapped a model, without diffing this
+    file against the report.
+    """
+    out: dict[str, dict] = {}
+    for role, pinned in OPENAI_ROLE_MODELS.items():
+        resolved = openai_model_for(role)
+        entry = {"provider": "openai-compat", "model": resolved, "pinned_model": pinned}
+        if resolved != pinned:
+            entry["overridden_by"] = OPENAI_ROLE_MODEL_ENV[role]
+        out[role] = entry
+    return out
+
 
 PROMPTS_DIR = pathlib.Path(__file__).resolve().parents[1] / "prompts"
 

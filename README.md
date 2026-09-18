@@ -194,6 +194,9 @@ the operator CLI are implemented and covered by a live-Postgres test suite plus 
 CI job that exercises the shipped deploy artifacts end to end. A benchmark harness
 (`bench/`, design/09) runs the engine against public long-term-memory datasets;
 it is a tool for measuring changes, not a source of marketing numbers.
+[`bench/RUN-LOCOMO.md`](bench/RUN-LOCOMO.md) is the walkthrough for running LoCoMo
+yourself: it needs an OpenAI-compatible base URL and key, and it pins the dataset,
+the arm, the models and the judge.
 
 ## Contributing
 

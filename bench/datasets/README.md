@@ -1,5 +1,8 @@
 # Benchmark datasets — acquisition
 
+[`bench/RUN-LOCOMO.md`](../RUN-LOCOMO.md) is the end-to-end walkthrough; this page
+is the dataset half of it, in more detail.
+
 Datasets are **not committed**. `datasets/` is gitignored: LoCoMo is CC BY-NC 4.0
 (not ours to redistribute) and the files are large.
 
