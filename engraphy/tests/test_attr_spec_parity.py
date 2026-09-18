@@ -27,7 +27,12 @@ DATABASE_URL = os.environ.get(
 # before migration 0017 the two implementations agreed *because* neither had
 # the exemption, and this pool's omission of the key is why the divergence
 # introduced by fixing one side alone would have gone unnoticed.
-KEYS = ["addenda", "alpha", "beta", "gamma", "delta", "epsilon"]
+# `dropped` joins `addenda` in the pool for the same reason (migration 0028):
+# it is engine-reserved, exempt from the Phase-3 closed-spec check, AND it
+# satisfies a required key in Phase 1 when present as an object bucket. All
+# three behaviors are only trustworthy if the fuzzer can generate the key, as a
+# bucket value and as a plain value, so any divergence surfaces here.
+KEYS = ["addenda", "dropped", "alpha", "beta", "gamma", "delta", "epsilon"]
 TYPES = ["string", "int", "number", "bool", "date"]
 ENUM_POOL = ["a", "b", "c", "d", "yes", "no", "true", "open", "closed", "command"]
 
@@ -63,6 +68,10 @@ _value_strategy = st.one_of(
             "command",
             "2026-01-15",
             "2026-02-30",  # regex-valid, cast-invalid
+            "2026",        # flexible partial: year-only (valid)
+            "2026-02",     # flexible partial: year+month (valid)
+            "2026-13",     # partial regex-valid, month out of range (cast-invalid)
+            "2026-2",      # non-zero-padded month: regex-invalid
             "06/07/2026",  # regex-invalid
             "x" * 2000,
             "x" * 2001,

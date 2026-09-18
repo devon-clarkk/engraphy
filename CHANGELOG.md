@@ -31,6 +31,16 @@ verified migration runner in the admin image.
   binary for the architecture it builds. Any other architecture fails the build.
 
 ### Changed
+- A `date` attr accepts a full ISO date, a year and month (`2026-01`), or a year
+  (`2026`), and stores the value exactly as written. An out-of-range month or
+  day is refused, and a month must be zero-padded so stored dates sort in
+  chronological order.
+- A write whose attr value does not fit its declared type stores the node and
+  sets that value aside under `attrs.dropped`, naming it in the envelope's
+  `dropped_attrs`. A required attr stays satisfied by its quarantined entry, so
+  a node carrying an imprecise date keeps the rest of its content. A key the
+  node type does not declare is still refused under a closed spec. `write`,
+  `supersede` and `update` all answer this way.
 - The answer-discipline skill has an agent confirm that a returned memory is
   about the subject and the occasion a question asks about before answering from
   it, and before declining for want of it. Shared wording about a different

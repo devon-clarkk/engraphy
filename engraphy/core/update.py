@@ -15,7 +15,7 @@ reserved key on the caller's `attrs`, same as write().
 from psycopg.types.json import Jsonb
 
 from engraphy.core import embedding
-from engraphy.core.attr_spec import RESERVED_ATTR_KEYS
+from engraphy.core.attr_spec import RESERVED_ATTR_KEYS, sanitize_attrs
 from engraphy.core.attr_spec import searchable_keys as _searchable_keys
 from engraphy.core.dedup import (
     ATTR_SURFACE_KEY,
@@ -102,12 +102,19 @@ async def update(
             "SELECT attr_spec FROM node_types WHERE space_id = %s AND name = %s",
             (space_id, node_type))
         srow = await cur.fetchone()
+        spec = srow[0] if srow and srow[0] is not None else {}
+        # Never destroy the amended node over a bad attr value: quarantine an
+        # invalid attr into the `dropped` bucket, the same way the write path
+        # does. An update() that sets occurred_on to an unparseable date keeps
+        # the node. Sanitize runs on the merged attrs (the caller's plus any
+        # preserved addenda); addenda and dropped are reserved and untouched.
+        new_attrs, dropped_attrs = sanitize_attrs(spec, new_attrs)
         await cur.execute(
             "SELECT value FROM config WHERE space_id = %s AND key = %s",
             (space_id, ATTR_SURFACE_KEY))
         crow = await cur.fetchone()
         surface_on = _config_bool(crow[0] if crow else None, ATTR_SURFACE_KEY, True)
-        keys = _searchable_keys(srow[0] if srow and srow[0] is not None else {})
+        keys = _searchable_keys(spec)
         new_extra = embedding.render_attr_surface(new_attrs, keys) if surface_on else ""
 
         new_searchable = embedding.searchable_text(new_title, new_body, new_extra)
@@ -127,7 +134,10 @@ async def update(
             updated_row = await cur.fetchone()
             if updated_row is None:
                 raise NotFoundError(f"ENGRAPHY_NOT_FOUND: node {node_id} not found")
-            return {"v": 1, "outcome": "updated", "node": _node_envelope(updated_row)}
+            env = {"v": 1, "outcome": "updated", "node": _node_envelope(updated_row)}
+            if dropped_attrs:
+                env["dropped_attrs"] = dropped_attrs
+            return env
 
     # Phase 2 (only when re-embedding): embed OUTSIDE any transaction (trap 3),
     # then a SECOND transaction to apply it. The searchable text -- title + body +
@@ -149,4 +159,7 @@ async def update(
         updated_row = await cur.fetchone()
         if updated_row is None:
             raise NotFoundError(f"ENGRAPHY_NOT_FOUND: node {node_id} not found")
-        return {"v": 1, "outcome": "updated", "node": _node_envelope(updated_row)}
+        env = {"v": 1, "outcome": "updated", "node": _node_envelope(updated_row)}
+        if dropped_attrs:
+            env["dropped_attrs"] = dropped_attrs
+        return env
