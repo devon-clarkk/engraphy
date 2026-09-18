@@ -25,6 +25,7 @@ from engraphy.server import aliases, wire_types
 from engraphy.server.tools.admin import (
     admin_grant,
     admin_member_add,
+    admin_member_archive,
     admin_scope_visibility,
     admin_token_create,
 )
@@ -54,7 +55,7 @@ CORE_DISPATCH = {
     "scope_create": scope_create,
 }
 
-# The four space-admin tools (design/06 §Space administration, E2-plan.md §5.5).
+# The five space-admin tools (design/06 §Space administration, E2-plan.md §5.5).
 # Kept OUT of CORE_DISPATCH so they can be conditionally present: they appear in
 # tools/list and are dispatchable ONLY when this space's config leaves
 # `space_admin_tools` unset or true. When it is false they are absent entirely
@@ -64,6 +65,7 @@ CORE_DISPATCH = {
 # but gets ENGRAPHY_ROLE); this flag is the per-SPACE registration switch.
 ADMIN_DISPATCH = {
     "admin_member_add": admin_member_add,
+    "admin_member_archive": admin_member_archive,
     "admin_token_create": admin_token_create,
     "admin_scope_visibility": admin_scope_visibility,
     "admin_grant": admin_grant,
@@ -94,6 +96,10 @@ _BASE_DESCRIPTIONS = {
     "scope_create": "Create a new private scope (requires confirm: true and a non-empty description).",
     "inbox_review": "Review the capture inbox: list, promote, or discard pending items.",
     "admin_member_add": "Add a principal to this space (space_admin only).",
+    "admin_member_archive": (
+        "Archive a member so every token it holds is refused, or restore it with "
+        "archived: false (space_admin only)."
+    ),
     "admin_token_create": "Mint a display-once bearer token for a principal (space_admin only).",
     "admin_scope_visibility": "Change a scope's visibility (space_admin only).",
     "admin_grant": "Grant a principal read/write on a scope (space_admin only).",

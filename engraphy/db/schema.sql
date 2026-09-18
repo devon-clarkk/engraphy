@@ -1157,6 +1157,17 @@ CREATE POLICY pending_writes_write ON public.pending_writes FOR INSERT WITH CHEC
 ALTER TABLE public.principals ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: principals principals_admin_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY principals_admin_update ON public.principals FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
+   FROM public.principals a
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text)))))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
+   FROM public.principals a
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+
+
+--
 -- Name: principals principals_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -1269,4 +1280,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0021'),
     ('0022'),
     ('0023'),
-    ('0024');
+    ('0024'),
+    ('0026');

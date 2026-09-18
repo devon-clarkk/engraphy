@@ -202,3 +202,45 @@
     edges: [[A, B, relates_to]]
     truncated: false
     detail: full
+
+- name: archived_neighbour_is_neither_returned_nor_walked_through
+  # design/04: archived rows are out of the agent-visible surface, and edges into
+  # them stop surfacing wherever they do. B is archived, so A->B is not reported,
+  # B is not returned, and C (reachable only through B) is not reached.
+  seed:
+    nodes: [{label: A, type: note}, {label: B, type: note, status: archived},
+            {label: C, type: note}, {label: D, type: note}]
+    edges:
+      - {type: relates_to, src: A, dst: B}
+      - {type: relates_to, src: B, dst: C}
+      - {type: relates_to, src: A, dst: D}
+  traverse: {start: A, direction: out, max_depth: 3}
+  expect:
+    nodes: {A: 0, D: 1}
+    edges: [[A, D, relates_to]]
+    truncated: false
+
+- name: archived_start_is_returned_as_a_read_by_id
+  # Naming the start is a read by id, which design/04 keeps open for archived
+  # rows: A is archived and still returned, and its live neighbour is walked.
+  seed:
+    nodes: [{label: A, type: note, status: archived}, {label: B, type: note}]
+    edges: [{type: relates_to, src: A, dst: B}]
+  traverse: {start: A, direction: out, max_depth: 1}
+  expect:
+    nodes: {A: 0, B: 1}
+    edges: [[A, B, relates_to]]
+    truncated: false
+
+- name: merged_node_resolving_to_an_archived_canonical_is_hidden
+  # M is merged into C and C is archived. Hydration resolves M to C, which is
+  # out of the surface, so neither is returned and the edge A->M is dropped.
+  seed:
+    nodes: [{label: C, type: note, status: archived}, {label: M, type: note, merged_into: C},
+            {label: A, type: note}]
+    edges: [{type: relates_to, src: A, dst: M}]
+  traverse: {start: A, direction: out, max_depth: 2}
+  expect:
+    nodes: {A: 0}
+    edges: []
+    truncated: false

@@ -49,11 +49,13 @@ INBOX_CAPTURE = "POST /inbox"
 # tool name spans both).
 WRITE_TOOLS = frozenset({
     "write", "link", "update", "supersede", "resolve_duplicate", "scope_create",
-    "admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant",
+    "admin_member_add", "admin_member_archive", "admin_token_create",
+    "admin_scope_visibility", "admin_grant",
     INBOX_CAPTURE,
 })
 ADMIN_TOOLS = frozenset({
-    "admin_member_add", "admin_token_create", "admin_scope_visibility", "admin_grant",
+    "admin_member_add", "admin_member_archive", "admin_token_create",
+    "admin_scope_visibility", "admin_grant",
 })
 _INBOX_WRITE_ACTIONS = frozenset({"promote", "discard"})
 

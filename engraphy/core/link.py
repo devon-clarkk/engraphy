@@ -55,9 +55,18 @@ async def link(pool, space_id: str, principal: str, edges: list[dict]) -> dict:
         for edge in edges:
             src_id, dst_id, etype = edge["src_id"], edge["dst_id"], edge["type"]
             for peer in (src_id, dst_id):
-                await cur.execute("SELECT 1 FROM nodes WHERE id = %s AND space_id = %s", (peer, space_id))
-                if await cur.fetchone() is None:
+                await cur.execute(
+                    "SELECT status FROM nodes WHERE id = %s AND space_id = %s", (peer, space_id))
+                row = await cur.fetchone()
+                if row is None:
                     raise NotFoundError(f"ENGRAPHY_NOT_FOUND: link endpoint {peer} not found")
+                # An archived node is out of the agent-visible graph (design/04),
+                # so it takes no new edges, the same way supersede refuses a
+                # non-active old_id. Reading it by id stays open.
+                if row[0] == "archived":
+                    raise ValidationError(
+                        f"ENGRAPHY_VALIDATION: link endpoint {peer} is archived; "
+                        "an archived node takes no new edges")
             await cur.execute(
                 "INSERT INTO edges (space_id, src_id, dst_id, type) VALUES (%s, %s, %s, %s) "
                 "ON CONFLICT (src_id, dst_id, type) DO NOTHING",
