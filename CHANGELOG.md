@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+The write path stores a node that carries a partial or imprecise date. When an
+attribute value does not fit its declared type, the engine sets that value
+aside and stores the node. This release also adds member offboarding, role and
+rate gates on `POST /inbox`, a `micro` embedding profile, and a Docker-free
+Windows distribution.
 
 Role and rate gates on `POST /inbox`, principal offboarding, and a pinned,
 verified migration runner in the admin image.
