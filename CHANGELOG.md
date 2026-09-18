@@ -41,6 +41,11 @@ verified migration runner in the admin image.
   a node carrying an imprecise date keeps the rest of its content. A key the
   node type does not declare is still refused under a closed spec. `write`,
   `supersede` and `update` all answer this way.
+- The answer-discipline skill has an agent confirm that a returned memory is
+  about the subject and the occasion a question asks about before answering from
+  it, and before declining for want of it. Shared wording about a different
+  person or event is not a match; the right subject and occasion in other words
+  is.
 - The embedding runtime is pinned to onnxruntime 1.29.x, the release the dedup
   and similarity-floor calibrations are measured against. A new onnxruntime
   minor release is adopted as a reviewed change, with the live band fixtures
