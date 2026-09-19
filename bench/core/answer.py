@@ -230,6 +230,23 @@ def render_envelope(envelope: dict) -> str:
             parts.append("Related memories reached by following graph links from "
                          "the results above (not relevance-ranked):")
             parts.append(_render_items(traversed))
+        # Retrieval completeness (bench/core/completeness.py): numbering continues
+        # across sections so a CHECK line's [n] is unambiguous.
+        start = len(envelope.get("results") or []) + 1
+        roster = envelope.get("entity_roster")
+        if roster:
+            from bench.core.completeness import render_roster
+            who = " and ".join(envelope.get("entities") or []) or "the named entities"
+            parts.append(f"Every other stored memory that mentions {who}, by title "
+                         "only, most relevant first:")
+            parts.append(render_roster(roster, start))
+            start += len(roster)
+        turns = envelope.get("source_turns")
+        if turns:
+            from bench.core.completeness import render_turns
+            parts.append("Conversation turns that match the question, verbatim, most "
+                         "relevant first, each with the date of its session:")
+            parts.append(render_turns(turns, start))
         return "\n\n".join(parts).strip()
 
     # bare traverse-style envelope
