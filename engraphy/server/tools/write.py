@@ -97,12 +97,14 @@ async def link(pool, ctx, arguments: dict) -> dict:
 async def supersede(pool, ctx, arguments: dict) -> dict:
     """CORE_TOOLS['supersede']: {old_id, scope, type, title, body, attrs?,
     links?, session_id?} -- same wire-name mapping as write, plus old_id
-    passthrough. Returns the inserted node's write envelope plus
-    "superseded": <old_id> (07 gives supersede no canonical shape of its
-    own). dedup.supersede()'s SupersedeUnresolvedBandError (a fail-closed
-    guard over an unspecified band collision, deliberately not dressed up as
-    an ENGRAPHY_ code itself) is what errors.py names ENGRAPHY_SUPERSEDE_CONFLICT
-    at this layer (E2-plan.md s.3's supersede row)."""
+    passthrough. Returns the replacement node's write envelope plus
+    "superseded": <old_id> on a completed supersede (07 gives supersede no
+    canonical shape of its own). A cross-type replacement, and a replacement
+    that bands MERGE or PENDING against a third node, downgrade to a plain
+    write: the band envelope comes back with `supersede_downgraded` set and
+    `superseded` absent, and the old node stays active. errors.py keeps its
+    SupersedeUnresolvedBandError -> ENGRAPHY_SUPERSEDE_CONFLICT mapping as a
+    defensive fallback; dedup.supersede() does not raise it."""
     old_id = arguments["old_id"]
     node_type = arguments["type"]
     scope_id = arguments["scope"]

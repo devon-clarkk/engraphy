@@ -249,14 +249,21 @@ async def test_supersede_tool_happy_path(pool, write_space, conn):
     assert cur.fetchone()[0] == "superseded"
 
 
-async def test_supersede_tool_cross_type_translates_to_validation_error(pool, write_space, conn):
+async def test_supersede_tool_cross_type_downgrades_to_write(pool, write_space, conn):
+    """A cross-type supersession through the tool surface stores the replacement
+    and returns the envelope with the downgrade flagged. The old node stays
+    active."""
     old_id = _seed_node(conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0))
-    with pytest.raises(ToolError) as exc_info:
-        await supersede(pool, _ctx(write_space), {
-            "old_id": str(old_id), "scope": "scope1", "type": "error",
-            "title": "New node", "body": "New body.",
-        })
-    assert exc_info.value.code == "VALIDATION"
+    result = await supersede(pool, _ctx(write_space), {
+        "old_id": str(old_id), "scope": "scope1", "type": "error",
+        "title": "New node", "body": "New body.",
+    })
+    assert result["outcome"] == "inserted"
+    assert "superseded" not in result
+    assert result["supersede_downgraded"]["old_kept_active"] is True
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
+    assert cur.fetchone()[0] == "active"
 
 
 async def test_supersede_tool_unknown_old_id_translates_to_not_found(pool, write_space):
@@ -268,22 +275,25 @@ async def test_supersede_tool_unknown_old_id_translates_to_not_found(pool, write
     assert exc_info.value.code == "NOT_FOUND"
 
 
-async def test_supersede_tool_unresolved_band_translates_to_supersede_conflict(pool, write_space, conn):
-    """QUESTIONS.md 'supersede-nonclean-band': a third node pushes the
-    replacement into MERGE/PENDING against something other than old_id ->
-    dedup.SupersedeUnresolvedBandError -> ENGRAPHY_SUPERSEDE_CONFLICT here.
-    Real embedding is used through the tool, so the third node is seeded with
-    the SAME title+body text the supersede call will send -- byte-identical
-    text embeds identically (the pinned model is deterministic), guaranteeing
-    a >= 0.95 MERGE band against it, deterministically."""
+async def test_supersede_tool_unresolved_band_downgrades_to_write(pool, write_space, conn):
+    """A third node pushes the replacement into MERGE or PENDING against something
+    other than old_id, so there is no replacement row to supersede old against.
+    The tool returns the band envelope flagged `supersede_downgraded`. Real
+    embedding runs through the tool, so the third node is seeded with the SAME
+    title and body the supersede sends: byte-identical text embeds identically
+    under the pinned model, which guarantees a >= 0.95 MERGE (absorb) band."""
     old_id = _seed_node(conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0))
     third_title, third_body = "Third node", "Third node body, unrelated to the old one."
     third_vec = embedding.embed_document(third_title + "\n" + third_body)
     _seed_node(conn, write_space, "widget", third_title, third_body, {}, third_vec)
 
-    with pytest.raises(ToolError) as exc_info:
-        await supersede(pool, _ctx(write_space), {
-            "old_id": str(old_id), "scope": "scope1", "type": "widget",
-            "title": third_title, "body": third_body,
-        })
-    assert exc_info.value.code == "SUPERSEDE_CONFLICT"
+    result = await supersede(pool, _ctx(write_space), {
+        "old_id": str(old_id), "scope": "scope1", "type": "widget",
+        "title": third_title, "body": third_body,
+    })
+    assert result["outcome"] == "merged"
+    assert "superseded" not in result
+    assert result["supersede_downgraded"]["old_kept_active"] is True
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
+    assert cur.fetchone()[0] == "active", "old node untouched by the downgrade"

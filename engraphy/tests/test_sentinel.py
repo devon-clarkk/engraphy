@@ -352,19 +352,22 @@ async def test_supersede_refuses_a_reserved_type_replacement(pool, sentinel_writ
 async def test_the_minted_sentinel_is_unsupersedable_through_the_tool_surface(
         pool, sentinel_write_space, conn):
     """The side door this closes for free (ruled 2026-07-21). Superseding the
-    real sentinel needs a replacement of the SAME type -- cross-type supersession
-    is already rejected -- and that type is now refused, so there is no argument
-    combination that reaches the flip. Both halves asserted here, and the
+    real sentinel needs a replacement of the SAME type, which is refused because
+    the type is engine-reserved. A replacement of any OTHER type is refused
+    because the minted sentinel is archived, so the status='active' precondition
+    fires before the cross-type downgrade can reach it. No argument combination
+    reaches the flip. Both halves asserted here, and the
     sentinel is still active-shaped and unflipped afterwards."""
     space_id, minted_id = sentinel_write_space
 
-    # Same type as the target: refused by the new check.
+    # Same type as the target: refused by the reserved-type check.
     with pytest.raises(ValidationError):
         await supersede(pool, space_id, "p1", minted_id, sentinel.SENTINEL_NODE_TYPE,
                         "personal-p1", "Replacement sentinel", "Decoy body.", {},
                         _unit_vector(), "pytest")
-    # Any other type: refused by the pre-existing cross-type rule.
-    with pytest.raises(ValidationError):
+    # Any other type: the sentinel is archived, so the status='active'
+    # precondition refuses it before the cross-type downgrade path.
+    with pytest.raises(ValidationError, match="active"):
         await supersede(pool, space_id, "p1", minted_id, "note", "personal-p1",
                         "Replacement note", "Decoy body.", {}, _unit_vector(), "pytest")
 

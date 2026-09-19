@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `supersede` stores the replacement when it cannot complete the supersession.
+  A replacement whose type differs from the old node's, or one that bands as a
+  near-duplicate of a third node, is stored as a plain write. The response
+  carries `supersede_downgraded`, the old node stays `active`, and no
+  `supersedes` edge is written. A cross-type replacement is linked to the old
+  node with `relates_to` where the pack declares that rule.
+
 ## 0.3.0
 
 The write path stores a node that carries a partial or imprecise date. When an

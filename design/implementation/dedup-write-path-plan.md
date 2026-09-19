@@ -76,7 +76,7 @@ Self-edge guard: skip rows where the re-point would create `src = dst` (the lose
 
 ## Supersede atomicity
 
-`supersede(old_id, …)` is one transaction: validate old node (readable, writable scope, status `active`, same type as replacement — cross-type supersession is a modeling error, rejected); run the write pipeline **with `old_id` excluded from the candidate set** (the replacement is *supposed* to be ~0.9-similar to what it replaces — trap #2, fixture-covered); insert `supersedes` edge; flip old to `status='superseded'`. Kill-mid-call leaves the old node untouched — asserted by the crash test.
+`supersede(old_id, …)` is one transaction: validate old node (readable, writable scope, status `active`); run the write pipeline **with `old_id` excluded from the candidate set** (the replacement is *supposed* to be ~0.9-similar to what it replaces: trap #2, fixture-covered); insert `supersedes` edge; flip old to `status='superseded'`. A replacement of a different type, or one that bands MERGE or PENDING against a third node, downgrades to a plain write with `supersede_downgraded` set: no `supersedes` edge, no flip, and the old node stays `active`. Kill-mid-call leaves the old node untouched, asserted by the crash test.
 
 ## Traps (fixture- or test-covered, every one)
 
@@ -98,7 +98,7 @@ Self-edge guard: skip rows where the re-point would create `src = dst` (the lose
 | Crash test | `kill -9` injected between steps 6 and COMMIT (via a test hook): zero partial state — no node without dedup_log is acceptable *[sic: both or neither]* |
 | Merge mechanics | Addenda novelty both ways; error-type re-occurrence; link attach counts; loser edge re-point incl. self-edge guard |
 | Pending world-change | Every row of the table above |
-| Supersede | Atomicity + self-exclusion + cross-type rejection |
+| Supersede | Atomicity + self-exclusion + cross-type and third-node-band downgrade |
 | Import | Idempotent re-run; review-queue routing; 1k-item throughput sanity |
 
 ## Build order
