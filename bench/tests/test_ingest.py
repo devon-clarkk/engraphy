@@ -420,3 +420,46 @@ async def test_unresolvable_supersede_is_counted_not_miscounted(pool, bench_spac
 
 def test_extract_result_is_reexported_for_tests():
     assert ExtractResult().nodes == ()
+
+
+async def test_record_outcome_counts_quarantined_attrs_as_a_stored_node(pool):
+    """An insert whose envelope carries `dropped_attrs` is a stored node with an
+    attr set aside, not a write error. The run counts it and keeps a sample."""
+    stats = IngestStats()
+    draft = NodeDraft(local_id="d1", node_type="event", title="Banff trip",
+                      body="Evan went skiing at Banff.")
+    envelope = {
+        "v": 1, "outcome": "inserted",
+        "node": {"id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "type": "event"},
+        "dropped_attrs": [
+            {"key": "occurred_on", "value": "last month",
+             "error": "attrs.occurred_on must be a date"}
+        ],
+    }
+    node_id = await _record_outcome(pool, None, envelope, draft, AlwaysDistinct(), stats)
+    assert node_id == "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+    assert stats.inserted == 1
+    assert stats.attrs_quarantined_nodes == 1
+    assert stats.attrs_quarantined_total == 1
+    assert stats.write_errors == {}, "a quarantined attr is not a write error"
+    assert stats.dropped_attr_samples[0]["dropped"][0]["value"] == "last month"
+    assert stats.as_dict()["attrs_quarantined_nodes"] == 1
+
+
+async def test_record_outcome_counts_supersede_downgrade(pool):
+    """A supersede the engine stored as a plain write is a stored node with the
+    old node kept active. The run counts it, and it is not a write error."""
+    stats = IngestStats()
+    draft = NodeDraft(local_id="d1", node_type="event", title="New event",
+                      body="Something happened.")
+    envelope = {
+        "v": 1, "outcome": "inserted",
+        "node": {"id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "type": "event"},
+        "supersede_downgraded": {"old_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+                                 "old_kept_active": True, "related_edge_added": False},
+    }
+    await _record_outcome(pool, None, envelope, draft, AlwaysDistinct(), stats)
+    assert stats.supersede_downgraded == 1
+    assert stats.inserted == 1
+    assert stats.write_errors == {}
+    assert stats.as_dict()["supersede_downgraded"] == 1

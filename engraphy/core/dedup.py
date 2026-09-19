@@ -127,27 +127,22 @@ class PendingExpiredError(Exception):
 
 class ValidationError(Exception):
     """ENGRAPHY_VALIDATION — a rule this layer checks itself, rather than one the
-    E0 triggers raise as a CheckViolation. supersede()'s "same type as
-    replacement -- cross-type supersession is a modeling error, rejected" and
-    its status='active' precondition are the first such rules: neither is
-    expressible as a table constraint (both compare the request against another
-    row), so unlike attr validation there is no trigger to defer to."""
+    E0 triggers raise as a CheckViolation. supersede()'s status='active'
+    precondition is one such rule: it compares the request against another row,
+    so it is not expressible as a table constraint, and unlike attr validation
+    there is no trigger to defer to."""
 
 
 class SupersedeUnresolvedBandError(Exception):
-    """NOT a 07 error code, and deliberately not dressed up as one -- this is a
-    fail-closed guard over an UNSPECIFIED branch: QUESTIONS.md
-    "supersede-nonclean-band" (open). dedup-write-path-plan.md §Supersede
-    atomicity says to run the write pipeline with old_id excluded and then
-    "insert supersedes edge; flip old" -- a sequence that presumes the pipeline
-    inserted a node. Excluding old_id only stops the OLD node from banding; a
-    *third* node can still push the replacement into MERGE (>= t_high) or
-    PENDING ([t_low, t_high)), and no document says what supersede does then.
-    PENDING is the sharp case: pending_writes' payload has no field carrying
-    "this was a supersede", so parking would silently drop the supersession
-    intent and leave old_id un-flipped. Raising rolls the transaction back,
-    which keeps the plan's own guarantee ("kill-mid-call leaves the old node
-    untouched") true for this branch too, until the question resolves."""
+    """Retained, and not raised by supersede(). It names the case where a
+    supersede's replacement bands PENDING or absorb-MERGE against a *third* node
+    (old_id is excluded from its own candidate set), so there is no replacement
+    row for the "insert supersedes edge; flip old" step. supersede() stores what
+    the band produced and returns it with an explicit `supersede_downgraded`
+    flag, leaving the old node active and applying no half-supersede. The class
+    stays so run manifests that recorded this write-error class still resolve a
+    name (bench/core/report.py), and as a defensive tool-layer mapping to
+    ENGRAPHY_SUPERSEDE_CONFLICT."""
 
 
 class ConfigError(Exception):
@@ -943,6 +938,21 @@ async def _cluster_rule_present(cur, space_id, src_type, dst_type) -> bool:
     return await cur.fetchone() is not None
 
 
+async def _relates_to_rule_present(cur, space_id, src_type, dst_type) -> bool:
+    """Same graceful-skip pre-check as `_cluster_rule_present`, for the
+    `relates_to` edge the cross-type-supersede downgrade attaches (§ supersede):
+    is there a rule covering (src_type -> dst_type)? Rules are wildcard-expanded
+    at pack-apply time, so this is an exact-match lookup. Checking ourselves and
+    skipping the INSERT when absent keeps a missing rule from raising a
+    CheckViolation that would abort the whole (legal) write."""
+    await cur.execute(
+        "SELECT 1 FROM edge_rules WHERE space_id = %s AND type = 'relates_to' "
+        "AND src_type = %s AND dst_type = %s",
+        (space_id, src_type, dst_type),
+    )
+    return await cur.fetchone() is not None
+
+
 async def _same_topic_peer_bodies(cur, space_id, canonical_id) -> list[str]:
     """Bodies of the canonical's existing `same_topic` peers (the edge reaches
     either endpoint). Status-UNFILTERED on purpose (§2.1 step 1): a superseded
@@ -1282,9 +1292,17 @@ async def supersede(
 ) -> dict:
     """dedup-write-path-plan.md §Supersede atomicity, in its stated order, all
     in ONE transaction: validate the old node (readable, writable scope, status
-    'active', same type as the replacement) -> run the write pipeline with
-    old_id excluded from the candidate set (trap #2) -> insert the `supersedes`
-    edge -> flip old to status='superseded'.
+    'active') -> run the write pipeline with old_id excluded from the candidate
+    set (trap #2) -> insert the `supersedes` edge -> flip old to
+    status='superseded'.
+
+    Cross-type supersession (a replacement typed differently from old) is a
+    modeling error, and the replacement is still a fact the caller meant to
+    keep. It DOWNGRADES to a plain write: the replacement is stored and
+    associated to old by a best-effort `relates_to` edge (skipped when the pack
+    declares no matching rule), the old node stays ACTIVE, and the envelope
+    carries `supersede_downgraded` with `superseded` absent. A replacement that
+    bands PENDING or absorb-MERGE against a third node downgrades the same way.
 
     Atomicity is the transaction's, not this function's: any raise below (or a
     kill mid-call) rolls the whole thing back, so the old node is never left
@@ -1296,7 +1314,9 @@ async def supersede(
     checked exactly as a plain write's links are. Shape is validated before
     the transaction opens, same as write().
 
-    Returns the inserted node's `write` envelope plus `"superseded": <old_id>`.
+    Returns the inserted node's `write` envelope plus `"superseded": <old_id>`
+    on a completed supersede, or the band envelope plus `supersede_downgraded`
+    on a downgrade.
     07 gives no canonical I/O shape for supersede (the only tool it omits);
     mirroring resolve_duplicate's stated rule -- "returns the `write` envelope
     of the final outcome" -- is the boring reading (DECISIONS-DELTA.md).
@@ -1305,9 +1325,11 @@ async def supersede(
     _validate_no_reserved_attrs(attrs)
     # A second call site, not a redundant one: supersede does NOT go through
     # write() -- its replacement's type is a distinct caller-supplied argument
-    # validated before its own transaction opens. With cross-type supersession
-    # already rejected below, refusing a sentinel-typed replacement here makes
-    # the sentinel unsupersedable through the tool surface.
+    # validated before its own transaction opens. A sentinel-typed replacement
+    # is refused here. A replacement of any other type cannot reach the
+    # sentinel either, because the sentinel is archived and the status='active'
+    # precondition below refuses it, so the sentinel is unsupersedable through
+    # the tool surface.
     _validate_not_reserved_type(node_type)
     async with transaction(pool, space_id, principal) as conn:
         cur = conn.cursor()
@@ -1347,54 +1369,84 @@ async def supersede(
                 f"ENGRAPHY_VALIDATION: old_id must name an active node; node {old_id} "
                 f"has status '{old_status}'"
             )
-        if old_type != node_type:
-            raise ValidationError(
-                f"ENGRAPHY_VALIDATION: type must equal the superseded node's type "
-                f"('{old_type}'), not '{node_type}' -- cross-type supersession is a "
-                f"modeling error"
-            )
-
         attrs, dropped_attrs = await _sanitize_attrs_for_write(cur, space_id, node_type, attrs)
-        envelope = await _locked_core(
-            cur, space_id, principal, node_type, scope_id, title, body, attrs,
-            embedding_vector, source_client, thresholds, exclude_id=old_id,
-            source_session=source_session, links=links, extra_search=extra_search,
-        )
-        if envelope["outcome"] not in ("inserted", "merged_linked"):
-            # Fail closed over an unspecified branch (QUESTIONS.md
-            # "supersede-nonclean-band", narrowed by the Q2 ruling). `inserted`
-            # and `merged_linked` BOTH produce a replacement row as
-            # envelope["node"], so both let the supersede complete: if the
-            # replacement bands >= t_high against a *third* node and its content
-            # is novel, it merge-links to that node (an accepted consequence --
-            # a supersede may create a cluster with an unrelated-but-similar
-            # third node; §2.3 item 5). Only outcomes with NO replacement row
-            # remain fail-closed: `needs_confirmation` (the PENDING sub-case, the
-            # sharp one -- pending_writes carries no "this was a supersede" flag),
-            # and the rare `merged` (a replacement non-novel against a third
-            # node's cluster, absorbed with no row of its own).
-            raise SupersedeUnresolvedBandError(
-                f"supersede's replacement banded '{envelope['outcome']}' against a node "
-                f"other than old_id and produced no replacement row; the plan does not "
-                f"define this case (QUESTIONS.md 'supersede-nonclean-band', PENDING/absorb "
-                f"sub-cases)"
-            )
 
-        new_id = envelope["node"]["id"]
-        # src = the replacement, dst = the old node ("Replacement; the old
-        # node's status becomes superseded" -- both packs' edge_types wording).
-        # No ON CONFLICT: new_id was just inserted, so no edge can pre-exist.
-        # A pack with no matching supersedes rule fails here on E0's
-        # edges_validate trigger, which E2's tool layer renders as
-        # ENGRAPHY_EDGE_RULE (QUESTIONS.md "supersede-edge-type-pack-
-        # inconsistency", resolved: that error path is the intended behavior
-        # wherever a pack declines a supersession).
-        await cur.execute(
-            "INSERT INTO edges (space_id, src_id, dst_id, type) VALUES (%s, %s, %s, 'supersedes')",
-            (space_id, new_id, old_id),
-        )
-        await cur.execute("UPDATE nodes SET status = 'superseded' WHERE id = %s", (old_id,))
-        envelope["superseded"] = str(old_id)
+        if old_type != node_type:
+            # Cross-type supersession is a modeling error, and the replacement
+            # is still a fact the caller meant to keep. Store it as a plain
+            # write, associate the pair so it stays recoverable, and leave the
+            # old node ACTIVE, since nothing was superseded. No exclude_id: old
+            # is a different type, so the same-type candidate query never sees it.
+            envelope = await _locked_core(
+                cur, space_id, principal, node_type, scope_id, title, body, attrs,
+                embedding_vector, source_client, thresholds,
+                source_session=source_session, links=links, extra_search=extra_search,
+            )
+            related_edge_added = False
+            if envelope["outcome"] in ("inserted", "merged_linked"):
+                new_id = envelope["node"]["id"]
+                # Best-effort `relates_to` (replacement -> old); graceful-skip when
+                # the pack declares no matching rule, so a legal write never fails
+                # on it (same posture as the merge-link same_topic edge).
+                if await _relates_to_rule_present(cur, space_id, node_type, old_type):
+                    await cur.execute(
+                        "INSERT INTO edges (space_id, src_id, dst_id, type) "
+                        "VALUES (%s, %s, %s, 'relates_to') "
+                        "ON CONFLICT (src_id, dst_id, type) DO NOTHING",
+                        (space_id, new_id, old_id),
+                    )
+                    related_edge_added = cur.rowcount == 1
+            envelope["supersede_downgraded"] = {
+                "reason": (f"cross-type supersession: a '{node_type}' cannot supersede a "
+                           f"'{old_type}'; stored as a new node, the old node kept active"),
+                "old_id": str(old_id),
+                "old_kept_active": True,
+                "related_edge_added": related_edge_added,
+            }
+        else:
+            envelope = await _locked_core(
+                cur, space_id, principal, node_type, scope_id, title, body, attrs,
+                embedding_vector, source_client, thresholds, exclude_id=old_id,
+                source_session=source_session, links=links, extra_search=extra_search,
+            )
+            if envelope["outcome"] in ("inserted", "merged_linked"):
+                # Clean supersede: the replacement is its own row (a fresh insert,
+                # or -- Q2 ruling -- a merge-link member novel against a similar
+                # third node). Attach the supersedes edge and flip old.
+                new_id = envelope["node"]["id"]
+                # src = the replacement, dst = the old node ("Replacement; the old
+                # node's status becomes superseded" -- both packs' edge_types
+                # wording). No ON CONFLICT: new_id was just inserted, so no edge can
+                # pre-exist. A pack with no matching supersedes rule fails here on
+                # E0's edges_validate trigger, which E2's tool layer renders as
+                # ENGRAPHY_EDGE_RULE (QUESTIONS.md "supersede-edge-type-pack-
+                # inconsistency": that error path is the intended behavior wherever
+                # a pack declines a supersession).
+                await cur.execute(
+                    "INSERT INTO edges (space_id, src_id, dst_id, type) VALUES (%s, %s, %s, 'supersedes')",
+                    (space_id, new_id, old_id),
+                )
+                await cur.execute("UPDATE nodes SET status = 'superseded' WHERE id = %s", (old_id,))
+                envelope["superseded"] = str(old_id)
+            else:
+                # Band case: the replacement banded `needs_confirmation`
+                # (PENDING) or `merged` (absorb) against a THIRD node, so there
+                # is no replacement row to attach the supersedes edge to or to
+                # flip old against. Keep exactly what the band produced: the
+                # parked PENDING payload, resolvable through the normal confirm
+                # path, or the absorb. Announce the non-completion through
+                # `supersede_downgraded` and leave old ACTIVE. Nothing is
+                # half-applied: no supersedes edge and no flip.
+                envelope["supersede_downgraded"] = {
+                    "reason": (f"the replacement banded '{envelope['outcome']}' against a node "
+                               f"other than old_id, so no replacement row exists to attach the "
+                               f"supersedes edge to; stored as a plain write, the old node was "
+                               f"kept active"),
+                    "old_id": str(old_id),
+                    "old_kept_active": True,
+                    "band_outcome": envelope["outcome"],
+                }
+
         if dropped_attrs:
             envelope["dropped_attrs"] = dropped_attrs
 
