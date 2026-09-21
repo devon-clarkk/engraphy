@@ -335,9 +335,28 @@ async def test_a_near_duplicate_of_existing_destination_content_is_left_for_revi
     s = await _import(pool, dst, bundle)
     assert s.left_for_review == 1
     assert "Beta" not in _dst_nodes(conn, dst)
-    assert s.edges_skipped_unmapped == 1, "Alpha -> Beta waits for Beta's resolution"
+    # Alpha -> Beta, and Beta -> its merged restatement (which maps to Beta), both
+    # wait for Beta's resolution.
+    assert s.edges_skipped_unmapped == 2
     rows = list(csv.reader(s.review_path.open(encoding="utf-8")))
     assert rows[0][0] == "pending_id" and rows[1][3] == "Beta"
+
+
+async def test_an_archived_destination_scope_takes_no_new_writes(pool, conn, spaces, tmp_path):
+    """A destination scope that is already archived takes no writes: a node
+    bound for it is skipped and counted, and the rest of the bundle imports."""
+    src, dst, _ = spaces
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO scopes (space_id, id, display_name, owner_principal, visibility, archived) "
+        "VALUES (%s, 'proj-y', 'Y', 'devon', 'private', true)", (dst,))
+    conn.commit()
+    bundle = tmp_path / "out.jsonl"
+    export_space(DATABASE_URL, src, bundle)
+    s = await _import(pool, dst, bundle)
+    assert s.skipped_archived_scope == 1
+    assert "Delta" not in _dst_nodes(conn, dst)
+    assert s.inserted == 4
 
 
 def test_a_bundle_without_a_header_is_refused(tmp_path):

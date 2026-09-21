@@ -31,9 +31,13 @@ A bundle is replayed in five steps, after prechecks that write nothing:
    resolves it as distinct. When the node is close to content the destination
    held before the import, it stays parked for the principal to resolve, and it
    is listed in the review CSV. A source node with status ``merged`` is not
-   written; its content lives on its canonical, and its edges move there.
+   written; its content lives on its canonical, and its edges move there. A
+   node bound for a destination scope that is archived is matched when it is
+   already present, and otherwise skipped and counted, since an archived
+   scope takes no writes.
 4. **Edges.** Each source edge is remapped to the destination ids and attached
-   with ``link``. An edge is skipped, and counted, when an endpoint was not
+   with ``link``, unless the destination already holds it. An edge is
+   skipped, and counted, when an endpoint was not
    written (a parked node), when both endpoints landed on one node, or when the
    destination declares no edge rule for its type and endpoint types.
 5. **Statuses and reserved attrs.** On nodes this import created, the source's
@@ -87,6 +91,7 @@ class SpaceImportSummary:
     resolved_distinct: int = 0
     left_for_review: int = 0
     merged_status_skipped: int = 0
+    skipped_archived_scope: int = 0
     statuses_restored: int = 0
     reserved_attrs_restored: int = 0
     edges_total: int = 0
@@ -216,8 +221,10 @@ async def run_space_import(
                 f"node type(s) not registered in space '{space_id}': {', '.join(missing_types)}. "
                 f"Apply the same pack the source space uses (engraphy-admin pack apply) first.")
 
-        cur.execute("SELECT id FROM scopes WHERE space_id = %s", (space_id,))
-        existing_scopes = {r[0] for r in cur.fetchall()}
+        cur.execute("SELECT id, archived FROM scopes WHERE space_id = %s", (space_id,))
+        scope_state = dict(cur.fetchall())
+        existing_scopes = set(scope_state)
+        archived_targets = {dst for dst in plan.values() if scope_state.get(dst)}
         to_create = sorted({dst for dst in plan.values() if dst not in existing_scopes})
         if to_create and not create_scopes:
             raise SpaceImportError(
@@ -244,7 +251,9 @@ async def run_space_import(
 
     async with transaction(pool, space_id, principal) as conn:
         writable = set(await writable_scopes_async(conn.cursor()))
-    unwritable = sorted(set(plan.values()) - writable)
+    # An archived destination scope takes no writes; its nodes are matched or
+    # skipped below, so it is not a writability failure.
+    unwritable = sorted(set(plan.values()) - writable - archived_targets)
     if unwritable:
         raise SpaceImportError(
             f"principal '{principal}' cannot write destination scope(s): {', '.join(unwritable)}")
@@ -273,6 +282,9 @@ async def run_space_import(
                 mapping[node["id"]] = str(hit[0])
                 touched.add(str(hit[0]))
                 summary.already_present += 1
+                continue
+            if dst_scope in archived_targets:
+                summary.skipped_archived_scope += 1
                 continue
 
             attrs = {k: v for k, v in (node.get("attrs") or {}).items()
@@ -349,6 +361,11 @@ async def run_space_import(
                     summary.skipped_edge_samples.append(
                         {"type": key[0], "src_type": key[1], "dst_type": key[2],
                          "reason": "no edge rule in the destination space"})
+                continue
+            cur.execute("SELECT 1 FROM edges WHERE src_id = %s AND dst_id = %s AND type = %s",
+                        (s, d, edge["type"]))
+            if cur.fetchone() is not None:
+                summary.edges_already_present += 1
                 continue
             try:
                 res = await link(pool, space_id, principal,

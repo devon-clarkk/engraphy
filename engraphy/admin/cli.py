@@ -258,7 +258,8 @@ def space_import(
         f"nodes: {d['nodes_total']} in bundle; {d['inserted']} inserted, "
         f"{d['already_present']} already present, {d['merged']} merged, "
         f"{d['merged_linked']} merge-linked, {d['resolved_distinct']} resolved distinct, "
-        f"{d['left_for_review']} left for review, {d['merged_status_skipped']} merged-status skipped")
+        f"{d['left_for_review']} left for review, {d['merged_status_skipped']} merged-status skipped, "
+        f"{d['skipped_archived_scope']} skipped in an archived scope")
     typer.echo(
         f"edges: {d['edges_total']} in bundle; {d['edges_attached']} attached, "
         f"{d['edges_already_present']} already present, {d['edges_skipped_unmapped']} unmapped, "
