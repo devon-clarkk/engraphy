@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `engraphy-admin space export --space … --out …` writes a space's scopes, node
+  types, nodes and edges to a JSONL bundle, or only the scopes named with
+  `--scope`. The export's database connection refuses every write, and the
+  export refuses a connection role that does not bypass row-level security.
+- `engraphy-admin space import <bundle> --space … --principal …` replays a
+  bundle into a space on this engine. Nodes go through the write pipeline and
+  edges through `link`, under the destination principal. Missing scopes are
+  created with the source's visibility, hints and description, and
+  `superseded` and `archived` statuses and reserved attrs are restored on the
+  nodes the import creates. `--scope-map SRC=DST` redirects a scope, and
+  `--dry-run` checks without writing. Re-running the same bundle writes
+  nothing new. [docs/07-moving-memories.md](docs/07-moving-memories.md) is the
+  runbook.
+
 ## 0.3.0
 
 The write path stores a node that carries a partial or imprecise date. When an

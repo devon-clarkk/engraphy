@@ -51,6 +51,7 @@ server with something that survives concurrency, distance, duplicates, and years
 | 4 | [Tool / API reference](04-tools-reference.md) | Every MCP tool a developer calls, with parameters, returns, and a realistic example each. |
 | 5 | [Deployment guide](05-deployment.md) | Running Engraphy as a service, auth/scopes, backups, and the admin CLI. |
 | 6 | [End-to-end tutorial](06-tutorial.md) | Build a real app on Engraphy: ingest data through the dedup pipeline, then query it. |
+| 7 | [Moving memories between engines](07-moving-memories.md) | Export a space from one engine and import it into another, with scopes, statuses and edges. |
 
 ## Requirements at a glance
 

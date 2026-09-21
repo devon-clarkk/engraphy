@@ -10,7 +10,7 @@ administration -- add members, mint/revoke tokens, set visibility, manage grants
 operator's out-of-band equivalent plus the bootstrap (`space create`) that has to
 happen before any token can exist.
 
-Implemented here: `space create`, `principal add`, `principal archive`,
+Implemented here: `space create`, `space export`, `space import`, `principal add`, `principal archive`,
 `principal unarchive`, `token create`,
 `token revoke`, `config set`, `import` (JSONL bulk load through the write
 pipeline), and `pack validate` / `pack apply`. Still open: `purge-session` (its
@@ -36,9 +36,11 @@ import typer
 from psycopg_pool import AsyncConnectionPool
 
 from engraphy.admin import doctor, migrate, packs, verify_restore
+from engraphy.admin.export_ import ExportError, export_space
 from engraphy.admin.addenda import promote_addenda
 from engraphy.admin.import_ import ImportLineError, run_import
 from engraphy.admin.reembed import reembed_space
+from engraphy.admin.space_import import SpaceImportError, run_space_import
 from engraphy.admin.surface import rebuild_surface
 from engraphy.core import embedding, sentinel
 from engraphy.server.auth import mint_token
@@ -180,6 +182,93 @@ def space_create(
     typer.echo(f"created space '{id}' with founding space_admin '{principal}' "
                f"and scope 'personal-{principal}'")
     typer.echo(f"minted restore sentinel {sentinel_id} (config '{sentinel.SENTINEL_CONFIG_KEY}')")
+
+
+# Module-level: a list-typed option default must not be a call in the signature (B008).
+_EXPORT_SCOPE_OPTION = typer.Option(
+    None, "--scope", help="Export only this scope id. Repeat for several; default all.")
+_SCOPE_MAP_OPTION = typer.Option(
+    None, "--scope-map", help="Map a source scope to a destination scope, SRC=DST. Repeatable.")
+
+
+@space_app.command("export")
+def space_export(
+    space: str = typer.Option(..., help="Space id to export."),
+    out: str = typer.Option(..., "--out", help="Path of the JSONL bundle to write."),
+    scope: list[str] = _EXPORT_SCOPE_OPTION,
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Write a space's scopes, node types, nodes and edges to a JSONL bundle for
+    `space import` on another engine. Read-only: the connection refuses writes, so
+    exporting a live engine changes nothing in it."""
+    try:
+        counts = export_space(_conninfo(database_url), space, out, scopes=scope or None)
+    except ExportError as exc:
+        raise typer.BadParameter(str(exc))
+    typer.echo(f"exported space '{space}' to {out}: {counts['scopes']} scopes, "
+               f"{counts['node_types']} node types, {counts['nodes']} nodes, {counts['edges']} edges")
+
+
+@space_app.command("import")
+def space_import(
+    file: str = typer.Argument(..., help="Bundle written by `space export`."),
+    space: str = typer.Option(..., help="Destination space id on this engine."),
+    principal: str = typer.Option(..., help="Destination principal: authors every imported node."),
+    scope_map: list[str] = _SCOPE_MAP_OPTION,
+    create_scopes: bool = typer.Option(
+        True, "--create-scopes/--no-create-scopes",
+        help="Create destination scopes that do not exist (default), or refuse."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run the prechecks and print the scope plan; write nothing."),
+    review: str = typer.Option(
+        None, "--review", help="Path for the review CSV (default: alongside FILE)."),
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Replay a `space export` bundle into a space on this engine, under a
+    principal of this engine. Nodes go through the write pipeline and edges
+    through link, so the destination's space, principal, scopes, attr specs,
+    embedding model and dedup all apply. Re-running the same bundle writes
+    nothing new."""
+    conninfo = _conninfo(database_url)
+
+    async def _run():
+        pool = AsyncConnectionPool(conninfo, open=False)
+        await pool.open()
+        try:
+            return await run_space_import(
+                pool, conninfo, space, principal, file, scope_map=scope_map or None,
+                create_scopes=create_scopes, dry_run=dry_run, review_path=review)
+        finally:
+            await pool.close()
+
+    try:
+        summary = asyncio.run(_run())
+    except (SpaceImportError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc))
+    d = summary.as_dict()
+    typer.echo("scope map: " + ", ".join(f"{k} -> {v}" for k, v in sorted(d["scope_map"].items())))
+    if d["scopes_created"]:
+        verb = "would create" if dry_run else "created"
+        typer.echo(f"{verb} scopes: {', '.join(d['scopes_created'])}")
+    if dry_run:
+        typer.echo(f"dry run: prechecks passed for {d['nodes_total']} nodes and "
+                   f"{d['edges_total']} edges; nothing written")
+        return
+    typer.echo(
+        f"nodes: {d['nodes_total']} in bundle; {d['inserted']} inserted, "
+        f"{d['already_present']} already present, {d['merged']} merged, "
+        f"{d['merged_linked']} merge-linked, {d['resolved_distinct']} resolved distinct, "
+        f"{d['left_for_review']} left for review, {d['merged_status_skipped']} merged-status skipped")
+    typer.echo(
+        f"edges: {d['edges_total']} in bundle; {d['edges_attached']} attached, "
+        f"{d['edges_already_present']} already present, {d['edges_skipped_unmapped']} unmapped, "
+        f"{d['edges_skipped_same_node']} same node, {d['edges_skipped_no_rule']} no rule, "
+        f"{d['edges_failed']} failed")
+    typer.echo(f"restored: {d['statuses_restored']} statuses, "
+               f"{d['reserved_attrs_restored']} nodes' reserved attrs")
+    if d["review_path"]:
+        typer.echo(f"review: {d['review_path']} lists nodes parked for resolve_duplicate; "
+                   f"re-run the import after resolving them to attach their edges")
 
 
 @principal_app.command("add")
