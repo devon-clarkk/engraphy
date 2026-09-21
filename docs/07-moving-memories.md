@@ -133,6 +133,8 @@ The summary reports each node's outcome and each edge's:
 - **left for review**: the node was close to content the destination held
   before the import. It is parked as a duplicate check, and the review CSV
   beside the bundle lists it.
+- **skipped in an archived scope**: the destination scope is archived, so it
+  takes no new writes. A node already present there is matched.
 
 ## 4. Resolve parked nodes and re-run
 
