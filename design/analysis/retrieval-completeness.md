@@ -1,9 +1,28 @@
 # Retrieval completeness: engine specification
 
-Status: proposed, 2026-09-19. Branch `feat/entity-complete-retrieval`. Not merged.
+Status: proposed, 2026-09-19. Measured 2026-09-25. Branch
+`feat/entity-complete-retrieval`. Not merged.
 Measurement and decision rules:
 `engraphy-benchmarks` `analysis/2026-09-19-retrieval-completeness-preregistration.md`
-and `analysis/2026-09-19-retrieval-completeness-findings.md`.
+and `analysis/2026-09-25-retrieval-completeness-findings.md`.
+
+**Measured outcome, against the pre-registered rules.** Neither addition passes
+as measured on the three-conversation store.
+
+| | Non-adversarial, paired against k=25 | Adversarial | Verdict |
+|---|---|---|---|
+| Entity roster | +5, p = 0.46 (multi-hop +6, p = 0.18) | +2, no cost | safe, unproven: build the option, default off, measure at scale |
+| Source turns, on top of the roster | +21, p = 0.0025 | **-8, p = 0.02** | fails the guard: do not build until attribution is fixed |
+
+Retrieval coverage rose from 66.9% of non-adversarial questions having all their
+evidence in context to 71.1% with the roster and 84.2% with both, while a width
+control at fifty results reached only 67.4%. The mechanisms work; the roster's
+reader effect is inside this sample's noise, and the backstop's gain comes with a
+significant adversarial regression traceable to it.
+
+Section 1 is specified for building behind a default-off flag. Section 2 is
+**not** specified for building: it needs the product decision and the attribution
+fix described there first.
 
 Two additions, specified separately because they stand on different ground. The
 entity roster is an ordinary read-path feature over data the engine already
@@ -138,6 +157,15 @@ benchmark it is measured on.
 
 Decide A or B on product grounds before any code. The measured value of A is in
 the findings document; B has no measurement yet.
+
+**A also needs an attribution fix before it is worth building.** Measured, the
+backstop gained 21 non-adversarial questions and lost 8 adversarial declines,
+because a raw turn carries words without the speaker attribution a typed memory's
+title supplies: six of the seven lost questions are misattribution traps whose
+CHECK line cites a source turn. If A is chosen, `episodes.speaker` must be a
+first-class field that the rendered turn states and the reader is required to
+check, not merely text inside the line, and the measurement must be repeated
+before any default changes.
 
 ## 3. Harness (this branch)
 
