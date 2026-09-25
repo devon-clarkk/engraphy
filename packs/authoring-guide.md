@@ -103,7 +103,8 @@ Two edges worth including in almost every pack:
 - **`supersedes`** (usually `src: "*", dst: "*"`). `supersede` is a core tool
   available under every pack, and it inserts a `supersedes` edge. If your pack
   doesn't permit that edge, corrections fail with an edge-rule error. A wildcard
-  rule is safe: the engine already refuses cross-type supersession on its own.
+  rule is safe: the engine writes a `supersedes` edge only between nodes of the
+  same type, and stores a cross-type replacement as a plain write.
 - **`same_topic`** (usually `src: "*", dst: "*"`, bidirectional). Engine-attached
   like `supersedes`: when a write is a near-duplicate of an existing memory
   (≥ the merge threshold) but carries distinct content, the engine keeps *both*

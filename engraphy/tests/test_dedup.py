@@ -23,7 +23,6 @@ from engraphy.core.dedup import (
     NotFoundError,
     PendingExpiredError,
     ScopeUnknownError,
-    SupersedeUnresolvedBandError,
     ValidationError,
     resolve_duplicate,
     select_band,
@@ -937,11 +936,12 @@ async def test_resolve_duplicate_merge_without_merge_into_raises_value_error(poo
 
 
 # ---- supersede (plan step 7) -----------------------------------------
-# Plan test row: "Supersede | Atomicity + self-exclusion + cross-type rejection".
-# All of these are INSERT-band by construction: the MERGE/PENDING-against-a-
-# THIRD-node branch is unspecified and fail-closed behind
-# SupersedeUnresolvedBandError (QUESTIONS.md "supersede-nonclean-band"), so it
-# is asserted as a guard below rather than given invented semantics here.
+# Plan test row: "Supersede | Atomicity + self-exclusion + cross-type handling".
+# A clean supersede inserts the replacement, adds the supersedes edge and flips
+# old. Two cases downgrade to a plain write instead: a cross-type replacement,
+# and a replacement that bands MERGE (absorb) or PENDING against a THIRD node.
+# A downgrade keeps the replacement, leaves old active, writes no supersedes
+# edge, and says so in `supersede_downgraded`.
 
 
 async def test_supersede_self_exclusion_replacement_does_not_band_against_old(pool, write_space, conn):
@@ -972,24 +972,61 @@ async def test_supersede_self_exclusion_replacement_does_not_band_against_old(po
     assert cur.fetchone()[0] == 1, "supersedes edge runs replacement -> old"
 
 
-async def test_supersede_cross_type_rejected(pool, write_space, conn):
-    """"same type as replacement -- cross-type supersession is a modeling
-    error, rejected". Rejected before the pipeline runs, so nothing is written."""
+async def test_supersede_cross_type_downgrades_to_write(pool, write_space, conn):
+    """A cross-type supersession is a modeling error, and the replacement is a
+    fact worth keeping. It is stored as a plain write, the old node stays ACTIVE
+    because nothing was superseded, and the envelope flags the downgrade.
+    write_space declares no relates_to(error->widget) rule, so the association is
+    skipped rather than failing the write."""
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0)
     )
 
-    with pytest.raises(ValidationError, match="ENGRAPHY_VALIDATION"):
-        await supersede(
-            pool, write_space, "p1", str(old_id), "error", "scope1",
-            "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
-        )
+    result = await supersede(
+        pool, write_space, "p1", str(old_id), "error", "scope1",
+        "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
+    )
+
+    assert result["outcome"] == "inserted", "the replacement is stored"
+    assert "superseded" not in result, "nothing was superseded"
+    dg = result["supersede_downgraded"]
+    assert dg["old_id"] == str(old_id)
+    assert dg["old_kept_active"] is True
+    assert dg["related_edge_added"] is False, "no error->widget rule, so no edge"
+    assert "cross-type" in dg["reason"]
 
     cur = conn.cursor()
     cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
-    assert cur.fetchone()[0] == "active", "a rejected supersede leaves the old node untouched"
-    cur.execute("SELECT count(*) FROM nodes WHERE space_id = %s AND title = 'New node'", (write_space,))
-    assert cur.fetchone()[0] == 0, "a rejected supersede writes no replacement"
+    assert cur.fetchone()[0] == "active", "the old node is untouched"
+    cur.execute("SELECT type FROM nodes WHERE space_id = %s AND title = 'New node'", (write_space,))
+    assert cur.fetchone()[0] == "error", "the replacement keeps its own type"
+    cur.execute("SELECT count(*) FROM edges WHERE space_id = %s AND type = 'supersedes'", (write_space,))
+    assert cur.fetchone()[0] == 0, "a downgrade writes no supersedes edge"
+
+
+async def test_supersede_cross_type_downgrade_links_when_rule_present(pool, write_space, conn):
+    """When the pack declares relates_to across the two types, the downgrade
+    links replacement -> old, so the pair stays recoverable."""
+    cur = conn.cursor()
+    cur.execute("INSERT INTO edge_rules (space_id, type, src_type, dst_type) VALUES "
+                "(%s, 'relates_to', 'error', 'widget')", (write_space,))
+    conn.commit()
+    old_id = _seed_node(
+        conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(0)
+    )
+
+    result = await supersede(
+        pool, write_space, "p1", str(old_id), "error", "scope1",
+        "New node", "New body.", {}, _unit_vector_at_angle(math.acos(bv.PENDING_NEAR_MERGE)), "pytest",
+    )
+    assert result["outcome"] == "inserted"
+    assert result["supersede_downgraded"]["related_edge_added"] is True
+    new_id = result["node"]["id"]
+    cur.execute("SELECT count(*) FROM edges WHERE space_id = %s AND type = 'relates_to' "
+                "AND src_id = %s AND dst_id = %s", (write_space, new_id, old_id))
+    assert cur.fetchone()[0] == 1, "replacement -> old relates_to edge attached"
+    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
+    assert cur.fetchone()[0] == "active"
 
 
 async def test_supersede_non_active_old_node_rejected(pool, write_space, conn):
@@ -1013,23 +1050,6 @@ async def test_supersede_unknown_old_id_raises_not_found(pool, write_space):
             pool, write_space, "p1", "00000000-0000-0000-0000-000000000000", "widget",
             "scope1", "New node", "New body.", {}, _unit_vector_at_angle(0), "pytest",
         )
-
-
-def _assert_supersede_left_zero_state(conn, space_id, old_id, seeded_node_count):
-    """The refusal rolls the whole call back, so nothing leaks across ANY of the
-    five write-path tables (Fable, supersede-nonclean-band option (a)): no
-    replacement node, no supersedes edge, no parked pending_writes row (even
-    though the PENDING branch INSERTs one before the guard fires), no dedup_log
-    row (deliberate -- re-logging out-of-band after rollback would breach the
-    one-transaction shape), no audit_log row. The old node stays active."""
-    cur = conn.cursor()
-    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
-    assert cur.fetchone()[0] == "active", "old node survives a refused supersede"
-    cur.execute("SELECT count(*) FROM nodes WHERE space_id = %s", (space_id,))
-    assert cur.fetchone()[0] == seeded_node_count, "no replacement node was written"
-    for table in ("edges", "pending_writes", "dedup_log", "audit_log"):
-        cur.execute(f"SELECT count(*) FROM {table} WHERE space_id = %s", (space_id,))
-        assert cur.fetchone()[0] == 0, f"no {table} row leaked from a refused supersede"
 
 
 async def test_supersede_merge_band_third_node_novel_completes_via_merge_link(pool, write_space, conn):
@@ -1077,48 +1097,72 @@ async def test_supersede_merge_band_third_node_novel_completes_via_merge_link(po
     assert cur.fetchone()[0] == 1
 
 
-async def test_supersede_refuses_merge_band_third_node_non_novel(pool, write_space, conn):
-    """The narrowed fail-closed case: a replacement that bands >= t_high against a
-    third node but is NON-novel absorbs (no replacement row), so the supersede has
-    nothing to flip old against and rolls the whole call back (the guard's absorb
-    sub-case, QUESTIONS.md 'supersede-nonclean-band')."""
+async def test_supersede_merge_band_third_node_non_novel_downgrades(pool, write_space, conn):
+    """A replacement that bands >= t_high against a THIRD node and is non-novel
+    absorbs into that node, so there is no replacement row to supersede old
+    against. The call downgrades: the content lives on the third node, the
+    envelope flags the downgrade, and old stays ACTIVE with no supersedes edge."""
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(math.pi / 2)
     )
-    # third node whose body the replacement restates verbatim -> non-novel -> absorb.
-    _seed_node(
+    third_id = _seed_node(
         conn, write_space, "widget", "Twin of the replacement", "Twin body.", {},
         _unit_vector_at_angle(0),
     )
 
-    with pytest.raises(SupersedeUnresolvedBandError):
-        await supersede(
-            pool, write_space, "p1", str(old_id), "widget", "scope1",
-            "New node", "Twin body.", {}, _unit_vector_at_angle(0), "pytest",
-        )
-    _assert_supersede_left_zero_state(conn, write_space, old_id, seeded_node_count=2)
+    result = await supersede(
+        pool, write_space, "p1", str(old_id), "widget", "scope1",
+        "New node", "Twin body.", {}, _unit_vector_at_angle(0), "pytest",
+    )
+    assert result["outcome"] == "merged", "absorbed into the third node"
+    assert "superseded" not in result, "nothing was superseded"
+    assert result["canonical"]["id"] == str(third_id)
+    dg = result["supersede_downgraded"]
+    assert dg["band_outcome"] == "merged"
+    assert dg["old_kept_active"] is True
+    assert dg["old_id"] == str(old_id)
+
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
+    assert cur.fetchone()[0] == "active", "old node untouched"
+    cur.execute("SELECT count(*) FROM edges WHERE space_id = %s AND type = 'supersedes'", (write_space,))
+    assert cur.fetchone()[0] == 0, "a downgrade writes no supersedes edge"
+    cur.execute("SELECT body FROM nodes WHERE id = %s", (third_id,))
+    assert cur.fetchone()[0] == "Twin body.", "the content lives on the third node"
 
 
-async def test_supersede_refuses_pending_band_third_node_collision(pool, write_space, conn):
-    """The PENDING-band case is the sharper one: the pipeline INSERTs a
-    pending_writes row before the guard fires, and the refusal must roll THAT
-    back too -- otherwise a parked write would outlive a supersede the caller
-    never got."""
+async def test_supersede_pending_band_third_node_downgrades_and_parks(pool, write_space, conn):
+    """A replacement in the confirm band against a THIRD node is parked. The
+    call returns the needs_confirmation envelope with the downgrade flagged, the
+    parked payload stays resolvable through resolve_duplicate, and old stays
+    ACTIVE with no supersedes edge."""
     old_id = _seed_node(
         conn, write_space, "widget", "Old node", "Old body.", {}, _unit_vector_at_angle(math.pi / 2)
     )
-    # third node in the confirm band against the replacement (e1)
     _seed_node(
         conn, write_space, "widget", "Near neighbour", "Near body.", {},
         _unit_vector_at_angle(math.acos(bv.PENDING)),
     )
 
-    with pytest.raises(SupersedeUnresolvedBandError):
-        await supersede(
-            pool, write_space, "p1", str(old_id), "widget", "scope1",
-            "New node", "New body.", {}, _unit_vector_at_angle(0), "pytest",
-        )
-    _assert_supersede_left_zero_state(conn, write_space, old_id, seeded_node_count=2)
+    result = await supersede(
+        pool, write_space, "p1", str(old_id), "widget", "scope1",
+        "New node", "New body.", {}, _unit_vector_at_angle(0), "pytest",
+    )
+    assert result["outcome"] == "needs_confirmation"
+    assert "superseded" not in result
+    assert result["supersede_downgraded"]["band_outcome"] == "needs_confirmation"
+    assert result["supersede_downgraded"]["old_kept_active"] is True
+
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM nodes WHERE id = %s", (old_id,))
+    assert cur.fetchone()[0] == "active", "old node untouched"
+    cur.execute("SELECT count(*) FROM edges WHERE space_id = %s AND type = 'supersedes'", (write_space,))
+    assert cur.fetchone()[0] == 0, "a downgrade writes no supersedes edge"
+    cur.execute("SELECT count(*) FROM pending_writes WHERE space_id = %s", (write_space,))
+    assert cur.fetchone()[0] == 1, "the replacement is parked"
+
+    resolved = await resolve_duplicate(pool, write_space, "p1", result["pending_id"], "distinct")
+    assert resolved["outcome"] == "inserted", "the parked replacement resolves to a stored node"
 
 
 async def test_supersede_without_matching_edge_rule_raises_edge_rule_violation(pool, write_space, conn):

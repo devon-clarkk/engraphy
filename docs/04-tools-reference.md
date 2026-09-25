@@ -224,8 +224,18 @@ The `outcome` is one of:
 
 Atomically inserts a new node, flips the old node's `status` to `superseded`, and
 attaches a `supersedes` edge. Takes `old_id` (uuid, required) plus all of `write`'s
-fields (`scope`, `type`, `title`, `body`, `attrs`, `links`, `session_id`). Must be
-the same node type as the replacement.
+fields (`scope`, `type`, `title`, `body`, `attrs`, `links`, `session_id`). The old
+node must be `active`.
+
+> **A supersede that cannot complete is stored as a plain write.** Two cases do
+> this: a replacement whose `type` differs from the old node's, and a replacement
+> that bands as a near-duplicate of a third node (`merged` or
+> `needs_confirmation`). The envelope carries that band outcome and
+> `supersede_downgraded` (`reason`, `old_id`, `old_kept_active: true`), and has no
+> `superseded` key. The old node stays `active` and no `supersedes` edge is
+> written. A cross-type replacement is linked to the old node with `relates_to`
+> when the pack declares that rule, reported as `related_edge_added`. Resolve a
+> `needs_confirmation` downgrade with `resolve_duplicate`, the same as a write.
 
 ```jsonc
 {"old_id": "…old-uuid…", "scope": "personal-devon", "type": "preference",

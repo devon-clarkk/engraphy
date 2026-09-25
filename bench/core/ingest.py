@@ -235,6 +235,15 @@ class IngestStats:
     # rather than engine: a supersede whose target could not be resolved is
     # downgraded to a plain write and counted here.
     supersede_target_unresolved: int = 0
+    # The engine keeps a node whose declared attr fails validation and sets the
+    # value aside under `attrs.dropped`. These count the nodes stored that way
+    # and the attrs set aside, so a stored-but-degraded fact is a run metric.
+    attrs_quarantined_nodes: int = 0
+    attrs_quarantined_total: int = 0
+    dropped_attr_samples: list = field(default_factory=list)
+    # A supersede the engine stored as a plain write (a cross-type replacement,
+    # or a band collision with a third node), with the old node kept active.
+    supersede_downgraded: int = 0
     write_errors: Counter = field(default_factory=Counter)
     # A handful of worked examples behind the counters. Bounded to 5 so a
     # systematically failing extractor cannot fill the manifest, but present at
@@ -277,6 +286,10 @@ class IngestStats:
             "edges_attached": self.edges_attached,
             "supersede_attempted": self.supersede_attempted,
             "supersede_target_unresolved": self.supersede_target_unresolved,
+            "attrs_quarantined_nodes": self.attrs_quarantined_nodes,
+            "attrs_quarantined_total": self.attrs_quarantined_total,
+            "dropped_attr_samples": self.dropped_attr_samples,
+            "supersede_downgraded": self.supersede_downgraded,
             "write_errors": dict(self.write_errors),
             "write_error_samples": self.write_samples,
             "ingest_input_tokens": self.ingest_input_tokens,
@@ -499,6 +512,23 @@ async def _record_outcome(
     pool, run_space: RunSpace, envelope: dict, draft: NodeDraft, policy: ConfirmPolicy,
     stats: IngestStats,
 ) -> str | None:
+    # Tallied from the first envelope, before any pending resolution: a parked
+    # write stores attrs that are already clean, so its resolved envelope
+    # carries no further drops.
+    dropped = envelope.get("dropped_attrs")
+    if dropped:
+        stats.attrs_quarantined_nodes += 1
+        stats.attrs_quarantined_total += len(dropped)
+        if len(stats.dropped_attr_samples) < 10:
+            stats.dropped_attr_samples.append({
+                "title": draft.title[:120],
+                "node_type": draft.node_type,
+                "dropped": [{"key": d["key"], "value": d["value"], "error": d["error"]}
+                            for d in dropped],
+            })
+    if envelope.get("supersede_downgraded"):
+        stats.supersede_downgraded += 1
+
     outcome = envelope.get("outcome")
 
     if outcome == "inserted":
