@@ -10,7 +10,8 @@ administration -- add members, mint/revoke tokens, set visibility, manage grants
 operator's out-of-band equivalent plus the bootstrap (`space create`) that has to
 happen before any token can exist.
 
-Implemented here: `space create`, `principal add`, `principal archive`, `token create`,
+Implemented here: `space create`, `space export`, `space import`, `principal add`, `principal archive`,
+`principal unarchive`, `token create`,
 `token revoke`, `config set`, `import` (JSONL bulk load through the write
 pipeline), and `pack validate` / `pack apply`. Still open: `purge-session` (its
 addenda-handling is a deferred design decision, E2-plan §5.6) and the E3 verbs
@@ -35,9 +36,11 @@ import typer
 from psycopg_pool import AsyncConnectionPool
 
 from engraphy.admin import doctor, migrate, packs, verify_restore
+from engraphy.admin.export_ import ExportError, export_space
 from engraphy.admin.addenda import promote_addenda
 from engraphy.admin.import_ import ImportLineError, run_import
 from engraphy.admin.reembed import reembed_space
+from engraphy.admin.space_import import SpaceImportError, run_space_import
 from engraphy.admin.surface import rebuild_surface
 from engraphy.core import embedding, sentinel
 from engraphy.server.auth import mint_token
@@ -55,7 +58,8 @@ if sys.platform == "win32":
 
 app = typer.Typer(help="Engraphy instance-operator admin CLI.", no_args_is_help=True)
 space_app = typer.Typer(help="Create spaces and their founding principal.", no_args_is_help=True)
-principal_app = typer.Typer(help="Add and archive principals (members) in a space.", no_args_is_help=True)
+principal_app = typer.Typer(
+    help="Add, archive and restore principals (members) in a space.", no_args_is_help=True)
 token_app = typer.Typer(help="Mint and revoke bearer tokens.", no_args_is_help=True)
 config_app = typer.Typer(help="Set per-space config values.", no_args_is_help=True)
 pack_app = typer.Typer(help="Validate and apply pack files.", no_args_is_help=True)
@@ -180,6 +184,94 @@ def space_create(
     typer.echo(f"minted restore sentinel {sentinel_id} (config '{sentinel.SENTINEL_CONFIG_KEY}')")
 
 
+# Module-level: a list-typed option default must not be a call in the signature (B008).
+_EXPORT_SCOPE_OPTION = typer.Option(
+    None, "--scope", help="Export only this scope id. Repeat for several; default all.")
+_SCOPE_MAP_OPTION = typer.Option(
+    None, "--scope-map", help="Map a source scope to a destination scope, SRC=DST. Repeatable.")
+
+
+@space_app.command("export")
+def space_export(
+    space: str = typer.Option(..., help="Space id to export."),
+    out: str = typer.Option(..., "--out", help="Path of the JSONL bundle to write."),
+    scope: list[str] = _EXPORT_SCOPE_OPTION,
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Write a space's scopes, node types, nodes and edges to a JSONL bundle for
+    `space import` on another engine. Read-only: the connection refuses writes, so
+    exporting a live engine changes nothing in it."""
+    try:
+        counts = export_space(_conninfo(database_url), space, out, scopes=scope or None)
+    except ExportError as exc:
+        raise typer.BadParameter(str(exc))
+    typer.echo(f"exported space '{space}' to {out}: {counts['scopes']} scopes, "
+               f"{counts['node_types']} node types, {counts['nodes']} nodes, {counts['edges']} edges")
+
+
+@space_app.command("import")
+def space_import(
+    file: str = typer.Argument(..., help="Bundle written by `space export`."),
+    space: str = typer.Option(..., help="Destination space id on this engine."),
+    principal: str = typer.Option(..., help="Destination principal: authors every imported node."),
+    scope_map: list[str] = _SCOPE_MAP_OPTION,
+    create_scopes: bool = typer.Option(
+        True, "--create-scopes/--no-create-scopes",
+        help="Create destination scopes that do not exist (default), or refuse."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run the prechecks and print the scope plan; write nothing."),
+    review: str = typer.Option(
+        None, "--review", help="Path for the review CSV (default: alongside FILE)."),
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Replay a `space export` bundle into a space on this engine, under a
+    principal of this engine. Nodes go through the write pipeline and edges
+    through link, so the destination's space, principal, scopes, attr specs,
+    embedding model and dedup all apply. Re-running the same bundle writes
+    nothing new."""
+    conninfo = _conninfo(database_url)
+
+    async def _run():
+        pool = AsyncConnectionPool(conninfo, open=False)
+        await pool.open()
+        try:
+            return await run_space_import(
+                pool, conninfo, space, principal, file, scope_map=scope_map or None,
+                create_scopes=create_scopes, dry_run=dry_run, review_path=review)
+        finally:
+            await pool.close()
+
+    try:
+        summary = asyncio.run(_run())
+    except (SpaceImportError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc))
+    d = summary.as_dict()
+    typer.echo("scope map: " + ", ".join(f"{k} -> {v}" for k, v in sorted(d["scope_map"].items())))
+    if d["scopes_created"]:
+        verb = "would create" if dry_run else "created"
+        typer.echo(f"{verb} scopes: {', '.join(d['scopes_created'])}")
+    if dry_run:
+        typer.echo(f"dry run: prechecks passed for {d['nodes_total']} nodes and "
+                   f"{d['edges_total']} edges; nothing written")
+        return
+    typer.echo(
+        f"nodes: {d['nodes_total']} in bundle; {d['inserted']} inserted, "
+        f"{d['already_present']} already present, {d['merged']} merged, "
+        f"{d['merged_linked']} merge-linked, {d['resolved_distinct']} resolved distinct, "
+        f"{d['left_for_review']} left for review, {d['merged_status_skipped']} merged-status skipped, "
+        f"{d['skipped_archived_scope']} skipped in an archived scope")
+    typer.echo(
+        f"edges: {d['edges_total']} in bundle; {d['edges_attached']} attached, "
+        f"{d['edges_already_present']} already present, {d['edges_skipped_unmapped']} unmapped, "
+        f"{d['edges_skipped_same_node']} same node, {d['edges_skipped_no_rule']} no rule, "
+        f"{d['edges_failed']} failed")
+    typer.echo(f"restored: {d['statuses_restored']} statuses, "
+               f"{d['reserved_attrs_restored']} nodes' reserved attrs")
+    if d["review_path"]:
+        typer.echo(f"review: {d['review_path']} lists nodes parked for resolve_duplicate; "
+                   f"re-run the import after resolving them to attach their edges")
+
+
 @principal_app.command("add")
 def principal_add(
     space: str = typer.Option(..., help="Space id."),
@@ -207,6 +299,26 @@ def principal_add(
     typer.echo(f"added principal '{id}' ({role}) to space '{space}' with scope 'personal-{id}'")
 
 
+def _set_archived(conninfo: str, space: str, principal_id: str, archived: bool) -> bool:
+    """Flip principals.archived to `archived` for one principal. Returns whether
+    the row changed (False when it already held that value); raises
+    BadParameter when the principal does not exist in the space."""
+    with psycopg.connect(conninfo, autocommit=False) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE principals SET archived = %s "
+            "WHERE space_id = %s AND id = %s AND archived <> %s",
+            (archived, space, principal_id, archived),
+        )
+        changed = cur.rowcount == 1
+        cur.execute("SELECT 1 FROM principals WHERE space_id = %s AND id = %s", (space, principal_id))
+        exists = cur.fetchone() is not None
+        conn.commit()
+    if not exists:
+        raise typer.BadParameter(f"principal '{principal_id}' does not exist in space '{space}'")
+    return changed
+
+
 @principal_app.command("archive")
 def principal_archive(
     space: str = typer.Option(..., help="Space id."),
@@ -217,25 +329,26 @@ def principal_archive(
     request, the same as a revoked token, with no cache window. The principal's
     row, scopes and nodes stay in place (no hard deletes, design/01), so the
     provenance on everything it wrote is kept. The server enforces the flag in
-    auth.require_active_principal (design/03 lists `principal add|archive`)."""
-    conninfo = _conninfo(database_url)
-    with psycopg.connect(conninfo, autocommit=False) as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE principals SET archived = true "
-            "WHERE space_id = %s AND id = %s AND archived = false",
-            (space, id),
-        )
-        archived_now = cur.rowcount == 1
-        cur.execute("SELECT 1 FROM principals WHERE space_id = %s AND id = %s", (space, id))
-        exists = cur.fetchone() is not None
-        conn.commit()
-    if not exists:
-        raise typer.BadParameter(f"principal '{id}' does not exist in space '{space}'")
-    if not archived_now:
+    auth.require_active_principal (design/03 lists `principal add|archive`).
+    `principal unarchive` reverses it."""
+    if not _set_archived(_conninfo(database_url), space, id, True):
         typer.echo(f"principal '{id}' in space '{space}' is already archived")
         return
     typer.echo(f"archived principal '{id}' in space '{space}'; its tokens are refused from the next request")
+
+
+@principal_app.command("unarchive")
+def principal_unarchive(
+    space: str = typer.Option(..., help="Space id."),
+    id: str = typer.Option(..., help="Principal id to restore."),
+    database_url: str = typer.Option(None, "--database-url", help="Overrides ENGRAPHY_DATABASE_URL."),
+) -> None:
+    """Restore an archived principal: its tokens that are not revoked
+    authenticate again from their next request, with no cache window."""
+    if not _set_archived(_conninfo(database_url), space, id, False):
+        typer.echo(f"principal '{id}' in space '{space}' is not archived")
+        return
+    typer.echo(f"restored principal '{id}' in space '{space}'; its live tokens authenticate from the next request")
 
 
 @token_app.command("create")
@@ -263,6 +376,15 @@ def token_create(
 
     async def _run() -> str:
         async with await psycopg.AsyncConnection.connect(conninfo) as aconn:
+            # A token for an archived principal would be refused at the door on
+            # every request (auth.require_active_principal), so refuse the mint.
+            cur = aconn.cursor()
+            await cur.execute(
+                "SELECT archived FROM principals WHERE space_id = %s AND id = %s", (space, principal))
+            row = await cur.fetchone()
+            if row is not None and row[0]:
+                raise typer.BadParameter(
+                    f"principal '{principal}' is archived; run `principal unarchive` before minting")
             raw, _meta = await mint_token(
                 aconn, space, principal, client_name, role, no_scope_all=no_scope_all)
             await aconn.commit()

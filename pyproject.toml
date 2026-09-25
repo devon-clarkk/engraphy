@@ -29,7 +29,15 @@ dependencies = [
   # huggingface-hub, tokenized by the Rust tokenizers library, and executed by
   # onnxruntime. No framework, and no repository Python executed at load, so
   # trust_remote_code is not used on this path.
-  "onnxruntime>=1.17,<2",
+  #
+  # onnxruntime is pinned to the 1.29 line. The dedup bands and similarity
+  # floors are absolute cosines calibrated against its arithmetic, and a
+  # runtime minor release can move them: under 1.30.0 the micro fixture
+  # same_topic_different_incident_pending measures 0.9012 against t_low 0.902
+  # and bands insert instead of pending. Moving to a new minor is a reviewed
+  # change that re-runs test_dedup_fixture_bands.py on it, the same way the
+  # ruff and dbmate pins move.
+  "onnxruntime~=1.29.0",
   "tokenizers>=0.15,<1",
   "huggingface-hub>=0.23,<1",
   "pyyaml>=6.0",

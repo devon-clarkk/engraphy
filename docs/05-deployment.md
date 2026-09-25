@@ -228,9 +228,10 @@ Design, the version pairing, the measured footprint and the build steps are in
   write tools and `POST /inbox`.
 - **Principals** are actors in a space. Each CLI-created principal gets a private,
   ambient `personal-<id>` scope in the same transaction. To offboard a principal,
-  run `engraphy-admin principal archive --space … --id …`. Every token that
-  principal holds is refused from its next request, and its scopes and nodes stay
-  in place.
+  run `engraphy-admin principal archive --space … --id …`, or have a space_admin
+  call `admin_member_archive`. Every token that principal holds is refused from
+  its next request, and its scopes and nodes stay in place.
+  `engraphy-admin principal unarchive` restores it.
 - **Scopes** are isolation containers with a `visibility`:
   - `private` — owner + explicit grants only.
   - `team-read` — every principal in the space may read.
@@ -256,10 +257,13 @@ engraphy.admin.cli <verb>` if `engraphy-admin` isn't on `PATH`.
 | `space create --id … --display-name … --principal …` | create a space + founding `space_admin` + personal scope + restore sentinel. |
 | `principal add --space … --id … --display-name … [--role …]` | add a member (+ their personal scope). |
 | `principal archive --space … --id …` | offboard a member: every token they hold is refused from the next request; their scopes and nodes stay. |
+| `principal unarchive --space … --id …` | restore an archived member: their tokens that are not revoked authenticate again from the next request. |
 | `token create / token revoke` | mint / revoke a bearer token. |
 | `config set --space … --key … --value …` | set a per-space config value (JSON), e.g. `dedup.t_high`, `space_admin_tools`. |
 | `pack validate / pack apply / pack upgrade` | validate, apply, or migrate a pack's ontology. |
 | `import <file.jsonl> --space … --scope … --principal …` | bulk-load through the dedup pipeline (idempotent; pending items → review-queue CSV). |
+| `space export --space … --out … [--scope …]` | write a space's scopes, node types, nodes and edges to a JSONL bundle. Read-only. |
+| `space import <bundle> --space … --principal … [--scope-map SRC=DST] [--dry-run]` | replay a bundle into a space on this engine through the write pipeline and `link`. Re-running writes nothing new. See [07-moving-memories.md](07-moving-memories.md). |
 | `addenda promote --space …` | promote get-only addenda into searchable member nodes (Phase B recovery). |
 | `surface rebuild --space …` | recompute the searchable attr surface + re-embed changed rows (run after a Phase C migration or a `searchable`-flag change). |
 | `migrate` | pre-dump → `dbmate up` → restart → smoke test. |
@@ -278,6 +282,11 @@ every `migrate`, but ongoing backups are external):
 3. **Monthly**, run `engraphy-admin verify-restore --against <one of the dumps>` —
    "restore-tested, not just taken". It asserts the restore is usable, including
    retrieving the space's restore **sentinel** node.
+
+A dump restores a whole database onto the engine it came from. To move one
+space's memories into a space on another engine, use `space export` and
+`space import` ([07-moving-memories.md](07-moving-memories.md)), which remap the
+space, principal and scopes to the destination.
 
 ## Health & version
 

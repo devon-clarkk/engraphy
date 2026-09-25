@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+- `engraphy-admin space export --space … --out …` writes a space's scopes, node
+  types, nodes and edges to a JSONL bundle, or only the scopes named with
+  `--scope`. The export's database connection refuses every write, and the
+  export refuses a connection role that does not bypass row-level security.
+- `engraphy-admin space import <bundle> --space … --principal …` replays a
+  bundle into a space on this engine. Nodes go through the write pipeline and
+  edges through `link`, under the destination principal. Missing scopes are
+  created with the source's visibility, hints and description, and
+  `superseded` and `archived` statuses and reserved attrs are restored on the
+  nodes the import creates. `--scope-map SRC=DST` redirects a scope, and
+  `--dry-run` checks without writing. Re-running the same bundle writes
+  nothing new. [docs/07-moving-memories.md](docs/07-moving-memories.md) is the
+  runbook.
+
+## 0.3.0
+
+The write path stores a node that carries a partial or imprecise date. When an
+attribute value does not fit its declared type, the engine sets that value
+aside and stores the node. This release also adds member offboarding, role and
+rate gates on `POST /inbox`, a `micro` embedding profile, and a Docker-free
+Windows distribution.
+
 Role and rate gates on `POST /inbox`, principal offboarding, and a pinned,
 verified migration runner in the admin image.
 
@@ -16,6 +39,69 @@ verified migration runner in the admin image.
   cache window. The principal's scopes and nodes stay in place.
 - The admin image installs dbmate v2.35.0 and verifies its SHA-256 before the
   binary runs. CI installs the same release with the same check.
+- `POST /inbox` caps the request body at 64 KiB. A larger body receives 413 with
+  `ENGRAPHY_VALIDATION`, whether it declares its length or streams.
+- `admin_member_archive` lets a space_admin archive a member over MCP, or
+  restore one with `archived: false`. A space_admin cannot archive itself.
+  Migration 0026 adds the `principals` UPDATE policy behind it, with the same
+  space-admin predicate as the other admin writes.
+- `engraphy-admin principal unarchive` restores an archived principal. Minting a
+  token for an archived principal, over MCP or the CLI, is refused with the
+  reason.
+- Archived nodes are out of `traverse`, and `update` and `link` refuse them with
+  `ENGRAPHY_VALIDATION`. `get` still reads them by id.
+- The admin image pins a dbmate digest for amd64 and for arm64 and installs the
+  binary for the architecture it builds. Any other architecture fails the build.
+
+### Changed
+- A `date` attr accepts a full ISO date, a year and month (`2026-01`), or a year
+  (`2026`), and stores the value exactly as written. An out-of-range month or
+  day is refused, and a month must be zero-padded so stored dates sort in
+  chronological order.
+- A write whose attr value does not fit its declared type stores the node and
+  sets that value aside under `attrs.dropped`, naming it in the envelope's
+  `dropped_attrs`. A required attr stays satisfied by its quarantined entry, so
+  a node carrying an imprecise date keeps the rest of its content. A key the
+  node type does not declare is still refused under a closed spec. `write`,
+  `supersede` and `update` all answer this way.
+- The answer-discipline skill has an agent confirm that a returned memory is
+  about the subject and the occasion a question asks about before answering from
+  it, and before declining for want of it. Shared wording about a different
+  person or event is not a match; the right subject and occasion in other words
+  is.
+- The embedding runtime is pinned to onnxruntime 1.29.x, the release the dedup
+  and similarity-floor calibrations are measured against. A new onnxruntime
+  minor release is adopted as a reviewed change, with the live band fixtures
+  re-run on it.
+- The answer-discipline skill has an agent confirm that a returned memory is
+  about the subject and the occasion a question asks about before answering from
+  it, and before declining for want of it. Shared wording about a different
+  person or event is not a match; the right subject and occasion in other words
+  is.
+- The LoCoMo harness reader writes a `CHECK:` line naming the subject, the fact
+  asked for and the memory that states it, then its answer on an `ANSWER:` line.
+  The judge grades only the answer. `--reader-contract direct` selects the
+  single-line reply.
+
+LoCoMo is reported under the reference harness conventions beside Engraphy's
+strict figure, and the search width is set per arm.
+
+### Added
+- `python -m bench.reference_pass --run-dir runs/<run-id>` grades a completed
+  run under the conventions of the `mem0ai/memory-benchmarks` LoCoMo harness: its
+  answer prompt, its partial-credit judge, categories 1 to 4, and one judge pass
+  per answer. The prompts are vendored verbatim at commit `4b61c5d` under
+  `bench/prompts/reference/` with their Apache-2.0 licence, and the pass's
+  manifest records every difference from that harness. Engraphy's strict figure
+  remains the primary one.
+- `--arm llm-conversational:search_only:k=20` sets the search width of a
+  `search_only` arm, recorded under `retrieval_configs` in the manifest. The
+  engine returns at most 25 results.
+- `python -m bench.k_sweep` measures evidence recall at several search widths over
+  a completed run's store, with no LLM in the loop: the share of a question's
+  LoCoMo evidence turns quoted by the memories returned.
+- `python -m bench.replay` re-reads a completed run's saved envelopes under a
+  given reader and grades the answers, so two readers compare on identical memory.
 
 A laptop-sized deployment. The `micro` profile with the Postgres overlay that
 ships beside it measures **187MB resident** for the whole stack, against 983MB

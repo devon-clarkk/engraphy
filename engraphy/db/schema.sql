@@ -109,9 +109,14 @@ BEGIN
   cond   := COALESCE(spec #> '{attrs,requires}', '[]'::jsonb);
   closed := COALESCE((spec #>> '{attrs,closed}')::boolean, true);
 
-  -- Phase 1: required presence
+  -- Phase 1: required presence (satisfied by a top-level key OR a quarantined
+  -- key in an object `dropped` bucket).
   FOR k IN SELECT jsonb_object_keys(req) ORDER BY 1 LOOP
-    IF NOT attrs ? k THEN errors := errors || format('attrs.%s is required', k); END IF;
+    IF NOT attrs ? k
+       AND NOT COALESCE(jsonb_typeof(attrs -> 'dropped') = 'object'
+                        AND (attrs -> 'dropped') ? k, false) THEN
+      errors := errors || format('attrs.%s is required', k);
+    END IF;
   END LOOP;
 
   -- Phase 2: conditionals, array order
@@ -125,11 +130,11 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Phase 3: closed / unknown keys. `addenda` is engine-reserved (never a
-  -- pack-declared key -- see migration header) and exempt from this check.
+  -- Phase 3: closed / unknown keys. `addenda` and `dropped` are engine-reserved
+  -- (never pack-declared) and exempt from this check.
   IF closed THEN
     FOR k IN SELECT jsonb_object_keys(attrs) ORDER BY 1 LOOP
-      IF k <> 'addenda' AND NOT (req ? k OR opt ? k) THEN
+      IF k <> 'addenda' AND k <> 'dropped' AND NOT (req ? k OR opt ? k) THEN
         errors := errors || format('attrs.%s is not allowed (closed spec)', k);
       END IF;
     END LOOP;
@@ -168,11 +173,11 @@ BEGIN
             errors := errors || format('attrs.%s must be a bool', k);
           END IF;
         WHEN 'date' THEN
-          IF jsonb_typeof(v) <> 'string' OR (v #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' THEN
+          IF jsonb_typeof(v) <> 'string' OR (v #>> '{}') !~ '^\d{4}(-\d{2}(-\d{2})?)?$' THEN
             errors := errors || format('attrs.%s must be a date', k);
           ELSE
             BEGIN
-              d := (v #>> '{}')::date;
+              d := rpad(v #>> '{}', 10, '-01')::date;
             EXCEPTION WHEN others THEN
               errors := errors || format('attrs.%s must be a valid ISO date', k);
             END;
@@ -1157,6 +1162,17 @@ CREATE POLICY pending_writes_write ON public.pending_writes FOR INSERT WITH CHEC
 ALTER TABLE public.principals ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: principals principals_admin_update; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY principals_admin_update ON public.principals FOR UPDATE USING (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
+   FROM public.principals a
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text)))))) WITH CHECK (((space_id = current_setting('engraphy.space_id'::text, true)) AND (EXISTS ( SELECT 1
+   FROM public.principals a
+  WHERE ((a.space_id = current_setting('engraphy.space_id'::text, true)) AND (a.id = current_setting('engraphy.principal'::text, true)) AND (a.role = 'space_admin'::text))))));
+
+
+--
 -- Name: principals principals_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -1269,4 +1285,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('0021'),
     ('0022'),
     ('0023'),
-    ('0024');
+    ('0024'),
+    ('0026'),
+    ('0027'),
+    ('0028');

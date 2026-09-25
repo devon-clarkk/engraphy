@@ -67,7 +67,8 @@ Copilot agent mode receives the server through VS Code's MCP provider API.
 Claude Code and Cursor read their own MCP config instead, so
 **Engraphy: Register with your coding agent** writes the entry there and reads
 the file back to confirm it landed before reporting success. It takes a
-timestamped backup, writes through a temp file and a rename, abandons the write
+timestamped backup that no later registration overwrites, even one in the same
+millisecond, writes through a temp file and a rename, abandons the write
 if the agent changed the file underneath it, and leaves a config carrying
 comments or invalid JSON untouched. Writing a token into an agent's plaintext
 config is confirmed with you first; the keychain copy is unchanged.

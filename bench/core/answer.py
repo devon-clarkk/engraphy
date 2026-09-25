@@ -60,6 +60,8 @@ from bench.core.retrieve import Retrieval
 
 __all__ = [
     "INSUFFICIENT",
+    "READER_CONTRACTS",
+    "READER_DEFAULT_CONTRACT",
     "READER_DEFAULT_STANCE",
     "READER_OUTPUT_CONTRACT",
     "READER_SKILL",
@@ -264,6 +266,15 @@ READER_SKILL = "answer-discipline.md"
 READER_STANCES = ("strict", "grounded")
 READER_DEFAULT_STANCE = "grounded"
 
+# How the reader lays out its reply. `verify`, the default, has it name the
+# subject, the fact asked for, and the memory that states that fact on a CHECK
+# line, then give its answer on an ANSWER line; only the answer is graded. The
+# check puts the skill's subject-and-occasion test in front of every answer and
+# every decline. `direct` is the single-line reply, kept byte for byte so a run
+# under it can be reproduced.
+READER_CONTRACTS = ("verify", "direct")
+READER_DEFAULT_CONTRACT = "verify"
+
 _OUTPUT_BASE = (
     "## Output format for this evaluation\n\n"
     "You are being evaluated, so you cannot ask the user or issue further tool "
@@ -291,23 +302,58 @@ def _stance_directive(stance: str) -> str:
     )
 
 
-def _output_contract(stance: str) -> str:
+_VERIFY_FORMAT = (
+    "\n\nLay out your reply as exactly two lines. The first line begins `CHECK:` and "
+    "says, in a few words, who or what the question is about, the specific fact it "
+    "asks for, and the title of the returned memory that states or supports that "
+    "fact for that subject and occasion, or `none`. The second line begins "
+    "`ANSWER:` and carries only your answer, in the form above; when you decline, "
+    "it is exactly INSUFFICIENT. The grader sees only the text after `ANSWER:`."
+)
+
+
+def _output_contract(stance: str, contract: str = READER_DEFAULT_CONTRACT) -> str:
+    if contract not in READER_CONTRACTS:
+        raise ValueError(f"unknown reader contract {contract!r}; choose {READER_CONTRACTS}")
     if stance == "grounded":
-        return _OUTPUT_BASE + (
+        text = _OUTPUT_BASE + (
             " If the memory neither states the answer nor supports a grounded "
             "inference, reply with exactly the single word INSUFFICIENT."
         )
-    return _OUTPUT_BASE + (
-        " Following the discipline above: if the provided memory does not contain "
-        "the answer, reply with exactly the single word INSUFFICIENT."
-    )
+    else:
+        text = _OUTPUT_BASE + (
+            " Following the discipline above: if the provided memory does not contain "
+            "the answer, reply with exactly the single word INSUFFICIENT."
+        )
+    if contract == "verify":
+        text += _VERIFY_FORMAT
+    return text
+
+
+def split_reply(raw: str, contract: str = READER_DEFAULT_CONTRACT) -> tuple[str, str]:
+    """`(check, answer)` from one reader reply.
+
+    Under `direct` the whole reply is the answer. Under `verify` the answer is the
+    text after the last `ANSWER:`. A reply with no marker is kept whole as the
+    answer, so a formatting slip is graded on what the reader said rather than
+    scored as an empty answer.
+    """
+    if contract != "verify" or "ANSWER:" not in raw:
+        return "", raw
+    head, _, answer = raw.rpartition("ANSWER:")
+    check = head.strip().strip("*").strip()
+    if check.upper().startswith("CHECK:"):
+        check = check[len("CHECK:"):].strip()
+    return check, answer.strip().strip("*").strip()
 
 
 # Kept for back-compat / external reference: the default (grounded) contract.
 READER_OUTPUT_CONTRACT = _output_contract(READER_DEFAULT_STANCE)
 
 
-def build_reader_system(stance: str = READER_DEFAULT_STANCE) -> tuple[str, dict]:
+def build_reader_system(stance: str = READER_DEFAULT_STANCE, *,
+                        contract: str = READER_DEFAULT_CONTRACT,
+                        skill_path: str | pathlib.Path | None = None) -> tuple[str, dict]:
     """The reader's full system instruction, and what the manifest records about it.
 
     The system is the shipped skill, then the active inference stance directive,
@@ -318,17 +364,18 @@ def build_reader_system(stance: str = READER_DEFAULT_STANCE) -> tuple[str, dict]
     """
     if stance not in READER_STANCES:
         raise ValueError(f"unknown reader stance {stance!r}; choose {READER_STANCES}")
-    skill_path = SKILLS_DIR / READER_SKILL
-    skill_text = skill_path.read_text(encoding="utf-8")
+    skill_file = pathlib.Path(skill_path) if skill_path else SKILLS_DIR / READER_SKILL
+    skill_text = skill_file.read_text(encoding="utf-8")
     skill_sha = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
-    contract = _output_contract(stance)
+    contract_text = _output_contract(stance, contract)
     system = (f"{skill_text}\n\n---\n\n{_stance_directive(stance)}"
-              f"\n\n---\n\n{contract}")
+              f"\n\n---\n\n{contract_text}")
     manifest = {
-        "governing_skill": f"skills/{READER_SKILL}",
+        "governing_skill": f"skills/{READER_SKILL}" if not skill_path else str(skill_file),
         "governing_skill_sha256": f"sha256:{skill_sha}",
         "inference_stance": stance,
-        "output_contract": contract,
+        "output_format": contract,
+        "output_contract": contract_text,
         "reader_input_shape": RENDER_FORMAT_VERSION,
         "note": (
             "The reader's governing instruction is the shipped skill file, loaded "
@@ -369,6 +416,9 @@ class Answer:
     provider_input_tokens: int = 0
     provider_output_tokens: int = 0
     error: str = ""
+    # The reader's CHECK line under the `verify` contract. Diagnostic only: the
+    # judge never sees it.
+    check: str = ""
 
     @property
     def abstained(self) -> bool:
@@ -386,6 +436,7 @@ class Answer:
             "provider_output_tokens": self.provider_output_tokens,
             "abstained": self.abstained,
             "error": self.error,
+            "reader_check": self.check,
         }
 
 
@@ -416,10 +467,14 @@ class Reader:
     """
 
     def __init__(self, client, *, effort: str = "medium", max_tokens: int = 1000,
-                 stance: str = READER_DEFAULT_STANCE) -> None:
+                 stance: str = READER_DEFAULT_STANCE,
+                 contract: str = READER_DEFAULT_CONTRACT,
+                 skill_path: str | pathlib.Path | None = None) -> None:
         self.client = client
         self.stance = stance
-        self.system, self.system_manifest = build_reader_system(stance)
+        self.contract = contract
+        self.system, self.system_manifest = build_reader_system(
+            stance, contract=contract, skill_path=skill_path)
         self.effort = effort
         self.max_tokens = max_tokens
 
@@ -465,9 +520,11 @@ class Reader:
                 error=f"{type(exc).__name__}: {exc}"[:400],
             )
 
+        check, text = split_reply((resp.text or "").strip(), self.contract)
         return Answer(
             question_id=question.question_id,
-            text=(resp.text or "").strip(),
+            text=text,
+            check=check,
             envelope_bytes=len(blob.encode("utf-8")),
             envelope_sha256=digest,
             seconds=resp.seconds,

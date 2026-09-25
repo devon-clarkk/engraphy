@@ -84,6 +84,10 @@ leg) is cosine 0–1; `edge_count` hints how much is attached (walk it with
 Common patterns: depth-1 `both` from an entity lists everything about it;
 `edge_types: ["same_topic"]` from a hit lists its merge-linked cluster siblings.
 
+Archived nodes are out of the walk: none is returned or walked through, and no
+edge into one is reported. The start node is returned whatever its status,
+because naming it is a read by id.
+
 ### `get` — full nodes by id
 
 | Param | Type | Required | Notes |
@@ -203,6 +207,19 @@ The `outcome` is one of:
 > **If a write comes back `merged` but you were updating/contradicting the stored
 > fact, call `supersede`.** Auto-merge cannot tell a correction from a restatement.
 
+> **A `date` attr takes a full ISO date or a partial**: `2026-01-15`, `2026-01` or
+> `2026`, stored exactly as written. An out-of-range month or day is refused
+> (`2026-13`, `2026-02-30`), and a month must be zero-padded so dates sort in
+> order.
+
+> **An attr whose value does not fit its declared type is quarantined, and the
+> node is still stored.** The offending value is kept under `attrs.dropped` as
+> `{key: {value, error}}`, and the envelope carries `dropped_attrs`
+> (`[{"key": …, "value": …, "error": …}]`) so a caller sees what was set aside. A
+> required attr stays satisfied by its quarantined entry. A key the type does not
+> declare is still refused under a closed spec. `supersede` and `update` answer
+> the same way.
+
 ### `supersede` — replace a node, preserving history
 
 Atomically inserts a new node, flips the old node's `status` to `superseded`, and
@@ -226,7 +243,8 @@ the same node type as the replacement.
 | `attrs` | object |  |
 
 Re-embeds only if the searchable text actually changed. Use `update` for
-copy-edits; use `supersede` when the *fact* changed.
+copy-edits; use `supersede` when the *fact* changed. An archived node is
+read-only, and `update` on one returns `ENGRAPHY_VALIDATION`.
 
 ### `link` — attach edges between existing nodes
 
@@ -237,7 +255,8 @@ copy-edits; use `supersede` when the *fact* changed.
 **Link items** are `{type, src_id, dst_id}`. For `link.edges`, **both** endpoints
 are required (they connect two existing nodes). For `write.links` / `supersede.links`,
 supply exactly **one** endpoint — the other is the node being written. Edges are
-rule-checked against the pack's `edge_rules`.
+rule-checked against the pack's `edge_rules`. An archived node takes no new
+edges, so an archived endpoint returns `ENGRAPHY_VALIDATION`.
 
 ```jsonc
 {"edges": [{"type": "references", "src_id": "…note…", "dst_id": "…project…"}]}
@@ -320,6 +339,7 @@ the caller's principal to have the `space_admin` role.
 | Tool | Params | Effect |
 |---|---|---|
 | `admin_member_add` | `id`✓, `display_name`✓, `role` (`member`\|`space_admin`) | add a principal to this space. |
+| `admin_member_archive` | `id`✓, `archived` (boolean, default `true`) | archive a member, so every token it holds is refused from the next request, or restore it with `archived: false`. A space_admin cannot archive itself. |
 | `admin_token_create` | `principal`✓, `client_name`✓, `role`✓ (`readwrite`\|`readonly`) | mint a display-once bearer token. |
 | `admin_scope_visibility` | `scope_id`✓, `visibility`✓ (`private`\|`team-read`\|`team-write`) | change a scope's visibility. |
 | `admin_grant` | `scope_id`✓, `principal`✓, `level`✓ (`read`\|`write`) | grant a principal access to a scope. |
@@ -347,5 +367,7 @@ A capture needs a `readwrite` token and counts against that token's write rate
 limit (`rate.write_per_min`), the same as an MCP write. A `readonly` token
 receives `403` with `ENGRAPHY_ROLE`. A token over its limit receives `429` with
 `ENGRAPHY_RATE_LIMITED`, a `retry_after_ms` field, and a `Retry-After` header.
+The request body is capped at 64 KiB, and a larger body receives `413` with
+`ENGRAPHY_VALIDATION`.
 
 Next: the [end-to-end tutorial](06-tutorial.md) puts these together on a real pack.

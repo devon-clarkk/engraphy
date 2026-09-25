@@ -3,7 +3,7 @@
   "name": "io.github.devon-clarkk/engraphy",
   "title": "Engraphy",
   "description": "Self-hosted MCP memory server: a typed knowledge graph on Postgres 16 and pgvector.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repository": {
     "url": "https://github.com/devon-clarkk/engraphy",
     "source": "github",
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/devon-clarkk/engraphy:0.2.0",
+      "identifier": "ghcr.io/devon-clarkk/engraphy:0.3.0",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:8000/mcp/",

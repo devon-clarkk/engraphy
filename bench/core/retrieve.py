@@ -61,12 +61,16 @@ class RetrievalStrategy(Protocol):
     async def retrieve(self, pool, run_space, question: Question, meter: Meter) -> Retrieval: ...
 
 
+# The shipped search width. An arm that sets no `k` retrieves this many results.
+DEFAULT_SEARCH_LIMIT = 10
+
+
 class SearchOnly:
     """Hybrid search at shipped defaults. The baseline."""
 
     name = "search_only"
 
-    def __init__(self, limit: int = 10, detail: str = "full") -> None:
+    def __init__(self, limit: int = DEFAULT_SEARCH_LIMIT, detail: str = "full") -> None:
         self.limit = limit
         self.detail = detail
 

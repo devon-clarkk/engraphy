@@ -136,7 +136,7 @@ The instance-admin-is-local-CLI rule ([03](03-api-auth-and-tenancy.md)) survives
 | Operation | Who | Surface |
 |-----------|-----|---------|
 | Create/archive spaces, apply/upgrade packs, migrations, imports, instance config | Instance operator | `engraphy-admin` local CLI only (unchanged) |
-| Add/archive members, mint/revoke tokens *within the space*, create scopes, set visibility, manage grants | `space_admin` principals | **Space-admin MCP tools** (`admin_member_add`, `admin_token_create` — returns display-once token, `admin_scope_visibility`, `admin_grant`), available only to tokens whose principal has the role; all audited |
+| Add/archive members, mint/revoke tokens *within the space*, create scopes, set visibility, manage grants | `space_admin` principals | **Space-admin MCP tools** (`admin_member_add`, `admin_member_archive`, `admin_token_create` — returns display-once token, `admin_scope_visibility`, `admin_grant`), available only to tokens whose principal has the role; all audited |
 | Change own scopes' visibility, grant own scopes | Scope owner | Same tools, owner-scoped — **deferred** (see below) |
 
 Two E2-shipped narrowings/widenings against this table, both deliberate (Devon, 2026-07-19; revisit at E6):

@@ -225,6 +225,11 @@ SPEC: dict[str, dict[str, Arg]] = {
         "display_name": Arg(STRING, required=True),
         "role": Arg(STRING, enum=("member", "space_admin")),
     },
+    "admin_member_archive": {
+        "id": Arg(STRING, required=True),
+        # Absent means archive. false restores an archived member.
+        "archived": Arg(BOOLEAN),
+    },
     "admin_token_create": {
         "principal": Arg(STRING, required=True),
         "client_name": Arg(STRING, required=True),

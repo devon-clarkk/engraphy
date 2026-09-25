@@ -45,6 +45,7 @@ import asyncio
 import contextlib
 import contextvars
 import ipaddress
+import json
 import logging
 import math
 import os
@@ -202,6 +203,35 @@ def _error_result(exc: ToolError) -> types.CallToolResult:
         structuredContent=dict(exc.extra) if exc.extra else None,
         isError=True,
     )
+
+
+# POST /inbox's request-body cap. A capture is a raw excerpt (a tool failure, a
+# chat fragment) that a reviewer later authors into a node whose body is at most
+# 8000 characters (nodes.body's CHECK), so 64 KiB leaves room for the surrounding
+# context and the JSON framing while keeping one capture bounded, in storage and
+# in the memory it takes to read.
+INBOX_MAX_BODY_BYTES = 64 * 1024
+
+
+class _BodyTooLarge(Exception):
+    """The request body passed the route's cap."""
+
+
+async def _read_capped_body(request: Request, limit: int) -> bytes:
+    """The request body, or _BodyTooLarge once it passes `limit` bytes. A
+    declared Content-Length over the limit is refused before a byte is read,
+    and a chunked or understated body is counted as it streams, so the cap
+    holds either way and nothing past it is ever buffered."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > limit:
+        raise _BodyTooLarge
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise _BodyTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _http_refusal(exc: ToolError) -> JSONResponse:
@@ -367,8 +397,18 @@ def create_app(pool, *, insecure_transport_ok: bool = False) -> Starlette:
             rate_limiter.check(ctx.token_id, classify_kind(INBOX_CAPTURE), read_limit, write_limit)
         except ToolError as exc:
             return _http_refusal(exc)
+        # The size cap runs after the gates, so a refused caller never gets a
+        # body read at all, and before parsing, so an oversized body is never
+        # decoded.
         try:
-            body = await request.json()
+            raw = await _read_capped_body(request, INBOX_MAX_BODY_BYTES)
+        except _BodyTooLarge:
+            return JSONResponse(
+                {"error": f"ENGRAPHY_VALIDATION: request body exceeds {INBOX_MAX_BODY_BYTES} bytes"},
+                status_code=413,
+            )
+        try:
+            body = json.loads(raw)
             kind = body["kind"]
             payload = body["payload"]
         except Exception:  # noqa: BLE001 -- any malformed body is one 400, by design
