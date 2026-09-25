@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'"
+		/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link href="css/theme.css" rel="stylesheet" />
+		<link href="css/confirm.css" rel="stylesheet" />
+		<link href="css/stats.css" rel="stylesheet" />
+		<link href="css/graph.css" rel="stylesheet" />
+		<link href="css/app.css" rel="stylesheet" />
+		<link href="css/desktop.css" rel="stylesheet" />
+		<title>Engraphy</title>
+	</head>
+	<body>
+		<!-- Custom title bar. The OS window controls are drawn over the right end
+		     on Windows (titleBarOverlay) and at the left on macOS (hiddenInset),
+		     so app.js adds a platform- class and the CSS reserves the right side. -->
+		<div id="titlebar">
+			<div class="titlebar-drag">
+				<span class="titlebar-title">Engraphy</span>
+			</div>
+		</div>
+
+		<div id="app">
+			<nav id="sidebar" aria-label="Sections">
+				<div class="brand">
+					<div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
+					<div class="brand-word brand-mono">Engraphy</div>
+				</div>
+				<div class="nav" id="nav" role="tablist" aria-orientation="vertical">
+					<button class="nav-item active" data-nav="explorer" role="tab" aria-selected="true">Memories</button>
+					<button class="nav-item" data-nav="graph" role="tab" aria-selected="false">Graph</button>
+					<button class="nav-item" data-nav="stats" role="tab" aria-selected="false">Impact &amp; usage</button>
+					<button class="nav-item" data-nav="confirm" role="tab" aria-selected="false">Confirm-write queue</button>
+					<button class="nav-item" data-nav="settings" role="tab" aria-selected="false">Settings</button>
+				</div>
+				<div class="nav-spacer"></div>
+				<button class="health" id="health" data-phase="checking" title="Connection health. Click to re-check.">
+					<span class="dot"></span>
+					<span class="health-text">Checking…</span>
+				</button>
+			</nav>
+
+			<div id="content">
+				<!-- Global connection banner. Hidden whenever the app can actually
+				     read data; otherwise it always carries the fixing action. -->
+				<div id="conn-banner" class="hidden" role="status">
+					<span class="banner-dot" aria-hidden="true"></span>
+					<span class="banner-text"></span>
+					<span class="banner-actions">
+						<button class="btn btn-secondary banner-retry">Reconnect</button>
+						<button class="btn btn-approve banner-fix">Open Settings</button>
+					</span>
+				</div>
+
+				<!-- Update banner. Sits below the connection banner because a
+				     server you cannot reach is the more urgent of the two, and
+				     it appears only when a newer version is actually published.
+				     Dismissing it is per version, not forever. -->
+				<div id="update-banner" class="hidden" role="status" data-tone="info">
+					<span class="banner-dot" aria-hidden="true"></span>
+					<span class="update-copy">
+						<span class="banner-text"></span>
+						<span class="banner-detail"></span>
+					</span>
+					<span class="banner-actions">
+						<button class="btn btn-ghost update-notes">Release notes</button>
+						<button class="btn btn-approve update-action">Download update</button>
+						<button class="btn btn-ghost update-dismiss" title="Hide this until the next version">Not now</button>
+					</span>
+				</div>
+
+				<div id="panels">
+					<!-- Memory explorer (built fresh for desktop) -->
+					<section class="panel active" data-panel="explorer" role="tabpanel">
+						<header class="panel-header">
+							<div class="panel-titles">
+								<h1>Memories</h1>
+								<p>Search the graph, open a memory, and follow its links.</p>
+							</div>
+						</header>
+						<main class="panel-root" data-root aria-live="polite"></main>
+					</section>
+
+					<!-- Graph viewer (cytoscape + fcose, vendored under vendor/) -->
+					<section class="panel" data-panel="graph" role="tabpanel">
+						<header class="panel-header">
+							<div class="panel-titles">
+								<h1>Graph</h1>
+								<p>Every memory, its links, and the scope it lives in.</p>
+							</div>
+							<div class="header-actions">
+								<button class="btn btn-ghost" data-graph-fit title="Zoom to fit the whole graph">⤢ Fit</button>
+								<button class="btn btn-ghost" data-graph-relayout title="Run the layout again">↻ Re-layout</button>
+								<button class="btn btn-approve" data-refresh title="Re-read the graph from the server">Rebuild</button>
+							</div>
+						</header>
+						<main class="panel-root" data-root aria-live="polite"></main>
+					</section>
+
+					<!-- Stats (reused stats.js) -->
+					<section class="panel" data-panel="stats" role="tabpanel">
+						<header class="panel-header">
+							<div class="panel-titles">
+								<h1>Impact &amp; usage</h1>
+								<p>What Engraphy is doing for you.</p>
+							</div>
+							<div class="header-actions">
+								<button class="btn btn-ghost" data-refresh title="Re-read stats">↻ Refresh</button>
+							</div>
+						</header>
+						<main class="panel-root" data-root aria-live="polite"></main>
+					</section>
+
+					<!-- Confirm-write queue (reused confirm.js) -->
+					<section class="panel" data-panel="confirm" role="tabpanel">
+						<header class="panel-header">
+							<div class="panel-titles">
+								<h1>Confirm-write queue</h1>
+								<p>Approve, merge, or keep-distinct pending writes.</p>
+							</div>
+							<div class="header-actions">
+								<button class="btn btn-ghost" data-refresh title="Re-read the queue">↻ Refresh</button>
+							</div>
+						</header>
+						<main class="panel-root" data-root aria-live="polite"></main>
+					</section>
+
+					<!-- Settings (built fresh for desktop) -->
+					<section class="panel" data-panel="settings" role="tabpanel">
+						<header class="panel-header">
+							<div class="panel-titles">
+								<h1>Settings</h1>
+								<p>Connect to your Engraphy MCP server.</p>
+							</div>
+						</header>
+						<main class="panel-root" data-root aria-live="polite"></main>
+					</section>
+				</div>
+			</div>
+		</div>
+
+		<div id="modal-host"></div>
+		<div id="onboarding-host"></div>
+		<div id="toast-host"></div>
+
+		<script src="vendor/cytoscape.min.js"></script>
+		<script src="vendor/layout-base.js"></script>
+		<script src="vendor/cose-base.js"></script>
+		<script src="vendor/cytoscape-fcose.js"></script>
+
+		<script src="views/states.js"></script>
+		<script src="views/confirm.js"></script>
+		<script src="views/stats.js"></script>
+		<script src="views/graph.js"></script>
+		<script src="views/explorer.js"></script>
+		<script src="views/settings.js"></script>
+		<script src="views/onboarding.js"></script>
+		<script src="app.js"></script>
+	</body>
+</html>

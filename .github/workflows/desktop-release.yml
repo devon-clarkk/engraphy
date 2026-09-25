@@ -1,0 +1,164 @@
+name: Release the desktop app
+
+# One action releases the desktop app: Actions > Release the desktop app >
+# Run workflow, from main, with the version.
+#
+# main carries the "main: CI must pass" ruleset, so this workflow never
+# pushes to it. It commits the version bump on release/desktop-v<version>,
+# tags that commit desktop-v<version> (no ruleset covers tags), builds the
+# Windows installer and attaches it to the engine's current latest GitHub
+# release (see desktop-publish.yml for why it is that release and not one of
+# its own), and opens a pull request that carries the bump into main through
+# the same checks as any other change.
+#
+# A push or pull request made with the workflow's own GITHUB_TOKEN starts no
+# workflow run; only workflow_dispatch and repository_dispatch are exempt.
+# So publishing is a job in this run that calls desktop-publish.yml rather
+# than something the tag push triggers, and ci.yml is dispatched on the
+# release branch so the pull request carries the checks the ruleset
+# requires.
+#
+# The tag is created explicitly as desktop-v<version>, never by npm version:
+# npm prefixes a bare "v", and a v* tag fires the engine's release.yml.
+# --no-git-tag-version keeps npm from tagging at all.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, for example 0.1.1'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run: check, test and build only; push, tag, publish and open nothing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release branch and the tag
+    outputs:
+      tag: ${{ steps.commit.outputs.tag }}
+      branch: ${{ steps.commit.outputs.branch }}
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # A real release tags what main holds. A dry run may start anywhere,
+      # which is how a change to this workflow is tried before it merges.
+      - name: Release only from main
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Start a release from main. This run started on $GITHUB_REF."
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check the version
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/desktop-v$RELEASE_VERSION" >/dev/null; then
+            echo "::error::desktop-v$RELEASE_VERSION is already tagged."
+            exit 1
+          fi
+          node scripts/prepare-release.js "$RELEASE_VERSION"
+
+      - run: npm ci
+      - run: npm run check-types
+      - run: npm run test
+
+      - name: Set the version
+        run: npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Commit and tag
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag="desktop-v$RELEASE_VERSION"
+          branch="release/$tag"
+          git switch -c "$branch"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            # main already carries this version, so there is nothing to
+            # bump: the tag goes on main's commit, with no branch and no
+            # pull request.
+            branch=""
+          else
+            git commit -m "Release the desktop app: $RELEASE_VERSION"
+          fi
+          git tag "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $tag"
+            echo '```'
+            git show --stat --format='%H%n%s' "$tag"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --atomic: the branch and the tag land together or not at all, so a
+      # failed push leaves nothing behind to block a second run.
+      - name: Push the release branch and the tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          refs=("refs/tags/$TAG")
+          if [ -n "$BRANCH" ]; then
+            refs+=("$BRANCH")
+          fi
+          git push --atomic origin "${refs[@]}"
+
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/desktop-publish.yml
+    with:
+      # A dry run pushed no tag, so it builds the commit it started from.
+      ref: ${{ inputs.dry_run && github.sha || needs.prepare.outputs.tag }}
+      dry_run: ${{ inputs.dry_run }}
+
+  pull-request:
+    needs: [prepare, publish]
+    if: ${{ !inputs.dry_run && needs.prepare.outputs.branch != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write         # dispatch ci.yml on the release branch
+      pull-requests: write   # open the pull request
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ needs.prepare.outputs.branch }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Run ci on the release branch
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+      # Opening a pull request with GITHUB_TOKEN needs the repository setting
+      # "Allow GitHub Actions to create and approve pull requests". Without it
+      # the release has still published, so this reports the link instead of
+      # failing the run.
+      - name: Open the pull request that carries the bump into main
+        run: |
+          body="Carries the version bump for $TAG into main. $TAG's installer is attached to the engine's current latest release. ci runs on it by dispatch, since a pull request a workflow opens starts no checks of its own. A merge commit keeps the tagged commit in main's history."
+          if url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "Release the desktop app: $RELEASE_VERSION" --body "$body" 2>&1)"; then
+            echo "Opened $url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::The pull request was not opened: $url"
+            echo "$TAG is published. Open the pull request for its version bump at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,82 @@
+/* Engraphy desktop — theme shim.
+ *
+ * The confirm/stats CSS was copied verbatim from the VS Code extension, where
+ * every structural colour comes from an injected `--vscode-*` variable. VS Code
+ * is not here, so this file DEFINES those variables — mapped onto the Engraphy
+ * brand palette from Engraphy-design/brand/brand-guidelines.md (Verdant on
+ * Cream). That lets confirm.css / stats.css port unchanged while the app reads
+ * as Engraphy, not as the extension in a window.
+ *
+ * Light is the brand default. `body.vscode-dark` (set by app.js from the OS
+ * colour scheme) supplies a dark green-tinted palette AND triggers the copied
+ * CSS's own dark-lift rules for --brand-accent-text / --brand-mark.
+ *
+ * Load order: theme.css → confirm.css → stats.css → app.css. Only theme.css
+ * defines the --vscode-* vars; app.css bumps --radius to the brand's card feel.
+ *
+ * Fonts: the brand faces (Bricolage Grotesque / Schibsted Grotesk / Space Mono)
+ * are named first in each stack so they are used when installed, with system
+ * fallbacks otherwise. A packaged app must not fetch fonts.googleapis.com, and
+ * the OFL woff2 files are not bundled — see DECISIONS.md.
+ */
+
+:root {
+	/* ---- LIGHT (brand default: Verdant on Cream) ---- */
+	--vscode-font-family: 'Schibsted Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--vscode-font-size: 13px;
+	--vscode-editor-font-family: 'Space Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+	--vscode-foreground: #2a3626; /* ink */
+	--vscode-descriptionForeground: #7c806a; /* muted */
+	--vscode-errorForeground: #9e2b25; /* functional red (not clay) */
+
+	--vscode-editor-background: #f3f1e6; /* cream page */
+	--vscode-sideBar-background: #f3f1e6;
+	--vscode-editorWidget-background: #fbfaf2; /* paper card */
+	--vscode-textCodeBlock-background: #efead9; /* sand */
+
+	--vscode-panel-border: #dedcc8; /* line */
+	--vscode-widget-border: #dedcc8;
+	--vscode-focusBorder: #6e9e6a;
+
+	--vscode-button-background: #4c7a59; /* verdant */
+	--vscode-button-foreground: #ffffff;
+	--vscode-button-hoverBackground: #3f6549;
+	--vscode-button-secondaryBackground: #efead9; /* sand */
+	--vscode-button-secondaryForeground: #2a3626;
+	--vscode-button-secondaryHoverBackground: #e4dec9;
+
+	--vscode-list-hoverBackground: rgba(76, 122, 89, 0.08);
+	--vscode-editorWarning-foreground: #b58a2e; /* gold-ish warn */
+	--vscode-list-warningForeground: #b58a2e;
+
+	/* Display face for the shell (headings). */
+	--brand-display: 'Bricolage Grotesque', var(--vscode-font-family);
+}
+
+/* ---- DARK (green-tinted) ---- */
+body.vscode-dark {
+	--vscode-foreground: #e8eae0;
+	--vscode-descriptionForeground: #9aa08c;
+	--vscode-errorForeground: #e0736a;
+
+	--vscode-editor-background: #191d18;
+	--vscode-sideBar-background: #191d18;
+	--vscode-editorWidget-background: #20261f;
+	--vscode-textCodeBlock-background: #12150f;
+
+	--vscode-panel-border: #333a30;
+	--vscode-widget-border: #333a30;
+	--vscode-focusBorder: #6ba77c;
+
+	--vscode-button-background: #4c7a59;
+	--vscode-button-foreground: #ffffff;
+	--vscode-button-hoverBackground: #5c8c69;
+	--vscode-button-secondaryBackground: #2b322a;
+	--vscode-button-secondaryForeground: #e8eae0;
+	--vscode-button-secondaryHoverBackground: #364035;
+
+	--vscode-list-hoverBackground: rgba(107, 167, 124, 0.12);
+	--vscode-editorWarning-foreground: #c6a253;
+	--vscode-list-warningForeground: #c6a253;
+}
