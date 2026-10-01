@@ -57,6 +57,9 @@ from bench.core.extract import ExtractWindow, VerbatimExtractor
 from engraphy.core import embedding
 from engraphy.core import search as search_module
 from engraphy.core.search import search
+from bench.console import use_utf8_streams
+
+use_utf8_streams()
 
 SPACE = "bench-recall"
 SCOPE = "recall"

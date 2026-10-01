@@ -29,6 +29,9 @@ from bench.core import run as harness
 from bench.core.providers import ClaudeCLIClient
 from bench.core.reference import ReferenceJudge, ReferenceReader, conventions_manifest, \
     reference_date
+from bench.console import use_utf8_streams
+
+use_utf8_streams()
 
 SUFFIX = "/reference-conventions"
 
@@ -42,9 +45,11 @@ def main() -> int:
     ap.add_argument("--judge-passes", type=int, default=1,
                     help="the reference grades each answer once; that is the default")
     ap.add_argument("--limit", type=int, default=0, help="only the first N questions (a check)")
+    ap.add_argument("--arm", help="which arm of the run to read; required when it has more "
+                                  "than one, because the pass reads exactly one")
     args = ap.parse_args()
 
-    src = offline.load_source(args.run_dir)
+    src = offline.load_source(args.run_dir, arm=args.arm)
     if src.manifest.get("judge_provider") != "claude":
         raise SystemExit("the matched-convention pass uses the run's Claude judge route")
     out = pathlib.Path(args.out) if args.out else src.dir / "reference"

@@ -117,6 +117,23 @@ class QuotaExhausted(LLMError):
     """
 
 
+class AuthExpired(LLMError):
+    """The CLI has no usable credentials: its OAuth session expired, or a key was
+    rejected.
+
+    Distinct from `QuotaExhausted`, and the distinction is worth a type. A cap
+    clears by waiting, so the supervisor sleeps to the reset and resumes. An
+    expired session never clears by waiting: every retry fails identically, and a
+    supervisor that treats it as a cap sleeps for hours against a wall while the
+    operator sees nothing but "usage limit". Seen live 2026-09-30: an expired
+    session read as a cap for over ten hours, and before this class existed it
+    also produced conversations recorded as ingested that held nothing.
+
+    The fix is an operator action, re-authenticating the CLI, so a run that hits
+    this stops for attention rather than resuming.
+    """
+
+
 class TransientCLIError(LLMError):
     """A CLI *launch* failed in a way that typically self-heals within
     seconds-to-minutes.
@@ -157,6 +174,9 @@ def stop_class(reason: str) -> str:
     if ("transientclierror" in r or "cli could not be launched" in r
             or "the cli was not found" in r):
         return "transient"
+    # Before the usage phrases: an expired session needs an operator, not a sleep.
+    if _looks_like_auth_failure(r) or "authexpired" in r:
+        return "halt"
     if any(s in r for s in (
         "usage limit", "quota", "429", "out of usage", "out of extra usage",
         "rate limit", "resets", "limit reached", "limit exceeded",
@@ -223,6 +243,39 @@ def _looks_like_usage_limit(text: str) -> bool:
     return any(s in t for s in (
         "usage limit", "rate limit", "rate_limit", "too many requests",
         "429", "quota", "limit reached", "limit exceeded",
+    ))
+
+
+def _reason(text: str) -> str:
+    """The CLI's own sentence, not the envelope it arrived in.
+
+    `claude -p --output-format json` reports a failure as a JSON document whose
+    `result` holds the reason, and on some failures it also exits non-zero, which
+    puts that whole document on stdout. Quoting the document verbatim buries the
+    one sentence an operator needs in a hundred fields of zeroes.
+    """
+    body = text.strip()
+    if body.startswith("{"):
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return body
+        return str(payload.get("result") or payload.get("error") or body)
+    return body
+
+
+def _looks_like_auth_failure(text: str) -> bool:
+    """Does a CLI failure mean "no usable credentials" rather than "no allowance"?
+
+    Matched on what the CLI surfaces for an expired OAuth session or a rejected
+    key. Checked BEFORE the usage-cap phrases, because an auth failure must never
+    be answered by sleeping to a reset that will not help.
+    """
+    t = (text or "").lower()
+    return any(s in t for s in (
+        "failed to authenticate", "oauth session expired", "oauth token expired",
+        "session expired", "please run /login", "run `claude login`", "not logged in",
+        "invalid api key", "authentication_error", "unauthorized",
     ))
 
 
@@ -438,9 +491,15 @@ class ClaudeCLIClient:
             # through this client (see run.py --judge claude), a mid-run cap is
             # exactly the QuotaExhausted path: stop, keep every checkpoint,
             # resume later.
+            if _looks_like_auth_failure(stderr) or _looks_like_auth_failure(stdout):
+                raise AuthExpired(
+                    "the Claude CLI has no usable credentials: "
+                    f"{_reason(stderr or stdout)[:300]}. "
+                    "Re-authenticate it (`claude login`) "
+                    "and run the same command again; waiting will not clear this.")
             if _looks_like_usage_limit(stderr) or _looks_like_usage_limit(stdout):
                 raise QuotaExhausted(
-                    f"Claude CLI usage limit reached: {(stderr or stdout)[:400]}")
+                    f"Claude CLI usage limit reached: {_reason(stderr or stdout)[:400]}")
             # Exit non-zero with NO diagnostic on either stream is the signature
             # of an auth / usage / rate cap: the CLI bails without a message.
             # Seen live (2026-07-23) -- five consecutive `exited 1` with empty
@@ -448,6 +507,11 @@ class ClaudeCLIClient:
             # answer phase, was a Max-plan usage limit. Treat it as the clean,
             # resumable quota-style stop rather than a generic error, so a resume
             # picks up from the checkpoint instead of burning the breaker.
+            if not stderr and _looks_like_auth_failure(stdout):
+                raise AuthExpired(
+                    "the Claude CLI exited without a diagnostic and its output "
+                    f"reports an authentication failure: {_reason(stdout)[:300]}. "
+                    "Re-authenticate it (`claude login`).")
             if not stderr:
                 raise QuotaExhausted(
                     f"Claude CLI exited {proc.returncode} with no diagnostic output "
@@ -461,6 +525,11 @@ class ClaudeCLIClient:
 
         if payload.get("is_error"):
             result = str(payload.get("result", ""))
+            if _looks_like_auth_failure(result):
+                raise AuthExpired(
+                    f"the Claude CLI has no usable credentials: {result[:300]}. "
+                    "Re-authenticate it (`claude login`) and run the same command "
+                    "again; waiting will not clear this.")
             if _looks_like_usage_limit(result):
                 raise QuotaExhausted(f"Claude CLI usage limit reached: {result[:400]}")
             raise LLMError(f"claude CLI reported an error: {result[:300]}")

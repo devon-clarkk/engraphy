@@ -93,3 +93,45 @@ def test_answer_count(tmp_path):
 
 def test_is_complete_missing_files(tmp_path):
     assert is_complete(tmp_path) is False  # no report / manifest yet
+
+
+def test_an_ingest_only_run_is_complete_without_a_report(tmp_path):
+    """Only the report phase writes report.md, so requiring that file made an
+    ingest-only pass unfinishable: the supervisor retried a store that was
+    already correct, then called it a genuine failure. Seen live 2026-10-01 on
+    the seen-split extraction A/B, after all six ingests had succeeded."""
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "phases_requested": ["ingest"], "phases_completed": ["ingest"],
+        "quota_stop": False}), encoding="utf-8")
+    assert is_complete(tmp_path)
+
+
+def test_a_phase_that_did_not_run_to_the_end_is_not_complete(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "phases_requested": ["ingest", "answer"], "phases_completed": ["ingest"],
+        "quota_stop": False}), encoding="utf-8")
+    assert not is_complete(tmp_path)
+
+
+def test_a_judged_run_with_ungraded_rows_is_not_complete(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "phases_requested": ["answer", "judge"], "phases_completed": ["answer", "judge"],
+        "quota_stop": False, "rows_answered_but_ungraded": 4}), encoding="utf-8")
+    assert not is_complete(tmp_path)
+
+
+def test_a_quota_stop_is_never_complete(tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "phases_requested": ["ingest"], "phases_completed": ["ingest"],
+        "quota_stop": True}), encoding="utf-8")
+    assert not is_complete(tmp_path)
+
+
+def test_a_run_from_before_the_phase_bookkeeping_still_uses_the_report_file(tmp_path):
+    """The published runs have no phase keys, and they must keep reading as
+    complete."""
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "quota_stop": False, "rows_answered_but_ungraded": 0}), encoding="utf-8")
+    assert not is_complete(tmp_path)
+    (tmp_path / "report.md").write_text("ok", encoding="utf-8")
+    assert is_complete(tmp_path)

@@ -83,7 +83,7 @@ from bench.core.llm import (
     LLMError, ROLE_MODELS, openai_model_for, openai_role_manifest, prompt_hash)
 from bench.core.meter import Meter
 from bench.core.providers import (
-    ClaudeCLIClient, GeminiClient, OpenAICompatClient, QuotaExhausted,
+    AuthExpired, ClaudeCLIClient, GeminiClient, OpenAICompatClient, QuotaExhausted,
     TransientRunStop, stop_class)
 from bench.core.report import aggregate, load_rows, render_failures, render_report
 from bench.core.retrieve import DEFAULT_SEARCH_LIMIT, STRATEGIES, probe_search
@@ -153,7 +153,13 @@ DB = os.environ.get(
 APP_DB = DB.replace("postgres:engraphy@", "engraphy_app:engraphy_app_test_only@")
 
 LOADERS = {"locomo": LoCoMoLoader}
-EXTRACTORS = ("verbatim", "llm")
+# `llm_wide` is `llm` with a different extraction prompt (extract-wide.md):
+# completeness over economy, what one person says to or about another in scope
+# with both named, and a new instance of a recurring thing treated as a new
+# fact. It is a separate extractor name, not a flag, so it takes its own scope
+# and its own arm_id and can never be confused with `llm` in a manifest.
+EXTRACTORS = ("verbatim", "llm", "llm_wide")
+EXTRACT_PROMPTS = {"llm": "extract.md", "llm_wide": "extract-wide.md"}
 POLICIES = ("always_distinct", "llm_adjudicate")
 JUDGE_PROVIDERS = ("gemini", "claude", "openai")
 
@@ -306,6 +312,19 @@ def retrieval_config(arm: Arm) -> dict:
                if hasattr(strategy, name)}}
 
 
+def extract_prompts_manifest(arms) -> dict:
+    """Which prompt each arm's extractor loads, per arm, with its hash.
+
+    The run-wide `prompt_hashes` lists every prompt in the tree, so it reads the
+    same whether or not an arm selected the wide one. An extraction A/B rests on
+    the selection, so the selection is what has to be recorded for a third party
+    to check that the two arms differed in the thing under test.
+    """
+    return {arm.arm_id: {"prompt": EXTRACT_PROMPTS[arm.extractor],
+                         "sha256": prompt_hash(EXTRACT_PROMPTS[arm.extractor])}
+            for arm in arms if arm.extractor in EXTRACT_PROMPTS}
+
+
 @dataclass(frozen=True, slots=True)
 class ArmSpace:
     """A `RunSpace` view whose scopes are qualified by extractor.
@@ -392,7 +411,16 @@ async def phase_ingest(pool, ck: Checkpoint, corpus: Corpus, arms: list[Arm],
         print(f"  [ingest] {haystack_id} / {extractor_name} / {pack_name} → {scope} "
               f"({len(haystack.sessions)} sessions, {haystack.turn_count} turns)", flush=True)
 
-        stats = await ingest_haystack(pool, arm_space, haystack, extractor, confirm_policy=policy)
+        try:
+            stats = await ingest_haystack(pool, arm_space, haystack, extractor,
+                                          confirm_policy=policy)
+        except (QuotaExhausted, AuthExpired):
+            # Not checkpointed: without a row this conversation is re-ingested on
+            # resume, and the next pass clears the partial scope first. Recording
+            # it would leave the store short a whole conversation and score it.
+            print(f"  [quota] ingest of {haystack_id} stopped part-way; it is not "
+                  "recorded, so a resume ingests it again", flush=True)
+            raise
         row = stats.as_dict()
         row.update({"extractor": extractor_name, "pack": pack_name, "scope_id": scope,
                     "space_id": space_id, "done": True,
@@ -417,9 +445,12 @@ def _client_for(role: str, provider: str):
 
 
 def _build_extractor(name: str, pack: dict, provider: str = "claude-cli"):
+    """The arm's extractor name selects the prompt, which is what makes
+    `llm_wide` a different extractor rather than a second name for `llm`."""
     if name == "verbatim":
         return VerbatimExtractor()
-    return LLMExtractor(_client_for("extractor", provider), pack)
+    return LLMExtractor(_client_for("extractor", provider), pack,
+                        prompt_name=EXTRACT_PROMPTS[name])
 
 
 def _build_policy(name: str, provider: str = "claude-cli"):
@@ -1333,6 +1364,7 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
         "corpus": corpus.stats(),
         "arms": [a.as_dict() for a in arms],
         "retrieval_configs": {a.arm_id: retrieval_config(a) for a in arms},
+        "extract_prompts": extract_prompts_manifest(arms),
         "provider": args.provider,
         "role_models": _role_models_manifest(args),
         # Endpoint hosts and structured-output mode for every distinct client the
@@ -1345,6 +1377,7 @@ def build_manifest(args, corpus: Corpus, arms: list[Arm], pack_meta: dict,
         "resolved_models": {},
         "prompt_hashes": {
             "extract.md": prompt_hash("extract.md"),
+            "extract-wide.md": prompt_hash("extract-wide.md"),
             "judge.md": prompt_hash("judge.md"),
             "adjudicate.md": prompt_hash("adjudicate.md"),
             # read.md is retired: the reader's instruction is now the shipped
@@ -1618,6 +1651,13 @@ async def main() -> int:
                                concurrency=args.concurrency, stance=args.reader_stance,
                                provider=args.provider,
                                contract=args.reader_contract)
+    except AuthExpired as exc:
+        # No credentials: every retry fails the same way, so this halts for the
+        # operator rather than resuming into the same wall.
+        quota_stop = True
+        print()
+        print("  [auth] " + str(exc))
+        print("  [stop] class=halt")
     except QuotaExhausted as exc:
         # A usage limit during answering is a clean, resumable stop -- the errored
         # questions were NOT checkpointed, so a resume re-answers them. Skip the
@@ -1684,6 +1724,14 @@ async def main() -> int:
             "instability": None,
             "note": "not measured on this run — the calibration phase did not run.",
         }
+
+    # Which phases this invocation asked for, and whether they all ran to the
+    # end. Completion used to be read off `report.md`, which only the report
+    # phase writes, so an ingest-only pass that stored every conversation
+    # correctly looked indistinguishable from a failed one. A phase set is the
+    # thing a caller asked for, so it is the thing the manifest records.
+    manifest["phases_requested"] = sorted(phases)
+    manifest["phases_completed"] = [] if quota_stop else sorted(phases)
 
     if "report" in phases:
         print("\n== report ==")

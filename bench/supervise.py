@@ -43,6 +43,9 @@ import subprocess
 import sys
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from bench.console import use_utf8_streams
+
+use_utf8_streams()
 
 # Substrings that mark a Claude usage-limit stop, used only as a FALLBACK when a
 # cycle's output carries no explicit `[stop] class=...` line (an older run, or a
@@ -225,18 +228,37 @@ def _answer_count(run_dir: pathlib.Path) -> int:
 
 
 def is_complete(run_dir: pathlib.Path) -> bool:
-    """The run has genuinely finished: a report exists, the manifest is not
-    quota-stopped, and no answered row is still ungraded."""
+    """The run has genuinely finished every phase it was asked for.
+
+    The manifest records the requested phases and whether they all ran to the
+    end, which is what a caller asked for. Reading completion off `report.md`
+    alone makes an ingest-only pass unfinishable, because no phase but `report`
+    writes that file, and a supervisor reading the absence of it as a failure
+    calls a complete store a bad run. A judged run must also have no answered
+    row left ungraded, and a quota stop is never complete whatever else the
+    manifest says.
+
+    Runs written before the phase bookkeeping existed fall back to the file.
+    """
     import json
 
     manifest = run_dir / "manifest.json"
-    if not (run_dir / "report.md").exists() or not manifest.exists():
+    if not manifest.exists():
         return False
     try:
         m = json.loads(manifest.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return False
-    return (not m.get("quota_stop")) and m.get("rows_answered_but_ungraded", 1) == 0
+    if m.get("quota_stop"):
+        return False
+    requested = set(m.get("phases_requested") or ())
+    completed = set(m.get("phases_completed") or ())
+    if requested:
+        if not requested <= completed:
+            return False
+        graded = m.get("rows_answered_but_ungraded", 1) == 0
+        return graded if "judge" in requested else True
+    return (run_dir / "report.md").exists() and m.get("rows_answered_but_ungraded", 1) == 0
 
 
 def _log(log_path: pathlib.Path, msg: str) -> None:

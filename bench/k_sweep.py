@@ -53,6 +53,9 @@ from bench.core.diagnostics import MAX_CONTEXT_NODES
 from bench.core.meter import Meter
 from bench.core.retrieve import SearchOnly
 from engraphy.core import embedding
+from bench.console import use_utf8_streams
+
+use_utf8_streams()
 
 PREFIX = 60
 

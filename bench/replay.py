@@ -42,6 +42,9 @@ from bench.core.judge import Verdict
 from bench.core.providers import ClaudeCLIClient
 from bench.core.retrieve import Retrieval
 from bench.core.score import grade_abstention
+from bench.console import use_utf8_streams
+
+use_utf8_streams()
 
 GROUPS = ("declined", "correct", "wrong", "adversarial")
 

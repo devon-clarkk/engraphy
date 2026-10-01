@@ -147,6 +147,7 @@ class LLMAdjudicate:
 
     def decide(self, envelope: dict, draft: NodeDraft) -> ConfirmDecision:
         from bench.core.llm import LLMError
+        from bench.core.providers import AuthExpired, QuotaExhausted
 
         candidates = envelope.get("candidates") or []
         offered = {str(c.get("id")) for c in candidates if c.get("id")}
@@ -159,6 +160,11 @@ class LLMAdjudicate:
                 effort=self.effort,
             )
             data = resp.data or {}
+        except (QuotaExhausted, AuthExpired):
+            # A cap or an expired session would turn every remaining band into a
+            # fallback decision and
+            # write it into the store. Propagated so the run stops cleanly.
+            raise
         except LLMError as exc:
             self.fallbacks += 1
             return ConfirmDecision("distinct", reason=f"adjudication failed ({exc}); fell back")
