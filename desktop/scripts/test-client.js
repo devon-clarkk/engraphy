@@ -36,6 +36,7 @@ const gh = require('../out-test/graphHarvest.js');
 const vc = require('../out-test/versionCheck.js');
 const um = require('../out-test/updateModel.js');
 const bs = require('../out-test/bootstrap.js');
+const pw = require('../out-test/pendingWatch.js');
 
 let passed = 0;
 let failed = 0;
@@ -1933,6 +1934,76 @@ check('shouldImport: only onto an app with no connection of its own', () => {
 	assert.strictEqual(bs.shouldImport(true, false), false);
 	assert.strictEqual(bs.shouldImport(false, true), false);
 	assert.strictEqual(bs.shouldImport(true, true), false);
+});
+
+// ---- pendingWatch: what counts as a new write waiting for review -----------
+
+function pendingRow(id, expiresAt) {
+	return { id, payload_preview: id, candidates: [], expires_at: expiresAt ?? null, created_at: null };
+}
+const PW_NOW = Date.parse('2026-10-03T12:00:00Z');
+const PW_LATER = '2026-10-04T12:00:00Z';
+const PW_GONE = '2026-10-02T12:00:00Z';
+
+check('PendingWatch: the first observation seeds silently', () => {
+	const w = new pw.PendingWatch();
+	const o = w.observe([pendingRow('a', PW_LATER), pendingRow('b')], true, PW_NOW);
+	assert.strictEqual(o.active, 2);
+	assert.strictEqual(o.announce, false, 'items present at startup are badged, not announced');
+});
+
+check('PendingWatch: a new id is announced once, a repeat id never', () => {
+	const w = new pw.PendingWatch();
+	w.observe([pendingRow('a')], true, PW_NOW);
+	const o = w.observe([pendingRow('a'), pendingRow('b')], true, PW_NOW);
+	assert.deepStrictEqual(o.fresh, ['b']);
+	assert.strictEqual(o.announce, true);
+	const again = w.observe([pendingRow('a'), pendingRow('b')], true, PW_NOW);
+	assert.strictEqual(again.announce, false);
+	assert.deepStrictEqual(again.fresh, []);
+});
+
+check('PendingWatch: 0 to some is announced after an empty seed', () => {
+	const w = new pw.PendingWatch();
+	w.observe([], true, PW_NOW);
+	const o = w.observe([pendingRow('a'), pendingRow('b')], true, PW_NOW);
+	assert.strictEqual(o.announce, true);
+	assert.strictEqual(o.fresh.length, 2, 'both arrive in one coalesced announcement');
+});
+
+check('PendingWatch: expired rows are neither counted nor announced', () => {
+	const w = new pw.PendingWatch();
+	w.observe([], true, PW_NOW);
+	const o = w.observe([pendingRow('old', PW_GONE)], true, PW_NOW);
+	assert.strictEqual(o.active, 0);
+	assert.strictEqual(o.announce, false);
+});
+
+check('PendingWatch: a fetch the user caused marks items seen without announcing', () => {
+	const w = new pw.PendingWatch();
+	w.observe([], true, PW_NOW);
+	const panel = w.observe([pendingRow('a')], false, PW_NOW);
+	assert.strictEqual(panel.announce, false);
+	assert.strictEqual(panel.active, 1);
+	const poll = w.observe([pendingRow('a')], true, PW_NOW);
+	assert.strictEqual(poll.announce, false, 'already seen in the panel');
+});
+
+check('PendingWatch: resolved ids are forgotten, and reset seeds silently again', () => {
+	const w = new pw.PendingWatch();
+	w.observe([pendingRow('a')], true, PW_NOW);
+	w.observe([], true, PW_NOW);
+	assert.strictEqual(w.observe([pendingRow('a')], true, PW_NOW).announce, true);
+	w.reset();
+	assert.strictEqual(w.observe([pendingRow('z')], true, PW_NOW).announce, false);
+});
+
+check('pendingNotificationBody and pendingBadgeLabel', () => {
+	assert.strictEqual(pw.pendingNotificationBody(1), 'A memory write is waiting for your review.');
+	assert.strictEqual(pw.pendingNotificationBody(3), '3 memory writes are waiting for your review.');
+	assert.strictEqual(pw.pendingBadgeLabel(0), '');
+	assert.strictEqual(pw.pendingBadgeLabel(7), '7');
+	assert.strictEqual(pw.pendingBadgeLabel(150), '99+');
 });
 
 runAsyncChecks()

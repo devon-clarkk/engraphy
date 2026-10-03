@@ -137,6 +137,40 @@ window.initSettings = function (ctx, opts) {
 		host.invoke({ type: 'setUpdateCheck', enabled: updateBox.checked }).catch(() => {});
 	});
 
+	// ---- notifications -----------------------------------------------------
+	// Applied on change, like Updates. The sound is the system notification
+	// sound, so the OS's Do Not Disturb and Focus settings silence it too.
+	const notifyF = field(
+		'Notifications',
+		'Engraphy checks the review queue every minute while it is open and lets you know when a memory write is waiting for you. The sound is your system notification sound and follows your Do Not Disturb and Focus settings.'
+	);
+	const notifyWrap = el('label', 'checkbox-row');
+	const notifyBox = document.createElement('input');
+	notifyBox.type = 'checkbox';
+	notifyBox.checked = true;
+	notifyWrap.appendChild(notifyBox);
+	notifyWrap.appendChild(document.createTextNode(' Notify me when a write is waiting for review'));
+	notifyF.slot.appendChild(notifyWrap);
+	const soundWrap = el('label', 'checkbox-row');
+	const soundBox = document.createElement('input');
+	soundBox.type = 'checkbox';
+	soundBox.checked = true;
+	soundWrap.appendChild(soundBox);
+	soundWrap.appendChild(document.createTextNode(' Play a sound'));
+	notifyF.slot.appendChild(soundWrap);
+	form.appendChild(notifyF.field);
+
+	function reflectNotify() {
+		soundBox.disabled = !notifyBox.checked;
+	}
+	notifyBox.addEventListener('change', () => {
+		reflectNotify();
+		host.invoke({ type: 'setPendingNotify', notify: notifyBox.checked }).catch(() => {});
+	});
+	soundBox.addEventListener('change', () => {
+		host.invoke({ type: 'setPendingNotify', sound: soundBox.checked }).catch(() => {});
+	});
+
 	// ---- actions -----------------------------------------------------------
 	const actions = el('div', 'form-actions');
 	const saveBtn = el('button', 'btn btn-approve', 'Save & connect');
@@ -179,6 +213,9 @@ window.initSettings = function (ctx, opts) {
 	function applySettings(s) {
 		// Absent means on, so an older settings file reads as enabled.
 		updateBox.checked = !s || s.updateCheckEnabled !== false;
+		notifyBox.checked = !s || s.pendingNotifyEnabled !== false;
+		soundBox.checked = !s || s.pendingSoundEnabled !== false;
+		reflectNotify();
 		if (!s) {
 			return;
 		}

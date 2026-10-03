@@ -111,6 +111,19 @@ body {
 	flex: 0 0 auto;
 	opacity: 0.85;
 }
+/* Writes waiting for review. Quiet: a small pill, pushed to the row's end. */
+.nav-badge {
+	margin-left: auto;
+	min-width: 18px;
+	padding: 1px 6px;
+	border-radius: 9px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 16px;
+	text-align: center;
+	background: var(--brand-green, #4c7a59);
+	color: #fff;
+}
 .nav-spacer {
 	flex: 1 1 auto;
 }

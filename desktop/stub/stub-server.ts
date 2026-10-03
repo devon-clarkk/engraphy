@@ -272,6 +272,21 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
 	await transport.handleRequest(req, res, req.body);
 }
 
+// Park a new pending write, the way a write that lands in the dedup band does,
+// so the review notification can be exercised by hand:
+//   curl -X POST http://127.0.0.1:8000/__stub/pending
+app.post('/__stub/pending', (_req: Request, res: Response) => {
+	const row = {
+		id: 'pend_' + randomUUID().slice(0, 6),
+		payload_preview: 'Ada wants the weekly review moved to Thursday afternoons.',
+		candidates: [{ id: 'n_ada', title: 'Ada prefers async standups', similarity: 0.88 }],
+		expires_at: new Date(Date.now() + 864e5).toISOString(),
+		created_at: new Date().toISOString(),
+	};
+	PENDING = [row, ...PENDING];
+	res.json({ v: 1, pending_id: row.id, pending: PENDING.length });
+});
+
 app.post('/mcp/', handleMcp);
 app.post('/mcp', handleMcp);
 app.get('/mcp/', handleMcp);

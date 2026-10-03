@@ -21,7 +21,7 @@
     "dist": "npm run build:prod && electron-builder --publish never",
     "dist:win": "npm run build:prod && electron-builder --win --publish never",
     "dist:mac": "npm run build:prod && electron-builder --mac --publish never",
-    "build:test": "tsc src/main/client/toolResult.ts src/main/client/webviewMessages.ts src/main/client/statsModel.ts src/main/connection.ts src/main/validation.ts src/main/explorerModel.ts src/main/ipcResult.ts src/main/windowState.ts src/main/messages.ts src/main/graphModel.ts src/main/graphHarvest.ts src/main/versionCheck.ts src/main/updateModel.ts src/main/bootstrap.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict",
+    "build:test": "tsc src/main/client/toolResult.ts src/main/client/webviewMessages.ts src/main/client/statsModel.ts src/main/connection.ts src/main/validation.ts src/main/explorerModel.ts src/main/ipcResult.ts src/main/windowState.ts src/main/messages.ts src/main/graphModel.ts src/main/graphHarvest.ts src/main/versionCheck.ts src/main/updateModel.ts src/main/bootstrap.ts src/main/pendingWatch.ts --outDir out-test --module commonjs --target es2022 --skipLibCheck --strict",
     "test": "npm run check-types && npm run build:test && node scripts/test-client.js",
     "smoke": "npm run build && node scripts/smoke.js",
     "smoke:shots": "npm run build && node scripts/smoke.js --shots",

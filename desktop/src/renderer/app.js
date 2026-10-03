@@ -161,8 +161,29 @@
 			onboarding.show(msg.step || 1);
 		} else if (msg.type === 'theme') {
 			applyTheme(msg.dark);
+		} else if (msg.type === 'pending') {
+			renderPendingBadge(msg.active, msg.label);
 		}
 	});
+
+	// ---- pending badge on the Confirm-write queue nav item -----------------
+	const confirmNav = document.querySelector('.nav-item[data-nav="confirm"]');
+	const pendingBadge = document.createElement('span');
+	pendingBadge.className = 'nav-badge';
+	pendingBadge.hidden = true;
+	confirmNav.appendChild(pendingBadge);
+	function renderPendingBadge(active, label) {
+		const n = Number(active) || 0;
+		pendingBadge.hidden = n <= 0;
+		pendingBadge.textContent = n > 0 ? String(label || n) : '';
+		confirmNav.setAttribute(
+			'aria-label',
+			n > 0
+				? 'Confirm-write queue, ' + n + (n === 1 ? ' write' : ' writes') + ' waiting for review'
+				: 'Confirm-write queue'
+		);
+		confirmNav.title = n > 0 ? confirmNav.getAttribute('aria-label') : '';
+	}
 
 	// ---- health badge + disconnected banner --------------------------------
 	//

@@ -19,7 +19,7 @@
 // try/catch never fired: the explorer rendered "No results" for a dead server
 // and for a rejected token alike.
 
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, screen } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -71,6 +71,7 @@ import {
 } from './graphModel';
 import { Cancelled, harvestGraph, type GraphTools } from './graphHarvest';
 import { parseAppCommand, parseConfirmCommand, parseStatsCommand, parseUpdateCommand } from './messages';
+import { PendingWatch, pendingBadgeLabel, pendingNotificationBody } from './pendingWatch';
 import {
 	CHECK_INTERVAL_MS,
 	DEFAULT_MANIFEST_URL,
@@ -97,12 +98,14 @@ import {
 	importBootstrapFile,
 	isOnboardingCompleted,
 	loadSafeSettings,
+	loadPendingNotifyPrefs,
 	loadSettings,
 	loadUpdateState,
 	loadWindowBounds,
 	saveSettings,
 	saveWindowBounds,
 	setOnboardingCompleted,
+	setPendingNotifyPrefs,
 	setUpdateCheckEnabled,
 	setUpdateChecked,
 	setUpdateDismissed,
@@ -351,6 +354,163 @@ function scheduleUpdateChecks(): void {
 	updateTimer.unref?.();
 }
 
+// ---- pending-write notifications --------------------------------------------
+//
+// pending_list is the only signal there is: the server pushes nothing. It is
+// polled here in main rather than in the renderer because the renderer's timers
+// stand down while the window is hidden, and a hidden window is exactly when a
+// write waiting for review needs to be noticed. pending_list is a read-only,
+// RLS-scoped SELECT that records no metrics, so polling it costs the Impact
+// panel nothing. pendingWatch.ts decides what is new; this decides how to say it.
+
+const PENDING_POLL_MS = 60_000;
+/** Let the window connect and the confirm panel seed the watch first. */
+const PENDING_STARTUP_DELAY_MS = 20_000;
+
+const pendingWatch = new PendingWatch();
+let pendingActive = 0;
+let pendingPollTimer: ReturnType<typeof setInterval> | undefined;
+let pendingPollInFlight = false;
+/** Bumped by every pending_list read, so a poll overtaken by a newer read is dropped. */
+let pendingReadSeq = 0;
+/** Held so the notification is not collected before its click handler runs. */
+let pendingNotice: Notification | undefined;
+
+function pushPendingBadge(): void {
+	push('app', { type: 'pending', active: pendingActive, label: pendingBadgeLabel(pendingActive) });
+	// The dock badge on macOS and the launcher count on Linux. A no-op on Windows.
+	try {
+		app.setBadgeCount(pendingActive);
+	} catch {
+		// unsupported desktop environment
+	}
+}
+
+function observePending(items: PendingListItem[], announceable: boolean): void {
+	const seen = pendingWatch.observe(items, announceable);
+	pendingActive = seen.active;
+	pushPendingBadge();
+	if (seen.announce) {
+		announcePending(seen.fresh.length);
+	}
+}
+
+/** Bring the window forward on the review panel. */
+function openReview(): void {
+	const goToQueue = () => {
+		push('app', { type: 'navigate', to: 'confirm' });
+		void confirmReload();
+	};
+	if (!win || win.isDestroyed()) {
+		// macOS keeps running with no window. A new one has no renderer to
+		// listen yet, so the navigation waits for it to load.
+		createWindow();
+		buildMenu();
+		win?.webContents.once('did-finish-load', goToQueue);
+		return;
+	}
+	if (win.isMinimized()) {
+		win.restore();
+	}
+	win.show();
+	win.focus();
+	goToQueue();
+}
+
+/**
+ * Say that writes arrived. A focused window gets an in-app toast and no sound,
+ * since the user is already here. Otherwise the OS notification carries the
+ * message, and its sound is the system's own, so Do Not Disturb, Focus Assist
+ * and Focus modes govern both.
+ */
+function announcePending(count: number): void {
+	const prefs = loadPendingNotifyPrefs();
+	if (!prefs.notify) {
+		return;
+	}
+	const body = pendingNotificationBody(count);
+	if (win && !win.isDestroyed() && win.isVisible() && win.isFocused()) {
+		toast(body + ' See the Confirm-write queue.');
+		return;
+	}
+	if (!Notification.isSupported()) {
+		return;
+	}
+	pendingNotice?.close();
+	const notice = new Notification({
+		title: 'Engraphy',
+		body,
+		silent: !prefs.sound,
+		// macOS plays nothing unless a sound is named. Tink is the quietest
+		// system sound.
+		...(process.platform === 'darwin' && prefs.sound ? { sound: 'Tink' } : {}),
+	});
+	notice.on('click', openReview);
+	notice.on('close', () => {
+		if (pendingNotice === notice) {
+			pendingNotice = undefined;
+		}
+	});
+	pendingNotice = notice;
+	notice.show();
+}
+
+async function pollPending(): Promise<void> {
+	// A graph build spends the whole per-token read budget on purpose; a poll
+	// fired mid-build would only lose that race.
+	if (!serverConfigured() || !connection().token) {
+		// Nothing to read from, so nothing is waiting that this app can show.
+		if (pendingActive > 0) {
+			resetPendingWatch();
+		}
+		return;
+	}
+	if (pendingPollInFlight || graphState.building) {
+		return;
+	}
+	pendingPollInFlight = true;
+	const seq = ++pendingReadSeq;
+	try {
+		const items = pendingItemsFrom(await client.pendingList(PENDING_LIMIT));
+		// The panel read again while this was in flight (after a resolve, say),
+		// and its answer is the newer one.
+		if (seq !== pendingReadSeq) {
+			return;
+		}
+		// Keep the open panel in step with what the badge says.
+		confirmState.pending = items;
+		confirmState.pendingError = null;
+		if (confirmState.loaded) {
+			pushConfirmState();
+		}
+		observePending(items, true);
+	} catch {
+		// A failed poll says nothing about the queue, so nothing is observed.
+		// The health badge already reports a connection that is down.
+	} finally {
+		pendingPollInFlight = false;
+	}
+}
+
+function schedulePendingPoll(): void {
+	// A scripted smoke run takes screenshots, so it must not race a toast in.
+	if (process.env.ENGRAPHY_SMOKE) {
+		return;
+	}
+	setTimeout(() => {
+		void pollPending();
+	}, PENDING_STARTUP_DELAY_MS).unref?.();
+	pendingPollTimer = setInterval(() => void pollPending(), PENDING_POLL_MS);
+	pendingPollTimer.unref?.();
+}
+
+/** A new connection may be a different principal with a different queue. */
+function resetPendingWatch(): void {
+	pendingWatch.reset();
+	pendingActive = 0;
+	pushPendingBadge();
+}
+
 // ---- confirm queue (mirrors confirmWebview.ts) -----------------------------
 
 function buildConfirmState(): DesktopConfirmStateVM {
@@ -375,10 +535,14 @@ function pushConfirmState(): void {
 }
 
 async function reloadPending(): Promise<void> {
+	pendingReadSeq++;
 	try {
 		const res = await client.pendingList(PENDING_LIMIT);
 		confirmState.pending = pendingItemsFrom(res);
 		confirmState.pendingError = null;
+		// The user is looking at the queue, so this updates the badge and marks
+		// what they have seen, and never announces anything.
+		observePending(confirmState.pending, false);
 	} catch (e) {
 		confirmState.pending = [];
 		confirmState.pendingError = e;
@@ -1015,6 +1179,15 @@ async function handleSettingsInvoke(msg: any): Promise<unknown> {
 		return ok({ settings: loadSafeSettings() });
 	}
 
+	if (msg?.type === 'setPendingNotify') {
+		// Strict reads, like setUpdateCheck: only a real boolean changes anything.
+		setPendingNotifyPrefs({
+			notify: typeof msg.notify === 'boolean' ? msg.notify : undefined,
+			sound: typeof msg.sound === 'boolean' ? msg.sound : undefined,
+		});
+		return ok({ settings: loadSafeSettings() });
+	}
+
 	if (msg?.type === 'validate') {
 		// Live feedback as the user types. Never touches disk or the network.
 		return ok({
@@ -1075,6 +1248,7 @@ async function handleSettingsInvoke(msg: any): Promise<unknown> {
 		} catch (e) {
 			probeError = describeError(e, hostLabel(v.serverUrl.normalized));
 		}
+		resetPendingWatch();
 		void refreshHealth();
 		void confirmReload();
 		void statsReload();
@@ -1451,6 +1625,13 @@ if (!gotLock) {
 	});
 
 	app.whenReady().then(() => {
+		// Windows routes a notification to the app whose AppUserModelID matches
+		// the Start menu shortcut, which electron-builder stamps with the appId.
+		// An MSIX install has a package identity that does this already.
+		if (process.platform === 'win32' && !process.windowsStore) {
+			app.setAppUserModelId('com.engraphy.desktop');
+		}
+
 		// Before the window exists, so a machine that was set up by the Windows
 		// installer opens straight into a connected app rather than into
 		// onboarding that asks for a token the installer already minted. A no-op
@@ -1478,6 +1659,7 @@ if (!gotLock) {
 		buildMenu();
 		nativeTheme.on('updated', applyThemeToChrome);
 		scheduleUpdateChecks();
+		schedulePendingPoll();
 
 		app.on('activate', () => {
 			if (BrowserWindow.getAllWindows().length === 0) {

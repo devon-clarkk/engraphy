@@ -603,6 +603,55 @@ connection the Save button tests and stores.
 **Silent in-place update is not wired**, and the route to it is not a
 certificate. See `docs/UPDATES.md`.
 
+## 22. Telling the user a write is waiting for review
+
+A write that lands in the dedup band waits in the pending queue and expires 24
+hours later, so a pending item nobody notices is a memory that is lost. The app
+checks `pending_list` every minute and says when something new arrives.
+
+**Polled from main, not the renderer.** The server pushes nothing, so polling is
+the only signal. The renderer's timers stand down while the window is hidden,
+and a hidden window is exactly when this matters. `pending_list` is a read-only,
+RLS-scoped SELECT that records no metrics, so polling it leaves the Impact
+numbers alone, the same rule that keeps the health probe on `scope_list`.
+
+**Quiet by construction** (`pendingWatch.ts`, covered by `test-client.js`):
+
+* Expired rows are dropped first. The server returns them and refuses to
+  resolve them, so they are not an action.
+* Only successful reads are observed. A failed read says nothing about the
+  queue, and treating it as empty would announce everything again on reconnect.
+* The first read seeds silently: what was waiting at launch gets the badge, not
+  a notification. Saving a new connection reseeds, because a new token can be a
+  different principal with a different queue.
+* Only the background poll announces. Reads the user caused (opening the panel,
+  refreshing, resolving) mark items seen without a word.
+* Arrivals in one tick are one notification, never one per item. A poll that a
+  newer panel read overtook is dropped.
+
+**The sound belongs to the OS.** Electron cannot read Focus Assist or macOS
+Focus, so the app never plays a sound of its own. The notification is raised
+with `silent` mapped to the sound setting (and the quiet `Tink` named on macOS,
+which otherwise plays nothing), so Do Not Disturb silences the notification and
+its sound together. A focused window gets an in-app toast and no sound instead:
+the user is already looking at the app.
+
+**Windows needs the AppUserModelID.** Toasts are routed to the app whose AUMID
+matches its Start menu shortcut, which electron-builder stamps with the appId,
+so main sets `com.engraphy.desktop` on installer builds. An MSIX install has a
+package identity and is left alone. A dev run of `electron .` has no such
+shortcut, so Windows may drop its toasts silently; check notifications on an
+installed build. `npm run stub` takes `POST /__stub/pending` to park a fresh
+pending row for exactly that check.
+
+**Badge.** The nav item shows the active count, and `app.setBadgeCount` covers
+the macOS dock and Linux launchers. Windows has no count badge API short of an
+overlay icon, which is not drawn.
+
+**Scope of what it can see.** `pending_list` returns the caller's own pending
+writes. The app sees writes made with the same token it holds, so an agent and
+the app share a queue when they share a token.
+
 ## Parity scope (what is in, what is deliberately out)
 
 **In (the read + review surface):** memory explorer (search / get / traverse),

@@ -28,6 +28,12 @@ Light (the brand default) and dark, following the OS colour scheme:
 - **Confirm-write queue** — pending duplicates with candidate + similarity, and
   Approve (keep distinct) / Merge into. Plus the inbox: Promote (in-app authoring
   form) and Discard.
+- **Review notifications**: the queue is checked every minute while the app is
+  open, including when it is minimised. A count on the Confirm-write queue shows
+  how many writes are waiting, and a new one raises a system notification that
+  opens the queue when clicked. The sound is the system notification sound, so
+  Do Not Disturb, Focus Assist and Focus modes apply. Both are toggles in
+  **Settings**.
 - **Settings** — server URL, token, and space label, with live validation and a
   **Test connection** button that probes without saving. The token is stored in
   your OS keychain.
@@ -321,6 +327,7 @@ engraphy-desktop/
       explorerModel.ts       search/traverse/get result shaping
       graphModel.ts          graph snapshot shapes, envelope parsing, cache parsing
       graphHarvest.ts        whole-graph index over the capped reads (rate-paced)
+      pendingWatch.ts        which pending writes are new, for the review notification
       windowState.ts         window bounds restore (display-aware)
       ipcResult.ts           the discriminated invoke contract
       client/                COPIED VERBATIM from the extension (v0.4.0), FROZEN:

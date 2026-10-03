@@ -43,6 +43,10 @@ export interface SafeSettings {
 	onboardingCompleted: boolean;
 	/** Whether the daily check for a newer published version runs. */
 	updateCheckEnabled: boolean;
+	/** Whether a write waiting for review raises a system notification. */
+	pendingNotifyEnabled: boolean;
+	/** Whether that notification plays the system notification sound. */
+	pendingSoundEnabled: boolean;
 }
 
 export interface WindowBounds {
@@ -68,6 +72,10 @@ interface DiskShape {
 	updateDismissed?: string;
 	/** False turns the update check off entirely. Absent means on. */
 	updateCheckEnabled?: boolean;
+	/** False silences pending-write notifications. Absent means on. */
+	pendingNotifyEnabled?: boolean;
+	/** False makes pending-write notifications silent. Absent means on. */
+	pendingSoundEnabled?: boolean;
 }
 
 export function settingsFilePath(): string {
@@ -131,6 +139,8 @@ export function loadSafeSettings(): SafeSettings {
 		onboardingCompleted: !!d.onboardingCompleted,
 		// Absent means on, matching loadUpdateState.
 		updateCheckEnabled: d.updateCheckEnabled !== false,
+		pendingNotifyEnabled: d.pendingNotifyEnabled !== false,
+		pendingSoundEnabled: d.pendingSoundEnabled !== false,
 	};
 }
 
@@ -224,6 +234,36 @@ export function setUpdateDismissed(version: string): void {
 
 export function setUpdateCheckEnabled(enabled: boolean): void {
 	patchDisk({ updateCheckEnabled: enabled });
+}
+
+// ---- pending-write notifications -------------------------------------------
+//
+// Two preferences, both absent-means-on. The sound is the OS notification's own
+// sound rather than one this app plays, so the system's Do Not Disturb, Focus
+// Assist and Focus modes silence it along with the notification.
+
+export interface PendingNotifyPrefs {
+	notify: boolean;
+	sound: boolean;
+}
+
+export function loadPendingNotifyPrefs(): PendingNotifyPrefs {
+	const d = readDisk();
+	return {
+		notify: d.pendingNotifyEnabled !== false,
+		sound: d.pendingSoundEnabled !== false,
+	};
+}
+
+export function setPendingNotifyPrefs(patch: Partial<PendingNotifyPrefs>): void {
+	const next: Partial<DiskShape> = {};
+	if (typeof patch.notify === 'boolean') {
+		next.pendingNotifyEnabled = patch.notify;
+	}
+	if (typeof patch.sound === 'boolean') {
+		next.pendingSoundEnabled = patch.sound;
+	}
+	patchDisk(next);
 }
 
 // ---- the installer handoff --------------------------------------------------
