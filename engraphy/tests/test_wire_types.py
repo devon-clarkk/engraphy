@@ -53,8 +53,8 @@ def _fixture_requests():
 def test_the_fixture_directory_is_not_silently_empty():
     """The loop below is a no-op if the glob stops matching — a rename or a
     moved directory would turn the guarantee off without failing anything."""
-    assert len(_fixture_files()) == 12
-    assert len(_fixture_requests()) == 11, "eleven fixtures pin a request; errors.json does not"
+    assert len(_fixture_files()) == 13
+    assert len(_fixture_requests()) == 12, "twelve fixtures pin a request; errors.json does not"
 
 
 @pytest.mark.parametrize("tool_name,arguments", _fixture_requests())

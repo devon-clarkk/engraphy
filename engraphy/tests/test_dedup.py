@@ -29,6 +29,7 @@ from engraphy.core.dedup import (
     supersede,
     write,
 )
+from engraphy.core.pending import pending_list
 from engraphy.tests import bandvalues as bv
 from engraphy.tests.conftest import DATABASE_URL
 
@@ -872,6 +873,106 @@ async def test_resolve_duplicate_ttl_expired_raises(pool, write_space, conn):
 
     with pytest.raises(PendingExpiredError, match="ENGRAPHY_PENDING_EXPIRED"):
         await resolve_duplicate(pool, write_space, "p1", parked["pending_id"], "distinct")
+
+
+async def _park(pool, write_space, conn, title="Similar-ish"):
+    """One parked write by p1 against a seeded candidate, through the real
+    write path."""
+    _seed_node(conn, write_space, "widget", "Existing node", "Existing body.", {}, _unit_vector_at_angle(0))
+    parked = await write(
+        pool, write_space, "p1", "widget", "scope1",
+        title, f"{title} body.", {},
+        _unit_vector_at_angle(math.acos(bv.PENDING)), "pytest",
+    )
+    assert parked["outcome"] == "needs_confirmation"
+    return parked["pending_id"]
+
+
+def _expire(conn, pending_id):
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE pending_writes SET expires_at = now() - interval '1 hour' WHERE id = %s",
+        (pending_id,),
+    )
+    conn.commit()
+
+
+def _pending_ids(conn, space_id):
+    cur = conn.cursor()
+    cur.execute("SELECT id::text FROM pending_writes WHERE space_id = %s", (space_id,))
+    ids = {r[0] for r in cur.fetchall()}
+    conn.commit()
+    return ids
+
+
+async def test_expired_parked_write_leaves_the_list_and_can_be_discarded(pool, write_space, conn):
+    """A parked write whose 24h window passed is not offered by pending_list
+    (no resolution could settle it), and `discard` clears it, repeatably."""
+    pending_id = await _park(pool, write_space, conn)
+    assert [p["id"] for p in (await pending_list(pool, write_space, "p1"))["pending"]] == [pending_id]
+
+    _expire(conn, pending_id)
+    assert (await pending_list(pool, write_space, "p1"))["pending"] == []
+    with pytest.raises(PendingExpiredError):
+        await resolve_duplicate(pool, write_space, "p1", pending_id, "distinct")
+
+    expected = {"v": 1, "outcome": "discarded", "pending_id": pending_id}
+    assert await resolve_duplicate(pool, write_space, "p1", pending_id, "discard") == expected
+    assert pending_id not in _pending_ids(conn, write_space)
+    # Idempotent: the same call on a row that is already gone returns the same envelope.
+    assert await resolve_duplicate(pool, write_space, "p1", pending_id, "discard") == expected
+
+
+async def test_discard_before_expiry_drops_the_write_without_a_node(pool, write_space, conn):
+    pending_id = await _park(pool, write_space, conn)
+
+    envelope = await resolve_duplicate(pool, write_space, "p1", pending_id, "discard")
+
+    assert envelope == {"v": 1, "outcome": "discarded", "pending_id": pending_id}
+    assert _pending_ids(conn, write_space) == set()
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM nodes WHERE space_id = %s AND title = 'Similar-ish'", (write_space,))
+    assert cur.fetchone()[0] == 0
+    conn.commit()
+
+
+async def test_discard_by_non_author_is_existence_blind_and_deletes_nothing(pool, write_space, conn):
+    """Another principal in the same space, and the author calling from another
+    space, both get the envelope an unknown id gets, and the row survives."""
+    pending_id = await _park(pool, write_space, conn)
+    other_space = write_space[:50] + "-other"
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO principals (space_id, id, display_name) VALUES (%s, 'p2', 'P2')", (write_space,)
+    )
+    cur.execute("INSERT INTO spaces (id, display_name) VALUES (%s, 'Other')", (other_space,))
+    conn.commit()
+    try:
+        expected = {"v": 1, "outcome": "discarded", "pending_id": pending_id}
+        assert await resolve_duplicate(pool, write_space, "p2", pending_id, "discard") == expected
+        assert await resolve_duplicate(pool, other_space, "p1", pending_id, "discard") == expected
+        assert _pending_ids(conn, write_space) == {pending_id}
+    finally:
+        conn.rollback()
+        cur.execute("DELETE FROM spaces WHERE id = %s", (other_space,))
+        conn.commit()
+
+
+async def test_parking_a_write_sweeps_only_the_callers_expired_rows(pool, write_space, conn):
+    mine_expired = await _park(pool, write_space, conn, title="First")
+    _expire(conn, mine_expired)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO pending_writes (space_id, author_principal, payload, expires_at) "
+        "VALUES (%s, 'p2', '{}', now() - interval '1 hour') RETURNING id::text",
+        (write_space,),
+    )
+    theirs_expired = cur.fetchone()[0]
+    conn.commit()
+
+    mine_live = await _park(pool, write_space, conn, title="Second")
+
+    assert _pending_ids(conn, write_space) == {mine_live, theirs_expired}
 
 
 async def test_resolve_duplicate_scope_unwritable_raises(pool, write_space, conn):

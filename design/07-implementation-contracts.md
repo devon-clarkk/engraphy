@@ -97,7 +97,9 @@ The `instruction` field (July 2026 revision, per the dupstream contradiction fin
 
 **`get`:** `{"v": 1, "nodes": [{…node…, "addenda": […], "edges": {"out": […≤10], "in": […≤10]}}], "missing": ["…ids not found or not readable…"]}`.
 
-**`resolve_duplicate`:** returns the `write` envelope of the final outcome (`inserted` with `"relates_edge_added": true`, or `merged`).
+**`resolve_duplicate`:** returns the `write` envelope of the final outcome (`inserted` with `"relates_edge_added": true`, or `merged`). `resolution: "discard"` deletes the parked write without writing a node, before or after `expires_at`, and returns `{"v": 1, "outcome": "discarded", "pending_id": "…"}`. It is idempotent and existence-blind: the envelope is byte-identical whether the row was deleted now, earlier, never existed, or belongs to another principal or space (RLS `pending_writes_delete` matches only the caller's rows). Byte-pinned by `fixtures/wire/resolve_duplicate_discarded.json`.
+
+**`pending_list`:** lists only entries with `expires_at > now()`, so every listed entry is one `resolve_duplicate` can settle. Expired rows are deleted when their author next parks a write, and by any `discard`.
 
 **Links wire shape** (`write.links` / `link.edges[]`, decided 2026-07-16 — one vocabulary, fully explicit endpoints, zero translation to the `edges` columns). A `write.links` item is `{"type": "…", "src_id?": "…", "dst_id?": "…"}` with **exactly one** endpoint present — the omitted one is the node being written. A `link.edges[]` item is the same shape with **both** required. Malformed item (both present, both absent, missing/non-string `type`) → `ENGRAPHY_VALIDATION`; an unreadable or unknown endpoint id → `ENGRAPHY_NOT_FOUND` ([06](06-teams-and-sharing.md)); a well-formed type with no matching rule surfaces as `ENGRAPHY_EDGE_RULE` naming the missing matrix row. Every attach path uses `ON CONFLICT (src_id, dst_id, type) DO NOTHING` (a duplicate item within one request silently dedupes); the `merged` envelope reports `links_attached`/`links_skipped`, the `inserted` envelope reports no counts.
 
@@ -168,7 +170,7 @@ Sequencing: this lands **before E4** ([05](05-roadmap.md) records it as an E4-en
 | | `attrs` | object | no | stored `attrs.addenda` preserved regardless |
 | `link` | `edges` | array of link items | yes | **both** endpoints per item |
 | `resolve_duplicate` | `pending_id` | string (uuid) | yes | |
-| | `resolution` | string enum | yes | `"distinct"` \| `"merge"` |
+| | `resolution` | string enum | yes | `"distinct"` \| `"merge"` \| `"discard"` |
 | | `merge_into` | string (uuid) | conditional | **required when `resolution == "merge"`** |
 | `scope_list` | *(none)* | | | |
 | `scope_create` | `id` | string | yes | scope id pattern |
@@ -208,7 +210,7 @@ Errors are returned as MCP tool errors with text `ENGRAPHY_<CODE>: <human senten
 | `RATE_LIMITED` | Window exceeded | Includes `retry_after_ms` |
 | `ROLE` | readonly token calling a write tool; non-space-admin calling admin tools | |
 | `SCOPE` | A token minted `no_scope_all` asked for `scope='all'` (search, briefing) | The second per-token capability after `role`, added August 2026 (migration 0023). Distinct from `SCOPE_UNKNOWN` and deliberately NOT collapsed into it: not-found semantics keep a scope's existence secret from a **principal**, whereas this refuses the **bearer** and so tells the holder only about its own credential. `scope='all'` for an unrestricted token is unchanged — resolved to the principal's readable set and audited, which is what the exfiltration tripwire has always been |
-| `PENDING_EXPIRED` | resolve_duplicate after TTL | Instructs re-write |
+| `PENDING_EXPIRED` | resolve_duplicate `distinct`/`merge` after TTL | Instructs re-write. `discard` never raises it |
 | `SUPERSEDE_CONFLICT` | Reserved. `supersede` downgrades a third-node band collision to a plain write (see `supersede` above) and does not raise this code | Kept in the table so an existing client mapping stays valid |
 | `INTERNAL` | Anything else — including malformed per-space config values | Never leaks SQL/stack traces |
 

@@ -19,6 +19,8 @@ Files:
 - briefing — sectioned envelope (section order = pack order; empty sections kept)
 - resolve_duplicate_merged / resolve_duplicate_distinct_inserted — the handshake's
   second half returns the write envelope of the final outcome
+- resolve_duplicate_discarded: dropping a parked write. Existence-blind, so it
+  echoes the request's pending_id and has no volatile fields
 - errors — the `ENGRAPHY_<CODE>: <sentence>` contract, one case per code
 
 NEEDS_CONFIRMATION is a normal result, not an error (see write_needs_confirmation.json).

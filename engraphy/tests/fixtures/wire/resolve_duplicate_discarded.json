@@ -1,0 +1,17 @@
+{
+  "tool": "resolve_duplicate",
+  "outcome": "discarded",
+  "request": {
+    "name": "resolve_duplicate",
+    "arguments": {
+      "pending_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "resolution": "discard"
+    }
+  },
+  "response": {
+    "v": 1,
+    "outcome": "discarded",
+    "pending_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+  },
+  "volatile": []
+}

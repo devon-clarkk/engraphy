@@ -57,7 +57,8 @@ async def resolve_duplicate(pool, ctx, arguments: dict) -> dict:
     Direct passthrough -- no wire-name rename, no pre-transaction embed step
     (the pending write's embedding was already computed and parked at write()
     time). 07: "returns the write envelope of the final outcome" (inserted
-    with relates_edge_added, or merged); the core fn's own ValueError for a
+    with relates_edge_added, or merged). `discard` returns {v, outcome:
+    "discarded", pending_id} and is idempotent. The core fn's own ValueError for a
     bad `resolution` or a missing `merge_into` maps to ENGRAPHY_VALIDATION via
     errors.py's ValueError branch."""
     try:

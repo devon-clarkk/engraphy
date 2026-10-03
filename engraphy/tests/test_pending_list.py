@@ -4,7 +4,8 @@ The tool SELECTs the caller's own pending_writes rows (the write/dedup PENDING
 band) and shapes them for a client's confirm queue. These tests prove it:
 returns the caller's rows in the expected shape, is read-only, is RLS-scoped so
 one caller can never see another space's (or another principal's) pendings, and
-handles the empty case + limit/offset.
+handles the empty case + limit/offset, and lists only rows a resolution can still
+settle (an expired row is left out, and `discard` clears it).
 
 Seeding goes through a superuser autocommit connection (committed, so the
 separate app-role `pool` connection can see the rows); the READ under test goes
@@ -212,3 +213,37 @@ async def test_dispatchable_through_the_registry(pool, env):
     assert envelope["v"] == 1
     assert len(envelope["pending"]) == 1
     assert envelope["pending"][0]["payload_preview"] == "wired — through the registry"
+
+
+async def test_expired_rows_are_not_listed(pool, env):
+    """A row past expires_at cannot be resolved, so the queue never offers it:
+    the reproduction of an entry that outlived its window and stayed listed."""
+    cur = env.conn.cursor()
+    live = _seed(cur, env.space_a, PA, _payload("still open", "b"))
+    _seed(cur, env.space_a, PA, _payload("missed it", "b"), ttl_hours=-1)
+
+    items = (await pending_list(pool, env.space_a, PA))["pending"]
+    assert [it["id"] for it in items] == [live]
+
+
+async def test_discard_dispatches_through_the_registry(pool, env):
+    """`resolution: "discard"` passes wire validation without merge_into and
+    clears an expired row through the same dispatcher a client calls."""
+    cur = env.conn.cursor()
+    expired = _seed(cur, env.space_a, PA, _payload("missed it", "b"), ttl_hours=-1)
+
+    args = {"pending_id": expired, "resolution": "discard"}
+    resolved = await resolve_dispatch(pool, env.space_a, "resolve_duplicate", args)
+    assert resolved is not None
+    core_name, dispatcher, merged_args, _action = resolved
+    assert core_name == "resolve_duplicate"
+
+    class _Ctx:
+        space_id = env.space_a
+        principal = PA
+        client_name = "pytest"
+
+    envelope = await dispatcher(pool, _Ctx(), merged_args)
+    assert envelope == {"v": 1, "outcome": "discarded", "pending_id": expired}
+    cur.execute("SELECT count(*) FROM pending_writes WHERE id = %s", (expired,))
+    assert cur.fetchone()[0] == 0

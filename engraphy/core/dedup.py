@@ -919,6 +919,10 @@ async def _do_pending(cur, space_id, principal, node_type, scope_id, title, body
         # paired across the park). Absent on pre-C parked rows -> '' at resolution.
         "extra_search": extra_search,
     }
+    # Parking a new row is when the caller's queue grows, so it is also when
+    # their expired rows are cleared: the table stays bounded by what each
+    # principal could still resolve, without a separate scheduled job.
+    await sweep_expired_pending(cur, space_id, principal)
     await cur.execute(
         "INSERT INTO pending_writes (space_id, author_principal, payload, expires_at) "
         "VALUES (%s, %s, %s, now() + interval '24 hours') RETURNING id, expires_at",
@@ -1155,6 +1159,44 @@ async def _do_absorb(
     }
 
 
+async def sweep_expired_pending(cur, space_id: str, principal: str) -> int:
+    """Delete the caller's own parked writes whose `expires_at` has passed, and
+    return how many went. An expired row is unresolvable (resolve_duplicate
+    raises ENGRAPHY_PENDING_EXPIRED for it) and pending_list no longer lists it,
+    so deleting it loses nothing a caller could still act on.
+
+    Bounded to the caller's space and principal on purpose: it runs on the app
+    role inside the caller's transaction, where pending_writes_delete (0011)
+    already restricts DELETE to space + author, and the explicit WHERE keeps the
+    statement correct on a connection that bypasses RLS as well."""
+    await cur.execute(
+        "DELETE FROM pending_writes "
+        "WHERE space_id = %s AND author_principal = %s AND expires_at <= now()",
+        (space_id, principal),
+    )
+    return cur.rowcount
+
+
+async def discard_pending(pool, space_id: str, principal: str, pending_id: str) -> dict:
+    """resolve_duplicate(resolution='discard'): drop a parked write without
+    saving it, whether or not it has expired, so a queue entry is never stuck.
+
+    Idempotent and existence-blind. The envelope is the same whether the row was
+    deleted now, was deleted earlier, never existed, or belongs to another
+    principal or space: pending_writes_delete (0011) matches only the caller's
+    own rows, so another author's row is simply not deleted, and the identical
+    envelope reveals nothing about it (07: existence is information). Also
+    sweeps the caller's other expired rows, in the same transaction."""
+    async with transaction(pool, space_id, principal) as conn:
+        cur = conn.cursor()
+        await cur.execute(
+            "DELETE FROM pending_writes WHERE id = %s AND space_id = %s AND author_principal = %s",
+            (pending_id, space_id, principal),
+        )
+        await sweep_expired_pending(cur, space_id, principal)
+    return {"v": 1, "outcome": "discarded", "pending_id": str(pending_id)}
+
+
 async def resolve_duplicate(
     pool,
     space_id: str,
@@ -1172,11 +1214,15 @@ async def resolve_duplicate(
     Carries a resonance report for the same reason write() does: 07 says this
     "returns the `write` envelope of the final outcome", and both of its
     outcomes (inserted / merged) are non-PENDING writes -- the exact set 07's
-    resonance rule covers."""
-    if resolution not in ("distinct", "merge"):
+    resonance rule covers.
+
+    `discard` drops the parked write without saving it; see discard_pending."""
+    if resolution not in ("distinct", "merge", "discard"):
         raise ValueError(f"unknown resolution: {resolution!r}")
     if resolution == "merge" and not merge_into:
         raise ValueError("resolution='merge' requires merge_into")
+    if resolution == "discard":
+        return await discard_pending(pool, space_id, principal, pending_id)
 
     async with transaction(pool, space_id, principal) as conn:
         cur = conn.cursor()

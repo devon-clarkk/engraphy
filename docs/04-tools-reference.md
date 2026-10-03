@@ -135,7 +135,10 @@ parked writes so you can settle them with `resolve_duplicate`.
 | `offset` | integer |  | page offset. |
 
 Read-only, and scoped to the calling principal: you only ever see your own pending
-writes. Returns `{"v": 1, "pending": [{"id": "…", "scope": "…", "title": "…", "against": ["…uuid…"], "created_at": "…Z"}], "total": N}`.
+writes. Every listed entry can still be resolved: a parked write is listed until
+its `expires_at`, 24 hours after the write that parked it. Returns
+`{"v": 1, "pending": [{"id": "…", "payload_preview": "…", "candidates": [{"id": "…", "title": "…", "similarity": 0.9}], "expires_at": "…", "created_at": "…"}]}`,
+newest first.
 
 ### `stats` — usage metrics (read-only)
 
@@ -277,12 +280,18 @@ edges, so an archived endpoint returns `ENGRAPHY_VALIDATION`.
 | Param | Type | Required | Notes |
 |---|---|---|---|
 | `pending_id` | uuid | ✓ | from a `needs_confirmation` write. |
-| `resolution` | `"distinct"`\|`"merge"` | ✓ | |
+| `resolution` | `"distinct"`\|`"merge"`\|`"discard"` | ✓ | |
 | `merge_into` | uuid | required when `resolution == "merge"` | the canonical to fold into. |
 
 `distinct` promotes the parked write to its own node (attaching a "declared
-distinct" `relates_to`); `merge` folds it into `merge_into`. Returns the write
-envelope of the final outcome.
+distinct" `relates_to`); `merge` folds it into `merge_into`. Both return the write
+envelope of the final outcome, and both need the entry to be within its
+`expires_at`.
+
+`discard` drops the parked write without saving anything, at any time, including
+after it has expired. It returns `{"v": 1, "outcome": "discarded", "pending_id": "…"}`
+and is idempotent: discarding an entry that is already gone returns the same
+envelope. A client's queue uses it for a Dismiss action.
 
 ---
 

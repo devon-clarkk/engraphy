@@ -43,8 +43,16 @@
   `--dry-run` checks without writing. Re-running the same bundle writes
   nothing new. [docs/07-moving-memories.md](docs/07-moving-memories.md) is the
   runbook.
+- `resolve_duplicate` takes `resolution: "discard"`, which drops a parked write
+  without saving it, at any time, including after its `expires_at`. It returns
+  `{"v": 1, "outcome": "discarded", "pending_id": "…"}`, is idempotent, and
+  acts only on the caller's own parked writes. A client's confirm queue uses it
+  for a Dismiss action.
 
 ### Changed
+- `pending_list` lists only parked writes that are still within their
+  `expires_at`, so every entry it returns can be resolved. Expired entries are
+  deleted when their author next parks a write.
 - Every core tool description names the moment to call the tool and the
   follow-up its outcomes can oblige: `briefing` at the start of a task with the
   request as `hint`, `search` before acting in territory not already loaded,

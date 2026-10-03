@@ -3,7 +3,8 @@
 The read side of the write/dedup PENDING band: when a write lands close enough
 to an existing node to need a human call, dedup.py parks the incoming payload +
 candidate snapshot in `pending_writes` with a 24h TTL and returns a
-`pending_id`, and `resolve_duplicate` later consumes it (distinct | merge). This
+`pending_id`, and `resolve_duplicate` later consumes it (distinct | merge |
+discard). This
 function is the missing LIST between those two -- it lets a client (the VS Code
 extension's confirm-queue) enumerate the rows waiting to be resolved.
 
@@ -95,11 +96,16 @@ async def pending_list(pool, space_id: str, principal: str,
 
     Returns the 07-style envelope `{v, pending}` where `pending` is a list of
     `{id, payload_preview (str), candidates:[{id, title, similarity}],
-    expires_at, created_at}`, newest first. `expires_at` is surfaced (never
-    filtered) so a client can show staleness -- expired rows currently age out
-    with no sweeper, and resolve_duplicate rejects an expired row at consume
-    time, so surfacing them is a display concern, not a correctness one (see the
-    branch report's follow-up note). Empty list when the caller has none."""
+    expires_at, created_at}`, newest first. Empty list when the caller has none.
+
+    Only actionable rows are listed: a row past `expires_at` is left out. The
+    list exists to be resolved, and resolve_duplicate refuses an expired row
+    with ENGRAPHY_PENDING_EXPIRED, so listing one would offer the caller an item
+    no resolution can settle. Expired rows are deleted by the caller's next
+    parked write (dedup.sweep_expired_pending) and by any `discard`; until then
+    they are invisible here, and `discard` clears any row on demand, expired or
+    not. The comparison uses the database clock, the same `now()` that
+    resolve_duplicate's TTL check and the 24h `expires_at` itself use."""
     limit = _clamp_limit(limit)
     offset = _clamp_offset(offset)
 
@@ -107,7 +113,7 @@ async def pending_list(pool, space_id: str, principal: str,
         cur = conn.cursor()
         await cur.execute(
             "SELECT id, payload, expires_at, created_at FROM pending_writes "
-            "WHERE space_id = %s AND author_principal = %s "
+            "WHERE space_id = %s AND author_principal = %s AND expires_at > now() "
             "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
             (space_id, principal, limit, offset),
         )

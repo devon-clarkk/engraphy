@@ -124,7 +124,8 @@ _BASE_DESCRIPTIONS = {
         "Finish a parked write: 'distinct' keeps both, which is right whenever the parked write "
         "makes a different claim from the candidate, and 'merge' folds it into the candidate "
         "named in merge_into. Until this call the write is not saved, and it expires 24 hours "
-        "after the write that parked it."
+        "after the write that parked it. 'discard' is for a person dismissing a queue entry: it "
+        "drops the write unsaved, so never use it in place of choosing 'distinct' or 'merge'."
     ),
     "scope_list": "List the scopes this token can read.",
     "scope_guide": (

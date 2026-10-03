@@ -191,7 +191,7 @@ SPEC: dict[str, dict[str, Arg]] = {
     },
     "resolve_duplicate": {
         "pending_id": Arg(STRING, required=True, uuid=True),
-        "resolution": Arg(STRING, required=True, enum=("distinct", "merge")),
+        "resolution": Arg(STRING, required=True, enum=("distinct", "merge", "discard")),
         "merge_into": Arg(STRING, required=_merge_into_required, uuid=True),
     },
     "scope_list": {},
